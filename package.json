@@ -1,0 +1,25 @@
+{
+  "name": "crm-tradeway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trade Way / Captain Masr CRM System",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @crm/api dev",
+    "dev:api": "pnpm --filter @crm/api dev",
+    "dev:web": "pnpm --filter @crm/web dev",
+    "build": "pnpm -r build",
+    "db:migrate": "pnpm --filter @crm/api db:migrate",
+    "db:seed": "pnpm --filter @crm/api db:seed",
+    "db:reset": "pnpm --filter @crm/api db:reset",
+    "db:studio": "pnpm --filter @crm/api db:studio"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

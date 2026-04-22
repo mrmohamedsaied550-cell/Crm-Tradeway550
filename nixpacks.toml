@@ -1,0 +1,14 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "pnpm-9_x"]
+
+[phases.install]
+cmds = ["pnpm install --no-frozen-lockfile"]
+
+[phases.build]
+cmds = [
+  "cd apps/api && pnpm db:generate",
+  "cd apps/api && pnpm build"
+]
+
+[start]
+cmd = "cd apps/api && pnpm db:migrate:deploy && pnpm db:seed && node dist/index.js"
