@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AuthService } from './auth.service.js';
-import { authenticate } from '../../middleware/auth.js';
-import { UnauthorizedError } from '../../lib/errors.js';
+import { AuthService } from './auth.service';
+import { authenticate } from '../../middleware/auth';
+import { UnauthorizedError } from '../../lib/errors';
 
 const loginSchema = z.object({
   email: z.string().email(),

@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { campaigns } from '../../db/schema/campaigns.js';
-import { LeadsService } from '../leads/leads.service.js';
-import { RoutingService } from './routing.service.js';
-import { env } from '../../lib/env.js';
-import { NotFoundError, UnauthorizedError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { campaigns } from '../../db/schema/campaigns';
+import { LeadsService } from '../leads/leads.service';
+import { RoutingService } from './routing.service';
+import { env } from '../../lib/env';
+import { NotFoundError, UnauthorizedError } from '../../lib/errors';
 
 /**
  * Webhook endpoints for Meta, TikTok, and a generic JSON ingestion.

@@ -3,16 +3,16 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import sensible from '@fastify/sensible';
 import multipart from '@fastify/multipart';
-import { env } from './lib/env.js';
-import { errorHandler } from './middleware/error-handler.js';
-import { authRoutes } from './modules/auth/auth.routes.js';
-import { usersRoutes } from './modules/users/users.routes.js';
-import { companiesRoutes } from './modules/settings/companies.routes.js';
-import { pipelineRoutes } from './modules/settings/pipeline.routes.js';
-import { leadsRoutes } from './modules/leads/leads.routes.js';
-import { campaignsRoutes } from './modules/campaigns/campaigns.routes.js';
-import { webhooksRoutes } from './modules/campaigns/webhooks.routes.js';
-import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
+import { env } from './lib/env';
+import { errorHandler } from './middleware/error-handler';
+import { authRoutes } from './modules/auth/auth.routes';
+import { usersRoutes } from './modules/users/users.routes';
+import { companiesRoutes } from './modules/settings/companies.routes';
+import { pipelineRoutes } from './modules/settings/pipeline.routes';
+import { leadsRoutes } from './modules/leads/leads.routes';
+import { campaignsRoutes } from './modules/campaigns/campaigns.routes';
+import { webhooksRoutes } from './modules/campaigns/webhooks.routes';
+import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
 
 async function bootstrap() {
   const app = Fastify({

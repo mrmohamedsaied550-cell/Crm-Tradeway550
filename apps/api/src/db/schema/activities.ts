@@ -1,8 +1,8 @@
 import { mysqlTable, varchar, timestamp, mysqlEnum, json, index, int } from 'drizzle-orm/mysql-core';
 import { relations } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { enrollments } from './enrollments.js';
-import { users } from './users.js';
+import { enrollments } from './enrollments';
+import { users } from './users';
 
 /**
  * Activity log — every event for an enrollment lands here.

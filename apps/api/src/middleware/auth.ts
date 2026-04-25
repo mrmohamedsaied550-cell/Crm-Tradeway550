@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { Role, Capability } from '../lib/rbac.js';
-import { computeScope, hasCapability } from '../lib/rbac.js';
-import { ForbiddenError, UnauthorizedError } from '../lib/errors.js';
+import type { Role, Capability } from '../lib/rbac';
+import { computeScope, hasCapability } from '../lib/rbac';
+import { ForbiddenError, UnauthorizedError } from '../lib/errors';
 
 declare module 'fastify' {
   interface FastifyRequest {

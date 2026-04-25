@@ -1,10 +1,10 @@
 import { mysqlTable, varchar, timestamp, mysqlEnum, index, json } from 'drizzle-orm/mysql-core';
 import { relations } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { contacts } from './contacts.js';
-import { stages, leadStatuses, rejectReasons } from './pipeline.js';
-import { users } from './users.js';
-import { companyCountries } from './companies.js';
+import { contacts } from './contacts';
+import { stages, leadStatuses, rejectReasons } from './pipeline';
+import { users } from './users';
+import { companyCountries } from './companies';
 
 /**
  * Enrollments — a contact's registration in a specific (company × country).

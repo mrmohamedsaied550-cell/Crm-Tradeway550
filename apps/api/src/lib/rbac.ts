@@ -1,4 +1,4 @@
-import type { User } from '../db/schema/users.js';
+import type { User } from '../db/schema/users';
 
 export type Role = 'super_admin' | 'manager' | 'team_leader' | 'sales_agent';
 

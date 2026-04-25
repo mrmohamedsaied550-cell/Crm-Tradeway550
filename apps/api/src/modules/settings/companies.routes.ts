@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { companies, countries, companyCountries } from '../../db/schema/companies.js';
-import { authenticate, requireCapability } from '../../middleware/auth.js';
-import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { companies, countries, companyCountries } from '../../db/schema/companies';
+import { authenticate, requireCapability } from '../../middleware/auth';
+import { ConflictError, NotFoundError } from '../../lib/errors';
 
 const createCompanySchema = z.object({
   code: z.string().min(2).max(32),

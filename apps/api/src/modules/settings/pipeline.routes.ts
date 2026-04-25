@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and, asc, isNull } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { stages, leadStatuses, rejectReasons } from '../../db/schema/pipeline.js';
-import { authenticate, requireCapability } from '../../middleware/auth.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { stages, leadStatuses, rejectReasons } from '../../db/schema/pipeline';
+import { authenticate, requireCapability } from '../../middleware/auth';
+import { NotFoundError } from '../../lib/errors';
 
 const stageSchema = z.object({
   companyCountryId: z.string().nullable().optional(),

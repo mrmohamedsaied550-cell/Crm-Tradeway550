@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { LeadsService } from './leads.service.js';
-import { actorScope, authenticate, requireCapability } from '../../middleware/auth.js';
-import { UnauthorizedError } from '../../lib/errors.js';
+import { LeadsService } from './leads.service';
+import { actorScope, authenticate, requireCapability } from '../../middleware/auth';
+import { UnauthorizedError } from '../../lib/errors';
 
 const listQuery = z.object({
   search: z.string().optional(),

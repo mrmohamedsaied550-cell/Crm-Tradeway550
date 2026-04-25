@@ -1,7 +1,7 @@
 import { mysqlTable, varchar, timestamp, mysqlEnum, boolean, json, decimal, index } from 'drizzle-orm/mysql-core';
 import { relations } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
-import { companyCountries } from './companies.js';
+import { companyCountries } from './companies';
 
 /**
  * Marketing campaigns — Meta, TikTok, manual, referrals.

@@ -1,11 +1,11 @@
 import 'dotenv/config';
-import { db, pool } from './client.js';
-import { hashPassword } from '../lib/password.js';
-import { users } from './schema/users.js';
-import { companies, countries, companyCountries } from './schema/companies.js';
-import { stages, leadStatuses, rejectReasons } from './schema/pipeline.js';
-import { contacts } from './schema/contacts.js';
-import { enrollments } from './schema/enrollments.js';
+import { db, pool } from './client';
+import { hashPassword } from '../lib/password';
+import { users } from './schema/users';
+import { companies, countries, companyCountries } from './schema/companies';
+import { stages, leadStatuses, rejectReasons } from './schema/pipeline';
+import { contacts } from './schema/contacts';
+import { enrollments } from './schema/enrollments';
 import { eq } from 'drizzle-orm';
 
 async function main() {

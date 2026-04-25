@@ -2,10 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import crypto from 'node:crypto';
-import { db } from '../../db/client.js';
-import { campaigns } from '../../db/schema/campaigns.js';
-import { authenticate, requireCapability } from '../../middleware/auth.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { campaigns } from '../../db/schema/campaigns';
+import { authenticate, requireCapability } from '../../middleware/auth';
+import { NotFoundError } from '../../lib/errors';
 
 const createSchema = z.object({
   name: z.string().min(2).max(160),

@@ -1,12 +1,12 @@
 import { eq, and, isNull, gt } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { users, type User } from '../../db/schema/users.js';
-import { userSessions } from '../../db/schema/sessions.js';
-import { hashPassword, verifyPassword } from '../../lib/password.js';
-import { generateRefreshToken, hashToken } from '../../lib/jwt.js';
-import { parseDuration } from '../../lib/duration.js';
-import { env } from '../../lib/env.js';
-import { ConflictError, NotFoundError, UnauthorizedError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { users, type User } from '../../db/schema/users';
+import { userSessions } from '../../db/schema/sessions';
+import { hashPassword, verifyPassword } from '../../lib/password';
+import { generateRefreshToken, hashToken } from '../../lib/jwt';
+import { parseDuration } from '../../lib/duration';
+import { env } from '../../lib/env';
+import { ConflictError, NotFoundError, UnauthorizedError } from '../../lib/errors';
 import type { FastifyInstance } from 'fastify';
 
 export class AuthService {

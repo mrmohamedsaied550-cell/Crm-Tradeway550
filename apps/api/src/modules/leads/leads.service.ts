@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, isNull, like, or, sql } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { contacts } from '../../db/schema/contacts.js';
-import { enrollments } from '../../db/schema/enrollments.js';
-import { activities } from '../../db/schema/activities.js';
-import type { Scope } from '../../lib/rbac.js';
-import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { contacts } from '../../db/schema/contacts';
+import { enrollments } from '../../db/schema/enrollments';
+import { activities } from '../../db/schema/activities';
+import type { Scope } from '../../lib/rbac';
+import { ConflictError, NotFoundError } from '../../lib/errors';
 
 export interface ListLeadsParams {
   scope: Scope;

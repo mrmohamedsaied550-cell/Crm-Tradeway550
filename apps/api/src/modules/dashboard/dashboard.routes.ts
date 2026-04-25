@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, eq, gte, isNull, sql } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { enrollments } from '../../db/schema/enrollments.js';
-import { contacts } from '../../db/schema/contacts.js';
-import { authenticate, actorScope } from '../../middleware/auth.js';
+import { db } from '../../db/client';
+import { enrollments } from '../../db/schema/enrollments';
+import { contacts } from '../../db/schema/contacts';
+import { authenticate, actorScope } from '../../middleware/auth';
 
 export async function dashboardRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate);

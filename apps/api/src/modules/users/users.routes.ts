@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { users, teams } from '../../db/schema/users.js';
-import { authenticate, requireCapability } from '../../middleware/auth.js';
-import { hashPassword } from '../../lib/password.js';
-import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import { db } from '../../db/client';
+import { users, teams } from '../../db/schema/users';
+import { authenticate, requireCapability } from '../../middleware/auth';
+import { hashPassword } from '../../lib/password';
+import { ConflictError, NotFoundError } from '../../lib/errors';
 
 const createUserSchema = z.object({
   name: z.string().min(2).max(120),

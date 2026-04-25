@@ -1,8 +1,8 @@
 import { and, eq, isNull, sql, asc } from 'drizzle-orm';
-import { db } from '../../db/client.js';
-import { users } from '../../db/schema/users.js';
-import { enrollments } from '../../db/schema/enrollments.js';
-import { campaigns, campaignRoutingState } from '../../db/schema/campaigns.js';
+import { db } from '../../db/client';
+import { users } from '../../db/schema/users';
+import { enrollments } from '../../db/schema/enrollments';
+import { campaigns, campaignRoutingState } from '../../db/schema/campaigns';
 
 /**
  * Auto-assignment engine: picks the next sales agent for a given campaign.
