@@ -7,8 +7,9 @@ cmds = ["pnpm install --no-frozen-lockfile"]
 [phases.build]
 cmds = [
   "cd apps/api && pnpm db:generate",
-  "cd apps/api && pnpm build"
+  "cd apps/api && pnpm build",
+  "cd apps/web && pnpm build"
 ]
 
 [start]
-cmd = "cd apps/api && pnpm db:migrate:deploy && pnpm db:seed && node dist/index.js"
+cmd = "cd apps/api && pnpm db:migrate && pnpm db:seed && node dist/index.js"

@@ -8,13 +8,15 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "pnpm --filter @crm/api dev",
+    "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter @crm/api dev",
     "dev:web": "pnpm --filter @crm/web dev",
     "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @crm/api db:generate",
     "db:migrate": "pnpm --filter @crm/api db:migrate",
+    "db:push": "pnpm --filter @crm/api db:push",
     "db:seed": "pnpm --filter @crm/api db:seed",
-    "db:reset": "pnpm --filter @crm/api db:reset",
     "db:studio": "pnpm --filter @crm/api db:studio"
   },
   "engines": {

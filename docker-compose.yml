@@ -1,20 +1,21 @@
 version: '3.9'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: crm-postgres
+  mysql:
+    image: mysql:8.0
+    container_name: crm-mysql
     restart: unless-stopped
     environment:
-      POSTGRES_DB: crm_tradeway
-      POSTGRES_USER: crm_user
-      POSTGRES_PASSWORD: crm_dev_pass_2026
+      MYSQL_DATABASE: crm_tradeway
+      MYSQL_USER: crm_user
+      MYSQL_PASSWORD: crm_dev_pass_2026
+      MYSQL_ROOT_PASSWORD: crm_root_pass_2026
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_tradeway"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "crm_user", "-pcrm_dev_pass_2026"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,5 +35,5 @@ services:
       retries: 5
 
 volumes:
-  postgres_data:
+  mysql_data:
   redis_data:

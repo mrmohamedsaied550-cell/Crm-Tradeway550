@@ -1,155 +1,112 @@
 # 🚗 Trade Way CRM
 
-نظام إدارة علاقات العملاء (CRM) لشركة Trade Way / Captain Masr — مخصص لإدارة تسجيل السواقين في شركات النقل (أوبر، إن درايف) عبر دول متعددة.
+نظام إدارة علاقات العملاء (CRM) لشركة **Trade Way / Captain Masr** — مخصص لإدارة تسجيل السائقين في شركات النقل التشاركي (أوبر، إن درايف، ديدي، يانغو) عبر دول متعددة.
+
+> النظام مبني على نفس البنية التحتية ولغة التصميم الخاصة بنظام الحسابات الحالي لـ Trade Way.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ البنية المعمارية
 
 ```
 crm-tradeway/
 ├── apps/
-│   ├── api/              # Backend (Fastify + TypeScript + Prisma)
-│   └── web/              # Frontend (React + TypeScript)  [Phase 2]
+│   ├── api/              # Backend (Fastify + TypeScript + Drizzle + MySQL)
+│   └── web/              # Frontend (React + Vite + TypeScript + Tailwind v4 + shadcn/ui)
 ├── packages/
-│   └── shared/           # Shared types
-├── docker-compose.yml    # PostgreSQL + Redis
+│   └── shared/           # أنواع مشتركة بين الـ API والـ Web
+├── docker-compose.yml    # MySQL + Redis
 └── package.json          # pnpm workspaces
 ```
 
 ### Tech Stack
 
-- **Backend:** Node.js 20+ · TypeScript · Fastify · Prisma ORM · PostgreSQL · Redis · BullMQ
-- **Auth:** JWT (access + refresh with rotation)
-- **Validation:** Zod
-- **Package Manager:** pnpm (workspaces)
+| الطبقة | التقنية |
+|--------|---------|
+| **Backend** | Node.js 20+ · Fastify · TypeScript · Drizzle ORM |
+| **Database** | MySQL 8.0 |
+| **Cache/Queue** | Redis 7 (مجهز للمراحل القادمة) |
+| **Auth** | JWT (Access + Refresh مع rotation) — Standalone |
+| **Validation** | Zod |
+| **Frontend** | React 18 · Vite · TypeScript · TailwindCSS v4 · shadcn/ui |
+| **State** | Zustand · TanStack Query |
+| **Charts** | Recharts |
+| **Package Manager** | pnpm 9 (workspaces) |
 
 ---
 
-## 🚀 Quick Start
+## 🎨 نظام التصميم
 
-### Prerequisites
+- **اللون الأساسي:** أخضر Trade Way `oklch(0.65 0.18 145)`
+- **القائمة الجانبية:** رمادي-أخضر داكن `oklch(0.25 0.03 160)` بنص فاتح
+- **التخطيط:** `DashboardLayout` بقائمة جانبية ثابتة + شريط علوي
+- **التفاعلات:** Slide-over panels لكل التفاصيل (مفيش page reload)
+- **اللغة:** ثنائي اللغة (عربي/إنجليزي) + RTL كامل
+- **الخط:** Cairo (عربي) · Inter (إنجليزي)
 
+---
+
+## 🚀 البدء السريع
+
+### المتطلبات
 - Node.js 20+
 - pnpm 9+ (`npm install -g pnpm`)
 - Docker + Docker Compose
 
-### Setup
+### الإعداد
 
 ```bash
-# 1. Install dependencies (from root)
+# 1. تثبيت الحزم
 pnpm install
 
-# 2. Start PostgreSQL + Redis
+# 2. تشغيل MySQL + Redis
 docker compose up -d
 
-# 3. Set up environment
+# 3. إعداد متغيرات البيئة
 cd apps/api
 cp .env.example .env
-# (the .env file is already configured for local dev)
 
-# 4. Run migrations + seed data
-pnpm db:migrate   # creates tables
-pnpm db:seed      # populates sample data
+# 4. تطبيق الـ schema + بيانات تجريبية
+pnpm db:push      # ينشئ الجداول مباشرة من الـ schema
+pnpm db:seed      # بيانات تجريبية
 
-# 5. Start the API
+# 5. تشغيل الـ API + الـ Web
 cd ../..
-pnpm dev:api
+pnpm dev          # يشغل الاثنين بالتوازي
 ```
 
-The API will be running at **http://localhost:3000**
+- API: http://localhost:3000
+- Web: http://localhost:5173
 
 ---
 
-## 🔐 Test Accounts
+## 🔐 الحسابات التجريبية
 
-All accounts use password: `Password@123`
+كل الحسابات بكلمة سر: `Password@123`
 
-| Role | Email |
-|------|-------|
+| الدور | البريد |
+|------|---------|
 | 🔐 Super Admin | `super@tradeway.com` |
-| 🔐 Operations Manager | `ops@tradeway.com` |
-| 🇪🇬 Egypt Account Manager | `eg.manager@tradeway.com` |
-| 🇸🇦 Saudi Account Manager | `sa.manager@tradeway.com` |
-| 🇲🇦 Morocco Account Manager | `ma.manager@tradeway.com` |
-| 🇩🇿 Algeria Account Manager | `dz.manager@tradeway.com` |
-| TL Sales (Uber EG) | `eg.uber.tl.sales@tradeway.com` |
-| Sales Agent (Sara) | `eg.uber.sales1@tradeway.com` |
-| Sales Agent (Mohamed) | `eg.uber.sales2@tradeway.com` |
-| Sales Agent (Noura) | `eg.uber.sales3@tradeway.com` |
-| TL Activation | `eg.uber.tl.activ@tradeway.com` |
-| TL Driving | `eg.uber.tl.drive@tradeway.com` |
-| Activation Agent | `eg.uber.activ1@tradeway.com` |
-| Driving Agent | `eg.uber.drive1@tradeway.com` |
-| QA Specialist | `qa@tradeway.com` |
+| 🔐 Manager | `manager@tradeway.com` |
+| 🇪🇬 Team Leader Sales | `tl.sales@tradeway.com` |
+| 🟢 Sales Agent (Sara) | `sara@tradeway.com` |
+| 🟢 Sales Agent (Mohamed) | `mohamed@tradeway.com` |
+| 🟢 Sales Agent (Noura) | `noura@tradeway.com` |
 
 ---
 
-## 🧪 API Quick Test
+## 👥 نظام الصلاحيات (RBAC)
 
-### 1. Login
-
-```bash
-curl -X POST http://localhost:3000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"super@tradeway.com","password":"Password@123"}'
-```
-
-Response:
-```json
-{
-  "accessToken": "eyJhbG...",
-  "refreshToken": "eyJhbG...",
-  "user": { "id":"...", "name":"Super Admin", "role":"super_admin" }
-}
-```
-
-### 2. Get your profile + scope
-
-```bash
-curl http://localhost:3000/api/v1/auth/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### 3. List leads (filtered by your scope automatically)
-
-```bash
-curl http://localhost:3000/api/v1/enrollments \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-- Super Admin → sees all leads (all countries, all companies)
-- Egypt Manager → sees only Egypt leads
-- Sara (Sales Agent) → sees only leads assigned to her
-- TL Sales → sees team's leads + unassigned ones
+| الدور | النطاق | الصلاحيات الأساسية |
+|------|--------|----------------------|
+| **Super Admin** | كل النظام | إعدادات النظام + إدارة المستخدمين + كل الموديولز |
+| **Manager** | كل الدول (أو دولة محددة) | إدارة الحملات + التقارير + الموافقات |
+| **Team Leader** | تيمه فقط | إدارة فريقه + توزيع الليدز + الموافقات |
+| **Sales Agent** | ليدزه فقط | تحديث الحالات + المكالمات + الملاحظات |
 
 ---
 
-## 🔒 Visibility Engine (RBAC)
-
-The core of the system is in `apps/api/src/lib/rbac.ts`. Every request passes through:
-
-1. **Authentication** — who is making the request? (JWT)
-2. **Authorization** — does their role allow this action? (capabilities)
-3. **Scope filtering** — what data can they see? (automatic WHERE clauses)
-
-### Role Hierarchy
-
-```
-Super Admin  (level 100)           — sees everything
-    │
-    ├─ Operations Manager (90)     — sees all countries (read-only)
-    │
-    └─ Account Manager (80)        — sees their country only
-            │
-            └─ Team Leader (60)    — sees their team only
-                    │
-                    └─ Agent (30)  — sees only assigned leads
-```
-
----
-
-## 📋 API Endpoints
+## 📋 الـ API Endpoints
 
 ### Auth
 - `POST /api/v1/auth/login`
@@ -158,138 +115,171 @@ Super Admin  (level 100)           — sees everything
 - `POST /api/v1/auth/logout-all`
 - `GET  /api/v1/auth/me`
 
-### Users
-- `GET    /api/v1/users`
-- `GET    /api/v1/users/:id`
-- `POST   /api/v1/users` — create (admin/manager only)
-- `PUT    /api/v1/users/:id`
-- `POST   /api/v1/users/:id/assignments`
-- `DELETE /api/v1/users/:id/assignments/:assignmentId`
-- `PUT    /api/v1/users/:id/leave`
+### Users & Teams
+- `GET  /api/v1/users`
+- `GET  /api/v1/users/:id`
+- `POST /api/v1/users`
+- `PUT  /api/v1/users/:id`
+- `GET  /api/v1/users/teams/list`
+- `POST /api/v1/users/teams`
 
-### Companies & Countries
+### Companies & Markets
 - `GET  /api/v1/companies`
 - `POST /api/v1/companies`
-- `GET  /api/v1/countries`
-- `POST /api/v1/countries`
-- `POST /api/v1/countries/:id/holidays`
-- `GET  /api/v1/company-countries`
-- `GET  /api/v1/company-countries/:id`
-- `POST /api/v1/company-countries`
+- `GET  /api/v1/companies/countries`
+- `POST /api/v1/companies/countries`
+- `GET  /api/v1/companies/company-countries`
+- `POST /api/v1/companies/company-countries`
 
-### Contacts (الكباتن)
-- `GET  /api/v1/contacts`
-- `GET  /api/v1/contacts/:id`
-- `POST /api/v1/contacts`
-- `POST /api/v1/contacts/check-duplicate` — مهم للـ multi-company tracking
-- `PUT  /api/v1/contacts/:id`
+### Pipeline (Stages, Statuses, Reasons)
+- `GET    /api/v1/pipeline/stages`
+- `POST   /api/v1/pipeline/stages`
+- `PUT    /api/v1/pipeline/stages/:id`
+- `DELETE /api/v1/pipeline/stages/:id`
+- `PUT    /api/v1/pipeline/stages/reorder`
+- `GET    /api/v1/pipeline/statuses`
+- `POST   /api/v1/pipeline/statuses`
+- `PUT    /api/v1/pipeline/statuses/:id`
+- `DELETE /api/v1/pipeline/statuses/:id`
+- `GET    /api/v1/pipeline/reject-reasons`
+- `POST   /api/v1/pipeline/reject-reasons`
 
-### Enrollments (الليدز)
-- `GET /api/v1/enrollments`
-- `GET /api/v1/enrollments/:id`
-- `POST /api/v1/enrollments`
-- `PUT /api/v1/enrollments/:id`
-- `PUT /api/v1/enrollments/:id/stage` — change stage (triggers approval if required)
-- `PUT /api/v1/enrollments/:id/assign` — assign to agent
-- `POST /api/v1/enrollments/:id/notes`
-- `GET /api/v1/enrollments/:id/timeline`
+### Leads (Contacts + Enrollments)
+- `GET    /api/v1/leads` — مع pagination + filtering + RBAC scope
+- `GET    /api/v1/leads/:id`
+- `POST   /api/v1/leads`
+- `PUT    /api/v1/leads/:id`
+- `DELETE /api/v1/leads/:id` — soft delete
+- `POST   /api/v1/leads/check-duplicate` — للتحقق من تكرار رقم الهاتف
+- `POST   /api/v1/leads/:id/notes`
+- `POST   /api/v1/leads/:id/calls`
+- `GET    /api/v1/leads/:id/timeline`
 
-### Pipeline
-- `GET    /api/v1/pipeline/:ccId/stages`
-- `POST   /api/v1/pipeline/:ccId/stages`
-- `PUT    /api/v1/pipeline/:ccId/stages/:id`
-- `PUT    /api/v1/pipeline/:ccId/stages/reorder`
-- `DELETE /api/v1/pipeline/:ccId/stages/:id`
+### Campaigns
+- `GET  /api/v1/campaigns`
+- `POST /api/v1/campaigns`
+- `PUT  /api/v1/campaigns/:id`
+- `POST /api/v1/campaigns/:id/rotate-secret`
+
+### Webhooks (لاستقبال الليدز من الإعلانات)
+- `GET  /api/v1/webhooks/meta/:campaignId` — Facebook handshake
+- `POST /api/v1/webhooks/meta/:campaignId?secret=...`
+- `POST /api/v1/webhooks/tiktok/:campaignId?secret=...`
+- `POST /api/v1/webhooks/generic/:campaignId?secret=...`
+
+### Dashboard
+- `GET /api/v1/dashboard/kpis`
+- `GET /api/v1/dashboard/by-source`
+- `GET /api/v1/dashboard/by-stage`
 
 ---
 
-## 🛠️ Development Commands
+## 📊 نموذج البيانات
+
+| Table | الوظيفة |
+|-------|---------|
+| `users` | الموظفين (4 أدوار) |
+| `teams` | تيمات Sales / Activation / Driving |
+| `companies` | الشركات (Uber, inDrive, DiDi, Yango) |
+| `countries` | الدول |
+| `company_countries` | شركة × دولة (المسوّق فعلياً) |
+| **`contacts`** | **بيانات الكابتن (Unique بالهاتف)** |
+| **`enrollments`** | **تسجيل الكابتن في شركة-دولة معينة** |
+| `stages` | مراحل الفانل (قابلة للتخصيص) |
+| `lead_statuses` | الحالات الفرعية |
+| `reject_reasons` | أسباب الرفض الموحدة |
+| `enrollment_documents` | مستندات السائق |
+| `campaigns` | حملات التسويق |
+| `campaign_routing_state` | حالة round-robin لكل حملة |
+| `activities` | كل الأحداث (Timeline) |
+| `user_sessions` | جلسات الـ refresh tokens |
+
+### 🔑 الفكرة الأساسية: Contact + Enrollments
+
+**ليه الفصل ده مهم؟** السائق الواحد ممكن يكون مسجل في أوبر وإن درايف في نفس الوقت من غير تكرار بيانات.
+
+```
+Contact: أحمد، 01012345678
+ ├── Enrollment #1: أوبر-مصر | Sales: سارة
+ └── Enrollment #2: إن درايف-مصر | Sales: نورا
+```
+
+في الـ UI بيظهر "Lead" واحد، لكن البنية تحت بتدّي مرونة كاملة.
+
+---
+
+## 🛠️ أوامر التطوير
 
 ```bash
-# Root commands
-pnpm dev:api                  # Start API in watch mode
+# Root
+pnpm dev               # API + Web بالتوازي
+pnpm dev:api           # API فقط
+pnpm dev:web           # Web فقط
+pnpm build             # build كل شيء
+pnpm typecheck         # type-check كل الـ packages
 
-# API commands (run from apps/api/)
-pnpm dev                      # Start with hot reload
-pnpm build                    # Build for production
-pnpm db:migrate               # Run migrations
-pnpm db:seed                  # Seed database
-pnpm db:reset                 # Reset + migrate + seed
-pnpm db:studio                # Prisma Studio (DB GUI)
-pnpm typecheck                # Check TypeScript types
+# Database (من الـ root)
+pnpm db:generate       # توليد migration files من الـ schema
+pnpm db:push           # تطبيق الـ schema مباشرة (dev)
+pnpm db:migrate        # تطبيق الـ migrations (production)
+pnpm db:seed           # بيانات تجريبية
+pnpm db:studio         # Drizzle Studio (GUI)
 ```
 
 ---
 
-## 📊 Database Overview
+## 🛣️ خريطة الطريق
 
-Phase 1 schema includes:
+### ✅ المرحلة 1 — الـ CRM الأساسي (تم)
+- بنية المشروع (monorepo + Docker)
+- Drizzle Schema كامل (14 جدول)
+- JWT Auth + Refresh rotation
+- RBAC بـ 4 أدوار + Capabilities + Scope
+- Companies, Countries, Markets
+- Pipeline Builder (Stages + Statuses + Reasons)
+- Leads CRUD + Activity Timeline + Multi-company
+- Dashboard KPIs + Charts
+- Design System كامل (Tailwind v4 + shadcn/ui)
+- Slide-over panels + RTL
 
-| Table | Purpose |
-|-------|---------|
-| `companies` | الشركات (أوبر، إن درايف) |
-| `countries` | الدول |
-| `company_countries` | شركة-في-دولة (أوبر مصر، إلخ) |
-| `users` | الموظفين (11 role) |
-| `user_assignments` | ربط user بشركة-دولة وتيم + parent |
-| `contacts` | الكباتن (سجل واحد لكل شخص) |
-| `enrollments` | تسجيل الكابتن في شركة معينة |
-| `pipeline_stages` | مراحل الفانل (قابلة للتخصيص لكل شركة-دولة) |
-| `enrollment_timeline` | سجل كامل لكل الأحداث |
-| `approvals` | طلبات الموافقة |
-| `lead_sources_config` | مصادر الليدز (قابلة للإضافة) |
-| `user_sessions` | جلسات الـ refresh tokens |
-| `holidays` | عطلات الدول |
-| `audit_logs` | سجل التدقيق |
+### 🔄 المرحلة 2 — التوزيع والأتمتة (3 أسابيع)
+- محرك التوزيع الكامل (round_robin/percentage/capacity/performance/hybrid)
+- Webhooks: Meta Lead Ads + TikTok (التطبيق الكامل)
+- استيراد جماعي من Excel
+- Google Sheets Sync (ثنائي الاتجاه)
+- نظام الموافقات + رفع المستندات
 
----
-
-## 🚧 Phase 1 Scope (المرحلة الحالية)
-
-✅ **Done:**
-- Monorepo + Docker setup
-- Complete database schema
-- Authentication (JWT with refresh rotation)
-- Full RBAC with Scope engine
-- Users + Hierarchy management
-- Companies, Countries, Company-Countries CRUD
-- Contacts + Enrollments (with multi-company support)
-- Configurable Pipeline stages (event-driven)
-- Approvals system (basic)
-- Timeline tracking
-- Comprehensive seed data
-
-🔜 **Next phases:**
-- **Phase 2:** Distribution engine + SLA + Full approvals workflow + Frontend UIs
-- **Phase 3:** Meta/TikTok webhooks + Google Sheets sync (Hero Dashboard) + Accounting integration
-- **Phase 4:** Bonus system + Competitions + Leaderboard + QA
-- **Phase 5:** Analytics + Heatmap + Cohort analysis + Executive dashboard
+### 🔄 المرحلة 3 — التواصل والتقارير (أسبوعين)
+- WhatsApp Business API integration
+- Inbox موحد داخل تفاصيل الليد
+- رسائل آلية على تغيير الحالة
+- Broadcasts للشرائح
+- تقارير تفصيلية + Heatmap + Funnel
 
 ---
 
-## 🔧 Troubleshooting
+## 🔧 استكشاف الأخطاء
 
 ### "Cannot connect to database"
 ```bash
-docker compose ps           # check if postgres is running
-docker compose restart postgres
+docker compose ps           # تأكد إن mysql شغال
+docker compose restart mysql
 ```
 
-### "Migration failed"
+### "Migration / push failed"
 ```bash
 cd apps/api
-pnpm db:reset               # nuke everything and start fresh
+pnpm db:push                # يطبق الـ schema مباشرة
 ```
 
-### JWT errors after code changes
-Clear all sessions:
-```bash
-# In postgres
+### مشاكل في الـ JWT بعد تغيير الكود
+```sql
+-- في mysql
 DELETE FROM user_sessions;
 ```
 
 ---
 
-## 📝 License
+## 📝 الترخيص
 
-Proprietary — Trade Way / Captain Masr © 2026
+ملكية خاصة — Trade Way / Captain Masr © 2026
