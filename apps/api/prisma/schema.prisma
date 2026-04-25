@@ -1,0 +1,291 @@
+// Trade Way CRM — Phase 1 schema
+// Generated for: PostgreSQL via Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ─────────────────────────────────────────────────────
+
+enum Role {
+  super_admin
+  ops_manager
+  account_manager
+  tl_sales
+  sales_agent
+  tl_activation
+  activation_agent
+  tl_driving
+  driving_agent
+  qa_specialist
+  team_member
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+enum TimelineEventType {
+  created
+  stage_changed
+  assigned
+  note_added
+  approval_requested
+  approval_granted
+  approval_rejected
+  contact_updated
+}
+
+// ─── Core entities ─────────────────────────────────────────────
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyCountries CompanyCountry[]
+
+  @@map("companies")
+}
+
+model Country {
+  id        String   @id @default(uuid())
+  code      String   @unique // ISO-2: EG, SA, MA, DZ
+  name      String
+  currency  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyCountries CompanyCountry[]
+  contacts         Contact[]
+  holidays         Holiday[]
+
+  @@map("countries")
+}
+
+model CompanyCountry {
+  id        String   @id @default(uuid())
+  companyId String
+  countryId String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  country         Country          @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  pipelineStages  PipelineStage[]
+  enrollments     Enrollment[]
+  userAssignments UserAssignment[]
+
+  @@unique([companyId, countryId])
+  @@map("company_countries")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role
+  active       Boolean  @default(true)
+  onLeave      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignments      UserAssignment[] @relation("user_assignments")
+  childAssignments UserAssignment[] @relation("parent_assignments")
+  sessions         UserSession[]
+  enrollments      Enrollment[]     @relation("assignee")
+  createdEnrollments Enrollment[]   @relation("createdBy")
+  timelineEvents   EnrollmentTimeline[]
+  approvalsRequested Approval[]     @relation("requested_by")
+  approvalsActed     Approval[]     @relation("acted_by")
+
+  @@map("users")
+}
+
+model UserAssignment {
+  id               String   @id @default(uuid())
+  userId           String
+  companyCountryId String
+  parentUserId     String?
+  createdAt        DateTime @default(now())
+
+  user           User           @relation("user_assignments", fields: [userId], references: [id], onDelete: Cascade)
+  parent         User?          @relation("parent_assignments", fields: [parentUserId], references: [id])
+  companyCountry CompanyCountry @relation(fields: [companyCountryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyCountryId])
+  @@index([companyCountryId])
+  @@index([parentUserId])
+  @@map("user_assignments")
+}
+
+model UserSession {
+  id               String   @id @default(uuid())
+  userId           String
+  refreshTokenHash String   @unique
+  revoked          Boolean  @default(false)
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  rotatedFromId    String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model Contact {
+  id        String   @id @default(uuid())
+  countryId String
+  phone     String
+  fullName  String
+  nationalId String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  country     Country      @relation(fields: [countryId], references: [id])
+  enrollments Enrollment[]
+
+  @@unique([countryId, phone])
+  @@index([phone])
+  @@map("contacts")
+}
+
+model PipelineStage {
+  id               String   @id @default(uuid())
+  companyCountryId String
+  key              String  // 'new', 'contacted', 'docs_uploaded', etc.
+  name             String
+  order            Int
+  requiresApproval Boolean  @default(false)
+  triggersEvent    String?
+  isTerminal       Boolean  @default(false)
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyCountry CompanyCountry @relation(fields: [companyCountryId], references: [id], onDelete: Cascade)
+  enrollments    Enrollment[]
+  approvals      Approval[]
+
+  @@unique([companyCountryId, key])
+  @@unique([companyCountryId, order])
+  @@map("pipeline_stages")
+}
+
+model Enrollment {
+  id               String   @id @default(uuid())
+  contactId        String
+  companyCountryId String
+  stageId          String
+  assigneeId       String?
+  createdById      String
+  source           String?  // 'meta', 'tiktok', 'walk_in', 'referral'
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  contact        Contact        @relation(fields: [contactId], references: [id])
+  companyCountry CompanyCountry @relation(fields: [companyCountryId], references: [id])
+  stage          PipelineStage  @relation(fields: [stageId], references: [id])
+  assignee       User?          @relation("assignee", fields: [assigneeId], references: [id])
+  createdBy      User           @relation("createdBy", fields: [createdById], references: [id])
+
+  timeline  EnrollmentTimeline[]
+  approvals Approval[]
+
+  @@unique([contactId, companyCountryId])
+  @@index([assigneeId])
+  @@index([companyCountryId])
+  @@index([stageId])
+  @@map("enrollments")
+}
+
+model EnrollmentTimeline {
+  id           String            @id @default(uuid())
+  enrollmentId String
+  actorId      String?
+  type         TimelineEventType
+  payload      Json
+  createdAt    DateTime          @default(now())
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  actor      User?      @relation(fields: [actorId], references: [id])
+
+  @@index([enrollmentId])
+  @@index([createdAt])
+  @@map("enrollment_timeline")
+}
+
+model Approval {
+  id            String         @id @default(uuid())
+  enrollmentId  String
+  toStageId     String
+  status        ApprovalStatus @default(pending)
+  reason        String?
+  requestedById String
+  actedById     String?
+  actedAt       DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  enrollment  Enrollment    @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  toStage     PipelineStage @relation(fields: [toStageId], references: [id])
+  requestedBy User          @relation("requested_by", fields: [requestedById], references: [id])
+  actedBy     User?         @relation("acted_by", fields: [actedById], references: [id])
+
+  @@index([enrollmentId])
+  @@index([status])
+  @@map("approvals")
+}
+
+model LeadSourceConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  label     String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("lead_sources_config")
+}
+
+model Holiday {
+  id        String   @id @default(uuid())
+  countryId String
+  date      DateTime @db.Date
+  name      String
+  createdAt DateTime @default(now())
+
+  country Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, date])
+  @@map("holidays")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String
+  resource  String
+  resourceId String?
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([resource, resourceId])
+  @@map("audit_logs")
+}
