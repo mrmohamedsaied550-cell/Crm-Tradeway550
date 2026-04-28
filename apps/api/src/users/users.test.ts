@@ -1,8 +1,9 @@
 /**
- * Integration tests — verifies the C8 seed produced 5 users for the default
- * tenant, that each is bound to the correct role, that bcrypt verification
- * succeeds with the seed password (and only that password), and that the
- * users table honours RLS.
+ * Integration tests — verifies the seed produces the expected user roster
+ * for the default tenant (C8 baseline plus the C12 team-assigned additions),
+ * that each is bound to the correct role, that bcrypt verification succeeds
+ * with the seed password (and only that password), and that the users table
+ * honours RLS.
  *
  * Requires Postgres reachable via DATABASE_URL.
  * Re-run-safe.
@@ -24,6 +25,9 @@ const SEEDED = [
   { email: 'eg.manager@tradeway.com', role: 'account_manager' },
   { email: 'eg.uber.tl.sales@tradeway.com', role: 'tl_sales' },
   { email: 'eg.uber.sales1@tradeway.com', role: 'sales_agent' },
+  // C12 — team-assigned additions.
+  { email: 'eg.uber.activation1@tradeway.com', role: 'activation_agent' },
+  { email: 'sa.uber.sales1@tradeway.com', role: 'sales_agent' },
 ] as const;
 
 let prisma: PrismaClient;
@@ -52,7 +56,7 @@ describe('users — seeded data + role mapping + password verification', () => {
     await prisma.$disconnect();
   });
 
-  it('seeds exactly 5 users for trade_way_default', async () => {
+  it('seeds the expected users for trade_way_default', async () => {
     const rows = await withTenant(defaultTenantId, (tx) =>
       tx.user.findMany({ where: { email: { in: SEEDED.map((s) => s.email) } } }),
     );

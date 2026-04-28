@@ -6,14 +6,14 @@
  * C8 adds 5 dev users for trade_way_default with bcrypt password hashes.
  * C10 adds the 5 default pipeline stages (New / Contacted / Interested /
  * Converted / Lost) per tenant.
+ * C12 adds the org structure: 1 default Company (Uber), 2 Countries
+ * (EG, SA), 3 Teams (Sales / Activation / Driving under EG, Sales under
+ * SA), and assigns the seeded sales agents to their team.
  *
  * Passwords come from the `SEED_DEFAULT_PASSWORD` environment variable when
  * set; otherwise the dev placeholder `Password@123` is used. The plaintext
  * is NEVER logged. Production deployments must set SEED_DEFAULT_PASSWORD or
  * disable the seed entirely.
- *
- * Larger fixtures (companies Uber + inDrive, country EG with timezone
- * Africa/Cairo and holidays, teams) land in C13/C14/C18.
  *
  * Run with: `pnpm db:seed`. Idempotent — safe to re-run repeatedly.
  */
@@ -117,25 +117,145 @@ async function seedRolesAndMappings(
   );
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// C12 — org structure: Company / Country / Team
+// ───────────────────────────────────────────────────────────────────────
+
+interface SeedCompanyDef {
+  readonly code: string;
+  readonly name: string;
+}
+interface SeedCountryDef {
+  readonly companyCode: string;
+  readonly code: string; // ISO 3166-1 alpha-2
+  readonly name: string;
+}
+/** Composite team key: `<companyCode>:<countryCode>:<teamName>`. */
+interface SeedTeamDef {
+  readonly companyCode: string;
+  readonly countryCode: string;
+  readonly name: string;
+}
+
+const SEED_COMPANIES: readonly SeedCompanyDef[] = [{ code: 'uber', name: 'Uber' }];
+
+const SEED_COUNTRIES: readonly SeedCountryDef[] = [
+  { companyCode: 'uber', code: 'EG', name: 'Egypt' },
+  { companyCode: 'uber', code: 'SA', name: 'Saudi Arabia' },
+];
+
+const SEED_TEAMS: readonly SeedTeamDef[] = [
+  { companyCode: 'uber', countryCode: 'EG', name: 'Sales' },
+  { companyCode: 'uber', countryCode: 'EG', name: 'Activation' },
+  { companyCode: 'uber', countryCode: 'EG', name: 'Driving' },
+  { companyCode: 'uber', countryCode: 'SA', name: 'Sales' },
+];
+
+const teamKey = (companyCode: string, countryCode: string, name: string): string =>
+  `${companyCode}:${countryCode}:${name}`;
+
+async function seedOrgStructure(tenantId: string): Promise<{
+  companyIdByCode: Map<string, string>;
+  countryIdByKey: Map<string, string>;
+  teamIdByKey: Map<string, string>;
+}> {
+  const companyIdByCode = new Map<string, string>();
+  const countryIdByKey = new Map<string, string>();
+  const teamIdByKey = new Map<string, string>();
+
+  await withTenant(tenantId, async (tx) => {
+    for (const c of SEED_COMPANIES) {
+      const row = await tx.company.upsert({
+        where: { tenantId_code: { tenantId, code: c.code } },
+        update: { name: c.name, isActive: true },
+        create: { tenantId, code: c.code, name: c.name, isActive: true },
+      });
+      companyIdByCode.set(c.code, row.id);
+    }
+
+    for (const c of SEED_COUNTRIES) {
+      const companyId = companyIdByCode.get(c.companyCode);
+      if (!companyId) {
+        throw new Error(`seed: country ${c.code} references unknown company ${c.companyCode}`);
+      }
+      const row = await tx.country.upsert({
+        where: {
+          tenantId_companyId_code: { tenantId, companyId, code: c.code },
+        },
+        update: { name: c.name, isActive: true },
+        create: { tenantId, companyId, code: c.code, name: c.name, isActive: true },
+      });
+      countryIdByKey.set(`${c.companyCode}:${c.code}`, row.id);
+    }
+
+    for (const t of SEED_TEAMS) {
+      const countryId = countryIdByKey.get(`${t.companyCode}:${t.countryCode}`);
+      if (!countryId) {
+        throw new Error(
+          `seed: team "${t.name}" references unknown country ${t.companyCode}:${t.countryCode}`,
+        );
+      }
+      const row = await tx.team.upsert({
+        where: {
+          tenantId_countryId_name: { tenantId, countryId, name: t.name },
+        },
+        update: { isActive: true },
+        create: { tenantId, countryId, name: t.name, isActive: true },
+      });
+      teamIdByKey.set(teamKey(t.companyCode, t.countryCode, t.name), row.id);
+    }
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `seed: org structure ready — ${SEED_COMPANIES.length} companies, ${SEED_COUNTRIES.length} countries, ${SEED_TEAMS.length} teams for tenant ${tenantId}`,
+  );
+  return { companyIdByCode, countryIdByKey, teamIdByKey };
+}
+
 interface SeedUserDef {
   readonly email: string;
   readonly name: string;
   readonly role: RoleCode;
+  /** Optional team membership — `<companyCode>:<countryCode>:<teamName>`. */
+  readonly teamKey?: string;
 }
 
 const SEED_USERS: readonly SeedUserDef[] = [
   { email: 'super@tradeway.com', name: 'Super Admin', role: 'super_admin' },
   { email: 'ops@tradeway.com', name: 'Operations Manager', role: 'ops_manager' },
   { email: 'eg.manager@tradeway.com', name: 'Account Manager — Egypt', role: 'account_manager' },
-  { email: 'eg.uber.tl.sales@tradeway.com', name: 'TL Sales — Uber EG', role: 'tl_sales' },
+  {
+    email: 'eg.uber.tl.sales@tradeway.com',
+    name: 'TL Sales — Uber EG',
+    role: 'tl_sales',
+    teamKey: 'uber:EG:Sales',
+  },
   {
     email: 'eg.uber.sales1@tradeway.com',
     name: 'Sara — Sales Agent (Uber EG)',
     role: 'sales_agent',
+    teamKey: 'uber:EG:Sales',
+  },
+  {
+    email: 'eg.uber.activation1@tradeway.com',
+    name: 'Mona — Activation Agent (Uber EG)',
+    role: 'activation_agent',
+    teamKey: 'uber:EG:Activation',
+  },
+  {
+    email: 'sa.uber.sales1@tradeway.com',
+    name: 'Khalid — Sales Agent (Uber SA)',
+    role: 'sales_agent',
+    teamKey: 'uber:SA:Sales',
   },
 ];
 
-async function seedUsers(tenantId: string, roleIdByCode: Map<string, string>): Promise<void> {
+async function seedUsers(
+  tenantId: string,
+  roleIdByCode: Map<string, string>,
+  teamIdByKey: Map<string, string>,
+): Promise<void> {
   // Resolve plaintext from env; never log it. The placeholder default is
   // documented in apps/api/.env.example so dev users can log in immediately.
   const plaintext = process.env['SEED_DEFAULT_PASSWORD'] ?? 'Password@123';
@@ -147,12 +267,17 @@ async function seedUsers(tenantId: string, roleIdByCode: Map<string, string>): P
       if (!roleId) {
         throw new Error(`seed: role ${u.role} not found for tenant ${tenantId}`);
       }
+      const teamId = u.teamKey ? (teamIdByKey.get(u.teamKey) ?? null) : null;
+      if (u.teamKey && !teamId) {
+        throw new Error(`seed: user ${u.email} references unknown team ${u.teamKey}`);
+      }
       const email = u.email.trim().toLowerCase();
       await tx.user.upsert({
         where: { tenantId_email: { tenantId, email } },
         update: {
           name: u.name,
           roleId,
+          teamId,
           status: 'active',
           // Re-set hash on every run so dev environments stay consistent.
           passwordHash: hash,
@@ -162,6 +287,7 @@ async function seedUsers(tenantId: string, roleIdByCode: Map<string, string>): P
           email,
           name: u.name,
           roleId,
+          teamId,
           status: 'active',
           passwordHash: hash,
           language: 'en',
@@ -210,7 +336,8 @@ async function main(): Promise<void> {
     const rows = await tx.role.findMany({ select: { id: true, code: true } });
     for (const r of rows) roleIdByCode.set(r.code, r.id);
   });
-  await seedUsers(tenant.id, roleIdByCode);
+  const { teamIdByKey } = await seedOrgStructure(tenant.id);
+  await seedUsers(tenant.id, roleIdByCode, teamIdByKey);
   await seedPipelineStages(tenant.id);
 }
 
