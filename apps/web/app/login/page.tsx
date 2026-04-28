@@ -1,68 +1,113 @@
+'use client';
+
+import { useState, useEffect, type FormEvent } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Field, Input } from '@/components/ui/input';
+import { Notice } from '@/components/ui/notice';
+import { ApiError, authApi } from '@/lib/api';
+import { setAccessToken, setCachedMe, setTenantCode, getAccessToken } from '@/lib/auth';
+
+const DEFAULT_TENANT_CODE = 'trade_way_default';
 
 /**
- * Login placeholder.
+ * Login page wired to POST /api/v1/auth/login.
  *
- * C4 ships only the static markup for layout review. The real auth flow
- * (form validation, server action calling /api/v1/auth/login, error states,
- * lockout messaging, token cookies) lands in C9 (API auth) and C10 (web).
+ * Stores the access token + a cached `me` snapshot in localStorage so the
+ * admin shell can render the current user without a second round-trip.
+ * Refresh-token cookie storage + rotation flow land in a later chunk;
+ * for the C13 admin surface, the access token alone is enough.
  */
 export default function LoginPage() {
   const t = useTranslations('login');
+  const router = useRouter();
+  const params = useSearchParams();
+  const next = params.get('next') ?? '/admin';
+
+  const [email, setEmail] = useState<string>('super@tradeway.com');
+  const [password, setPassword] = useState<string>('');
+  const [tenantCode, setTenantCodeInput] = useState<string>(DEFAULT_TENANT_CODE);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (getAccessToken()) router.replace(next);
+  }, [router, next]);
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const result = await authApi.login({ email, password, tenantCode });
+      setAccessToken(result.accessToken);
+      setTenantCode(tenantCode);
+      setCachedMe({
+        userId: result.user.id,
+        email: result.user.email,
+        name: result.user.name,
+        tenantCode,
+        roleCode: result.user.role.code,
+        roleNameEn: result.user.role.nameEn,
+        roleNameAr: result.user.role.nameAr,
+      });
+      router.push(next);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : t('failed');
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center">
-      <div className="rounded-lg border border-surface-border bg-surface-card p-6 shadow-card">
+      <form
+        onSubmit={onSubmit}
+        className="rounded-lg border border-surface-border bg-surface-card p-6 shadow-card"
+      >
         <h1 className="text-xl font-semibold text-ink-primary">{t('title')}</h1>
-        <p className="mt-2 text-sm text-ink-secondary">{t('subtitle')}</p>
+        <p className="mt-2 text-sm text-ink-secondary">{t('subtitleActive')}</p>
 
-        <form className="mt-6 flex flex-col gap-4">
-          <Field label={t('emailLabel')} type="email" autoComplete="username" />
-          <Field label={t('passwordLabel')} type="password" autoComplete="current-password" />
+        <div className="mt-6 flex flex-col gap-4">
+          {error ? <Notice tone="error">{error}</Notice> : null}
 
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            className={cn(
-              'mt-2 inline-flex h-10 items-center justify-center rounded-md',
-              'bg-brand-600 px-4 text-sm font-medium text-white',
-              'opacity-60 cursor-not-allowed',
-            )}
-          >
+          <Field label={t('tenantLabel')} required>
+            <Input
+              value={tenantCode}
+              onChange={(e) => setTenantCodeInput(e.target.value)}
+              placeholder="trade_way_default"
+              autoComplete="organization"
+              required
+            />
+          </Field>
+
+          <Field label={t('emailLabel')} required>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+            />
+          </Field>
+
+          <Field label={t('passwordLabel')} required>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </Field>
+
+          <Button type="submit" className="mt-2 w-full" loading={submitting}>
             {t('submit')}
-          </button>
-
-          <p className="text-center text-xs text-ink-tertiary">{t('disabled')}</p>
-        </form>
-      </div>
+          </Button>
+        </div>
+      </form>
     </div>
-  );
-}
-
-function Field({
-  label,
-  type,
-  autoComplete,
-}: {
-  label: string;
-  type: 'email' | 'password';
-  autoComplete: 'username' | 'current-password';
-}) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium text-ink-primary">{label}</span>
-      <input
-        type={type}
-        autoComplete={autoComplete}
-        disabled
-        className={cn(
-          'h-10 rounded-md border border-surface-border bg-surface px-3 text-sm text-ink-primary',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1',
-          'disabled:opacity-60 disabled:cursor-not-allowed',
-        )}
-      />
-    </label>
   );
 }

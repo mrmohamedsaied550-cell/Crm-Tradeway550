@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
   LayoutDashboard,
@@ -7,40 +10,38 @@ import {
   Users2,
   UserCog,
   ScrollText,
+  Contact,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
   href: string;
-  labelKey: 'dashboard' | 'companies' | 'countries' | 'teams' | 'users' | 'audit';
+  labelKey: 'dashboard' | 'companies' | 'countries' | 'teams' | 'users' | 'leads' | 'audit';
   icon: LucideIcon;
-  /**
-   * When true, the link is rendered but disabled — the destination route
-   * does not exist yet. Removed when the matching chunk lands.
-   */
+  /** When true, the link is rendered but disabled — destination doesn't exist. */
   pending?: boolean;
 }
 
 const ITEMS: readonly NavItem[] = [
   { href: '/admin', labelKey: 'dashboard', icon: LayoutDashboard },
-  { href: '/admin/companies', labelKey: 'companies', icon: Building2, pending: true },
-  { href: '/admin/countries', labelKey: 'countries', icon: Globe, pending: true },
-  { href: '/admin/teams', labelKey: 'teams', icon: Users2, pending: true },
-  { href: '/admin/users', labelKey: 'users', icon: UserCog, pending: true },
+  { href: '/admin/companies', labelKey: 'companies', icon: Building2 },
+  { href: '/admin/countries', labelKey: 'countries', icon: Globe },
+  { href: '/admin/teams', labelKey: 'teams', icon: Users2 },
+  { href: '/admin/users', labelKey: 'users', icon: UserCog },
+  { href: '/admin/leads', labelKey: 'leads', icon: Contact },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, pending: true },
 ];
 
 /**
- * Admin Insight Mode side navigation.
- *
- * C4 ships only the structure. The Companies / Countries / Teams / Users /
- * Audit destinations land in C12–C16 (and matching backend modules earlier).
- * Pending items are styled as disabled and do not navigate.
+ * Admin side navigation. Active route gets brand styling. C13 enabled the
+ * Companies / Countries / Teams / Users / Leads links; Audit is still
+ * placeholder until C16.
  */
 export function AdminSideNav() {
   const t = useTranslations('admin.sideNav');
   const tCommon = useTranslations('common');
+  const pathname = usePathname() ?? '';
 
   return (
     <nav
@@ -50,11 +51,16 @@ export function AdminSideNav() {
       <ul className="flex flex-col gap-0.5 p-3">
         {ITEMS.map((item) => {
           const Icon = item.icon;
+          const isActive =
+            item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+
           const className = cn(
             'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
             item.pending
               ? 'cursor-not-allowed text-ink-tertiary'
-              : 'text-ink-secondary hover:bg-brand-50 hover:text-brand-700',
+              : isActive
+                ? 'bg-brand-50 font-medium text-brand-700'
+                : 'text-ink-secondary hover:bg-brand-50 hover:text-brand-700',
           );
 
           const content = (
