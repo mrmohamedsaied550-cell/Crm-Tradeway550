@@ -130,7 +130,30 @@ jobs:
             -c "SELECT (SELECT COUNT(*) FROM tenants) AS tenants, (SELECT COUNT(*) FROM capabilities) AS caps;" || true
 
       - name: Run tests
-        run: pnpm -r --if-present test
+        run: |
+          set -x
+          # Dump environment that tests rely on (no secrets — just keys + sanitized DB host).
+          echo "node $(node --version)"
+          echo "pnpm $(pnpm --version)"
+          echo "DATABASE_URL host: $(echo "$DATABASE_URL" | sed -E 's|.*@([^/]+)/.*|\1|')"
+          echo "SEED_DEFAULT_PASSWORD set: $([ -n "${SEED_DEFAULT_PASSWORD:-}" ] && echo yes || echo no)"
+          # Run the api tests directly so output is unmediated.
+          pnpm -F @crm/api test 2>&1 | tee /tmp/api-test.log
+          api_exit=${PIPESTATUS[0]}
+          echo "api test exit: $api_exit"
+          exit "$api_exit"
+
+      - name: Dump test log on failure
+        if: failure()
+        run: |
+          echo "=== /tmp/api-test.log (full) ==="
+          cat /tmp/api-test.log || echo "(no log captured)"
+          echo "=== DB state on failure ==="
+          PGPASSWORD=crm_dev_pass_2026 psql -h localhost -U crm_user -d crm_tradeway -c "\dt" || true
+          PGPASSWORD=crm_dev_pass_2026 psql -h localhost -U crm_user -d crm_tradeway \
+            -c "SELECT (SELECT COUNT(*) FROM tenants) AS tenants, (SELECT COUNT(*) FROM capabilities) AS caps;" || true
+          PGPASSWORD=crm_dev_pass_2026 psql -h localhost -U crm_user -d crm_tradeway \
+            -c "SET app.tenant_id = (SELECT id::text FROM tenants WHERE code='trade_way_default'); SELECT COUNT(*) FROM users;" || true
 
   build:
     name: Build
