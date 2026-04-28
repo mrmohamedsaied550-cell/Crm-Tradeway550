@@ -32,6 +32,8 @@ import { hashPassword } from '../identity/password.util';
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
 import { PipelineService } from './pipeline.service';
+import { AssignmentService } from './assignment.service';
+import { SlaService } from './sla.service';
 import { PIPELINE_STAGE_DEFINITIONS } from './pipeline.registry';
 
 const TEST_TENANT_CODE = '__c10_test__';
@@ -66,7 +68,9 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     await prisma.$connect();
     prismaSvc = new PrismaService();
     pipeline = new PipelineService(prismaSvc);
-    leads = new LeadsService(prismaSvc, pipeline);
+    const assignment = new AssignmentService(prismaSvc);
+    const sla = new SlaService(prismaSvc, assignment);
+    leads = new LeadsService(prismaSvc, pipeline, assignment, sla);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     // Provision a test tenant + a sales_agent role + a couple of users.

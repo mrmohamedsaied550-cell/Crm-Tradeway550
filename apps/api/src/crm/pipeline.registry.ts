@@ -37,5 +37,34 @@ export const LEAD_SOURCES = ['manual', 'meta', 'tiktok', 'whatsapp', 'import'] a
 export type LeadSource = (typeof LEAD_SOURCES)[number];
 
 /** Activity types written by the system or the agent. */
-export const ACTIVITY_TYPES = ['note', 'call', 'stage_change', 'assignment', 'system'] as const;
+export const ACTIVITY_TYPES = [
+  'note',
+  'call',
+  'stage_change',
+  'assignment',
+  // C11: emitted by AssignmentService when round-robin picks an assignee.
+  // Distinct from `assignment` so reports can separate manual vs auto.
+  'auto_assignment',
+  // C11: emitted by SlaService.runReassignmentForBreaches when a lead's
+  // SLA expires before the assignee responds.
+  'sla_breach',
+  'system',
+] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+
+/**
+ * Activity types that count as an "agent response" — receiving any of
+ * these resets the lead's response-SLA clock. Pure system events
+ * (sla_breach, system) and reassignment events (auto_assignment) do
+ * NOT reset, otherwise the breach scanner would never fire.
+ */
+export const SLA_RESETTING_ACTIVITY_TYPES = [
+  'note',
+  'call',
+  'stage_change',
+  'assignment',
+] as const satisfies readonly ActivityType[];
+
+export function isSlaResetting(type: ActivityType): boolean {
+  return (SLA_RESETTING_ACTIVITY_TYPES as readonly string[]).includes(type);
+}

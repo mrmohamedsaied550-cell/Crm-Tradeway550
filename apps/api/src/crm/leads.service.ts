@@ -8,8 +8,10 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { PipelineService } from './pipeline.service';
-import { DEFAULT_STAGE_CODE, type ActivityType } from './pipeline.registry';
+import { DEFAULT_STAGE_CODE, isSlaResetting, type ActivityType } from './pipeline.registry';
 import { normalizeE164 } from './phone.util';
+import { AssignmentService } from './assignment.service';
+import { SlaService } from './sla.service';
 import type { CreateLeadDto, UpdateLeadDto, AddActivityDto, ListLeadsQueryDto } from './leads.dto';
 
 /**
@@ -26,6 +28,8 @@ export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
+    private readonly assignment: AssignmentService,
+    private readonly sla: SlaService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -48,6 +52,12 @@ export class LeadsService {
 
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
+        const now = new Date();
+        // Non-terminal new lead → SLA starts ticking immediately. Terminal
+        // (rare on create — admin import case) → SLA paused.
+        const slaDueAt = stage.isTerminal ? null : this.sla.computeDueAt(now);
+        const slaStatus = stage.isTerminal ? 'paused' : 'active';
+
         const lead = await tx.lead.create({
           data: {
             tenantId,
@@ -58,6 +68,8 @@ export class LeadsService {
             stageId: stage.id,
             assignedToId: dto.assignedToId ?? null,
             createdById: actorUserId,
+            slaDueAt,
+            slaStatus,
           },
           include: { stage: true, captain: true },
         });
@@ -221,9 +233,19 @@ export class LeadsService {
     }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Reassignment counts as an SLA-resetting event so the new owner
+      // gets a full window. We skip the reset when the lead is in a
+      // terminal stage (SLA stays paused).
+      const inTerminal = before.stage.isTerminal;
       const updated = await tx.lead.update({
         where: { id },
-        data: { assignedToId: assigneeUserId },
+        data: {
+          assignedToId: assigneeUserId,
+          ...(!inTerminal && {
+            slaDueAt: this.sla.computeDueAt(),
+            slaStatus: 'active',
+          }),
+        },
         include: { stage: true },
       });
       await this.appendActivity(tx, {
@@ -243,6 +265,57 @@ export class LeadsService {
     });
   }
 
+  /**
+   * Auto-assign a lead via the round-robin AssignmentService. Returns the
+   * updated lead, or null when no eligible agent is available. Writes an
+   * `auto_assignment` activity and resets the SLA window for the new
+   * owner. No-op if the lead is already assigned to the picked agent.
+   */
+  async autoAssign(id: string, actorUserId: string | null = null) {
+    const tenantId = requireTenantId();
+    const before = await this.findByIdOrThrow(id);
+
+    if (before.stage.isTerminal) {
+      throw new BadRequestException({
+        code: 'lead.terminal_stage',
+        message: `Cannot auto-assign a lead in terminal stage "${before.stage.code}"`,
+      });
+    }
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const pickedId = await this.assignment.assignLeadViaRoundRobin({
+        tx,
+        leadId: id,
+        tenantId,
+        // Don't pick the current assignee — auto-assign is meaningful
+        // either when the lead is unassigned or as a manual rotation.
+        excludeUserIds: before.assignedToId ? [before.assignedToId] : [],
+        activityType: 'auto_assignment',
+        actorUserId,
+        body: 'Lead auto-assigned via round-robin',
+        payload: {
+          event: 'auto_assignment',
+          fromUserId: before.assignedToId ?? null,
+          strategy: 'round_robin',
+        },
+      });
+
+      if (!pickedId) {
+        return null;
+      }
+
+      // Fresh SLA window for the new owner.
+      return tx.lead.update({
+        where: { id },
+        data: {
+          slaDueAt: this.sla.computeDueAt(),
+          slaStatus: 'active',
+        },
+        include: { stage: true, captain: true },
+      });
+    });
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // move stage
   // ───────────────────────────────────────────────────────────────────────
@@ -259,9 +332,17 @@ export class LeadsService {
     }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Stage transitions drive SLA state:
+      //   non-terminal → fresh window (counts as agent response).
+      //   terminal     → pause; the breach scanner ignores paused rows.
+      const now = new Date();
+      const sla: Prisma.LeadUncheckedUpdateInput = toStage.isTerminal
+        ? { slaDueAt: null, slaStatus: 'paused' }
+        : { slaDueAt: this.sla.computeDueAt(now), slaStatus: 'active', lastResponseAt: now };
+
       const updated = await tx.lead.update({
         where: { id },
-        data: { stageId: toStage.id },
+        data: { stageId: toStage.id, ...sla },
         include: { stage: true, captain: true },
       });
       await this.appendActivity(tx, {
@@ -286,10 +367,10 @@ export class LeadsService {
 
   async addActivity(id: string, dto: AddActivityDto, actorUserId: string) {
     const tenantId = requireTenantId();
-    await this.findByIdOrThrow(id);
+    const before = await this.findByIdOrThrow(id);
 
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.leadActivity.create({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const created = await tx.leadActivity.create({
         data: {
           tenantId,
           leadId: id,
@@ -305,8 +386,18 @@ export class LeadsService {
           createdAt: true,
           createdById: true,
         },
-      }),
-    );
+      });
+
+      // Agent-driven activity types reset the response-SLA window. We
+      // never resurrect a paused (terminal) SLA — once a lead is
+      // converted/lost the clock stays off until a human moves it back
+      // to a non-terminal stage via moveStage().
+      if (isSlaResetting(dto.type) && !before.stage.isTerminal) {
+        await this.sla.resetForLead(tx, id, { markResponse: true });
+      }
+
+      return created;
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────────
