@@ -1,295 +1,155 @@
-# 🚗 Trade Way CRM
+# Trade Way / Captain Masr CRM
 
-نظام إدارة علاقات العملاء (CRM) لشركة Trade Way / Captain Masr — مخصص لإدارة تسجيل السواقين في شركات النقل (أوبر، إن درايف) عبر دول متعددة.
+Multi-country, multi-company CRM for captain acquisition and activation across
+Egypt, Saudi Arabia, Morocco, and Algeria, supporting partner companies
+including Uber, inDrive, DiDi, Careem, and Yango.
 
----
+## Status
 
-## 🏗️ Architecture
+> **Foundations only — no business features are implemented yet.**
+>
+> The repository currently contains the output of two execution chunks of
+> Sprint 1:
+>
+> - **C1** — workspace skeleton, shared TypeScript / ESLint / Prettier configs.
+> - **C2** — Docker dev runner, GitHub Actions CI, Husky + commitlint +
+>   lint-staged, and a portable gitleaks wrapper.
+>
+> There is **no** auth, RBAC, database schema, API endpoint, web page,
+> business entity, WhatsApp integration, Sheets sync, or Meta CAPI in the
+> code yet. Everything described in the product and architecture documents
+> lands incrementally in subsequent chunks (C3 onward).
+
+## Authoritative references
+
+The full scope and engineering plan live in three long-form documents that
+travel alongside this repository (currently maintained outside the repo
+until they are committed under `docs/`):
+
+- **Master PRD v2.0** — unified product requirements: core CRM, UX & Admin
+  control, WhatsApp Conversational Layer, Campaigns, Partner Sheets Sync &
+  Reconciliation, Meta Lead Ads + Conversions API. 26 sections.
+- **System Architecture Document** — engineering blueprint: tech stack
+  decisions, module boundaries, realtime, integrations, MVP plan. 12 sections.
+- **Sprint 1 Technical Backlog + Execution Chunks** — the chunked
+  implementation plan currently in flight (C0 → C20).
+
+These three documents are the source of truth for any "should the system do
+X?" question. This README only describes what is actually present in the
+repository today.
+
+## Tech stack
+
+Planned for the project, partially wired today:
+
+- **Backend (planned):** Node.js 20, TypeScript, NestJS, Prisma, PostgreSQL 16,
+  Redis 7, BullMQ, Socket.IO. **Today:** TypeScript scaffold only — no NestJS
+  bootstrap yet (lands in C3).
+- **Frontend (planned):** Next.js 14 (App Router), Tailwind + shadcn/ui,
+  next-intl (AR / EN), PWA. **Today:** placeholder root layout only — no
+  pages, no shell (lands in C4).
+- **Shared workspaces:** `@crm/shared` (types, zod schemas — empty),
+  `@crm/config-eslint`, `@crm/config-prettier`.
+- **Tooling:** pnpm 9 workspaces, ESLint 8 + Prettier 3, Husky 9, commitlint,
+  lint-staged, gitleaks (CI + local wrapper).
+- **Local infra:** Postgres 16 + Redis 7 via `docker-compose.yml`.
+- **CI:** GitHub Actions — install / typecheck / lint / test / build /
+  secrets-scan / commitlint.
+
+## Repo layout
 
 ```
-crm-tradeway/
+.
 ├── apps/
-│   ├── api/              # Backend (Fastify + TypeScript + Prisma)
-│   └── web/              # Frontend (React + TypeScript)  [Phase 2]
+│   ├── api/                # @crm/api  — placeholder; NestJS bootstrap lands in C3
+│   └── web/                # @crm/web  — placeholder; Next shell + i18n land in C4
 ├── packages/
-│   └── shared/           # Shared types
-├── docker-compose.yml    # PostgreSQL + Redis
-└── package.json          # pnpm workspaces
+│   ├── shared/             # shared types + zod schemas (empty)
+│   ├── config-eslint/      # base ESLint config
+│   └── config-prettier/    # base Prettier config
+├── scripts/
+│   └── gitleaks.sh         # portable gitleaks wrapper (binary or docker)
+├── .github/workflows/      # CI workflow
+├── .husky/                 # pre-commit + commit-msg hooks
+├── docker-compose.yml      # Postgres 16 + Redis 7 for local dev
+├── tsconfig.base.json      # strict TypeScript baseline
+└── package.json            # pnpm workspaces root
 ```
 
-### Tech Stack
-
-- **Backend:** Node.js 20+ · TypeScript · Fastify · Prisma ORM · PostgreSQL · Redis · BullMQ
-- **Auth:** JWT (access + refresh with rotation)
-- **Validation:** Zod
-- **Package Manager:** pnpm (workspaces)
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 20+
 - pnpm 9+ (`npm install -g pnpm`)
-- Docker + Docker Compose
+- Docker + Docker Compose (for the dev database)
 
-### Setup
-
-```bash
-# 1. Install dependencies (from root)
-pnpm install
-
-# 2. Start PostgreSQL + Redis
-docker compose up -d
-
-# 3. Set up environment
-cd apps/api
-cp .env.example .env
-# (the .env file is already configured for local dev)
-
-# 4. Run migrations + seed data
-pnpm db:migrate   # creates tables
-pnpm db:seed      # populates sample data
-
-# 5. Start the API
-cd ../..
-pnpm dev:api
-```
-
-The API will be running at **http://localhost:3000**
-
----
-
-## 🔐 Test Accounts
-
-All accounts use password: `Password@123`
-
-| Role | Email |
-|------|-------|
-| 🔐 Super Admin | `super@tradeway.com` |
-| 🔐 Operations Manager | `ops@tradeway.com` |
-| 🇪🇬 Egypt Account Manager | `eg.manager@tradeway.com` |
-| 🇸🇦 Saudi Account Manager | `sa.manager@tradeway.com` |
-| 🇲🇦 Morocco Account Manager | `ma.manager@tradeway.com` |
-| 🇩🇿 Algeria Account Manager | `dz.manager@tradeway.com` |
-| TL Sales (Uber EG) | `eg.uber.tl.sales@tradeway.com` |
-| Sales Agent (Sara) | `eg.uber.sales1@tradeway.com` |
-| Sales Agent (Mohamed) | `eg.uber.sales2@tradeway.com` |
-| Sales Agent (Noura) | `eg.uber.sales3@tradeway.com` |
-| TL Activation | `eg.uber.tl.activ@tradeway.com` |
-| TL Driving | `eg.uber.tl.drive@tradeway.com` |
-| Activation Agent | `eg.uber.activ1@tradeway.com` |
-| Driving Agent | `eg.uber.drive1@tradeway.com` |
-| QA Specialist | `qa@tradeway.com` |
-
----
-
-## 🧪 API Quick Test
-
-### 1. Login
+## Quick start
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"super@tradeway.com","password":"Password@123"}'
+pnpm install                          # installs workspaces; husky installs git hooks
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+pnpm dev                              # docker compose up + api + web in parallel
 ```
 
-Response:
-```json
-{
-  "accessToken": "eyJhbG...",
-  "refreshToken": "eyJhbG...",
-  "user": { "id":"...", "name":"Super Admin", "role":"super_admin" }
-}
-```
+The `api` and `web` dev scripts currently print
+`hello from @crm/api` / `hello from @crm/web` placeholders and exit. They
+become real servers in **C3** (NestJS bootstrap, `/health`) and **C4**
+(Next.js shell with auth pages and i18n).
 
-### 2. Get your profile + scope
-
-```bash
-curl http://localhost:3000/api/v1/auth/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### 3. List leads (filtered by your scope automatically)
-
-```bash
-curl http://localhost:3000/api/v1/enrollments \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-- Super Admin → sees all leads (all countries, all companies)
-- Egypt Manager → sees only Egypt leads
-- Sara (Sales Agent) → sees only leads assigned to her
-- TL Sales → sees team's leads + unassigned ones
-
----
-
-## 🔒 Visibility Engine (RBAC)
-
-The core of the system is in `apps/api/src/lib/rbac.ts`. Every request passes through:
-
-1. **Authentication** — who is making the request? (JWT)
-2. **Authorization** — does their role allow this action? (capabilities)
-3. **Scope filtering** — what data can they see? (automatic WHERE clauses)
-
-### Role Hierarchy
+## Available scripts
 
 ```
-Super Admin  (level 100)           — sees everything
-    │
-    ├─ Operations Manager (90)     — sees all countries (read-only)
-    │
-    └─ Account Manager (80)        — sees their country only
-            │
-            └─ Team Leader (60)    — sees their team only
-                    │
-                    └─ Agent (30)  — sees only assigned leads
+pnpm dev               docker compose, then api + web concurrently
+pnpm dev:db            start Postgres + Redis
+pnpm dev:db:down       stop Postgres + Redis
+pnpm dev:db:logs       tail docker compose logs
+pnpm dev:api           run @crm/api dev (placeholder today)
+pnpm dev:web           run @crm/web dev (placeholder today)
+pnpm typecheck         tsc --noEmit across all workspaces
+pnpm lint              ESLint across all workspaces
+pnpm build             tsc / next build across all workspaces
+pnpm test              runs tests in any workspace that defines them (none yet)
+pnpm secrets:scan      scan working tree for secrets via gitleaks wrapper
+pnpm secrets:protect   scan staged changes for secrets
 ```
 
----
+`pnpm db:migrate`, `pnpm db:seed`, `pnpm db:reset`, and `pnpm db:studio` are
+defined as forwarding scripts but only become functional once Prisma lands
+in **C5**.
 
-## 📋 API Endpoints
+## Conventions
 
-### Auth
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/refresh`
-- `POST /api/v1/auth/logout`
-- `POST /api/v1/auth/logout-all`
-- `GET  /api/v1/auth/me`
+- **Branching:** trunk-based, short-lived branches off `main`. Sprint 1 work
+  lives on `claude/captain-masr-crm-prd-8za5i`.
+- **Commits:** Conventional Commits (`feat`, `fix`, `chore`, `docs`,
+  `refactor`, `test`, `perf`, `build`, `ci`, `style`, `revert`). Header ≤ 100
+  characters. Enforced by `commitlint` via the `commit-msg` hook.
+- **Pre-commit:** `lint-staged` formats and lints staged files;
+  `gitleaks protect --staged` scans for secrets. The local wrapper falls
+  back to a Docker image when the binary is not on `PATH`.
+- **CI:** every PR runs typecheck, lint, test, build, secrets-scan, and
+  commitlint against the PR commit range.
 
-### Users
-- `GET    /api/v1/users`
-- `GET    /api/v1/users/:id`
-- `POST   /api/v1/users` — create (admin/manager only)
-- `PUT    /api/v1/users/:id`
-- `POST   /api/v1/users/:id/assignments`
-- `DELETE /api/v1/users/:id/assignments/:assignmentId`
-- `PUT    /api/v1/users/:id/leave`
+## What is deliberately not in this repo yet
 
-### Companies & Countries
-- `GET  /api/v1/companies`
-- `POST /api/v1/companies`
-- `GET  /api/v1/countries`
-- `POST /api/v1/countries`
-- `POST /api/v1/countries/:id/holidays`
-- `GET  /api/v1/company-countries`
-- `GET  /api/v1/company-countries/:id`
-- `POST /api/v1/company-countries`
+To prevent confusion, none of the following exist today. They are scheduled
+in the Sprint 1 execution chunks (C3 → C20) and later sprints — do not
+assume any of them work today:
 
-### Contacts (الكباتن)
-- `GET  /api/v1/contacts`
-- `GET  /api/v1/contacts/:id`
-- `POST /api/v1/contacts`
-- `POST /api/v1/contacts/check-duplicate` — مهم للـ multi-company tracking
-- `PUT  /api/v1/contacts/:id`
+- No auth, no JWT, no MFA, no sessions.
+- No RBAC, no roles, no capabilities, no scope engine.
+- No database schema, no Prisma client, no migrations, no seed data.
+- No API endpoints — `/health` arrives in C3.
+- No web pages, no login screen, no admin shell, no agent surfaces.
+- No business entities (Contact, Enrollment, Pipeline, Stage, Activity,
+  Document, Approval, SLA timer, Bonus, QA, etc.).
+- No WhatsApp inbox, presence, or templates.
+- No campaign console.
+- No Google Sheets sync, no reconciliation engine.
+- No Meta Lead Ads webhook or Conversions API outbound.
+- No verified deploy pipeline (the existing `nixpacks.toml` and `railway.json`
+  reference scripts that land later; reconciled in C19).
 
-### Enrollments (الليدز)
-- `GET /api/v1/enrollments`
-- `GET /api/v1/enrollments/:id`
-- `POST /api/v1/enrollments`
-- `PUT /api/v1/enrollments/:id`
-- `PUT /api/v1/enrollments/:id/stage` — change stage (triggers approval if required)
-- `PUT /api/v1/enrollments/:id/assign` — assign to agent
-- `POST /api/v1/enrollments/:id/notes`
-- `GET /api/v1/enrollments/:id/timeline`
-
-### Pipeline
-- `GET    /api/v1/pipeline/:ccId/stages`
-- `POST   /api/v1/pipeline/:ccId/stages`
-- `PUT    /api/v1/pipeline/:ccId/stages/:id`
-- `PUT    /api/v1/pipeline/:ccId/stages/reorder`
-- `DELETE /api/v1/pipeline/:ccId/stages/:id`
-
----
-
-## 🛠️ Development Commands
-
-```bash
-# Root commands
-pnpm dev:api                  # Start API in watch mode
-
-# API commands (run from apps/api/)
-pnpm dev                      # Start with hot reload
-pnpm build                    # Build for production
-pnpm db:migrate               # Run migrations
-pnpm db:seed                  # Seed database
-pnpm db:reset                 # Reset + migrate + seed
-pnpm db:studio                # Prisma Studio (DB GUI)
-pnpm typecheck                # Check TypeScript types
-```
-
----
-
-## 📊 Database Overview
-
-Phase 1 schema includes:
-
-| Table | Purpose |
-|-------|---------|
-| `companies` | الشركات (أوبر، إن درايف) |
-| `countries` | الدول |
-| `company_countries` | شركة-في-دولة (أوبر مصر، إلخ) |
-| `users` | الموظفين (11 role) |
-| `user_assignments` | ربط user بشركة-دولة وتيم + parent |
-| `contacts` | الكباتن (سجل واحد لكل شخص) |
-| `enrollments` | تسجيل الكابتن في شركة معينة |
-| `pipeline_stages` | مراحل الفانل (قابلة للتخصيص لكل شركة-دولة) |
-| `enrollment_timeline` | سجل كامل لكل الأحداث |
-| `approvals` | طلبات الموافقة |
-| `lead_sources_config` | مصادر الليدز (قابلة للإضافة) |
-| `user_sessions` | جلسات الـ refresh tokens |
-| `holidays` | عطلات الدول |
-| `audit_logs` | سجل التدقيق |
-
----
-
-## 🚧 Phase 1 Scope (المرحلة الحالية)
-
-✅ **Done:**
-- Monorepo + Docker setup
-- Complete database schema
-- Authentication (JWT with refresh rotation)
-- Full RBAC with Scope engine
-- Users + Hierarchy management
-- Companies, Countries, Company-Countries CRUD
-- Contacts + Enrollments (with multi-company support)
-- Configurable Pipeline stages (event-driven)
-- Approvals system (basic)
-- Timeline tracking
-- Comprehensive seed data
-
-🔜 **Next phases:**
-- **Phase 2:** Distribution engine + SLA + Full approvals workflow + Frontend UIs
-- **Phase 3:** Meta/TikTok webhooks + Google Sheets sync (Hero Dashboard) + Accounting integration
-- **Phase 4:** Bonus system + Competitions + Leaderboard + QA
-- **Phase 5:** Analytics + Heatmap + Cohort analysis + Executive dashboard
-
----
-
-## 🔧 Troubleshooting
-
-### "Cannot connect to database"
-```bash
-docker compose ps           # check if postgres is running
-docker compose restart postgres
-```
-
-### "Migration failed"
-```bash
-cd apps/api
-pnpm db:reset               # nuke everything and start fresh
-```
-
-### JWT errors after code changes
-Clear all sessions:
-```bash
-# In postgres
-DELETE FROM user_sessions;
-```
-
----
-
-## 📝 License
+## License
 
 Proprietary — Trade Way / Captain Masr © 2026
