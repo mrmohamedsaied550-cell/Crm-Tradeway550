@@ -78,6 +78,24 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     needs: install
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: crm_tradeway
+          POSTGRES_USER: crm_user
+          POSTGRES_PASSWORD: crm_dev_pass_2026
+        ports:
+          - 5432:5432
+        # Healthcheck so subsequent steps don't race the container.
+        options: >-
+          --health-cmd "pg_isready -U crm_user -d crm_tradeway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://crm_user:crm_dev_pass_2026@localhost:5432/crm_tradeway?schema=public
+      SEED_DEFAULT_PASSWORD: Password@123
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -85,7 +103,13 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # `pnpm install` triggers apps/api's postinstall = `prisma generate`,
+      # so the Prisma client types are produced before tsc / tests run.
       - run: pnpm install --frozen-lockfile
+      - name: Apply migrations + seed
+        run: |
+          pnpm -F @crm/api exec prisma migrate deploy
+          pnpm db:seed
       - name: Run tests
         run: |
           if pnpm -r --if-present test; then
