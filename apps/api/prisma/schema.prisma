@@ -1,8 +1,11 @@
-// Trade Way / Captain Masr CRM — Prisma schema baseline.
+// Trade Way / Captain Masr CRM — Prisma schema.
 //
-// C5 ships only the datasource + generator wiring. There are intentionally
-// no models yet. Tables land starting in C6 (tenants, RLS plumbing) and
-// proceed through C7–C18 per the Sprint 1 execution chunks.
+// C6 introduces the first model: the cross-tenant `Tenant` registry.
+// Tenants is intentionally NOT row-level-security'd to itself — it is the
+// look-up table consulted before tenant context is established (e.g., when
+// resolving a user's tenant during login). Future tenant-scoped tables get
+// `tenant_id UUID NOT NULL` plus an RLS policy that calls
+// `current_tenant_id()` (declared in 0001_foundations).
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -13,4 +16,18 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+/// A tenant — one isolated logical CRM workspace.
+/// MVP runs as single-tenant; the column is added everywhere from day 1 so
+/// multi-tenant rollout in Phase 2 is a configuration change, not a rewrite.
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("tenants")
 }
