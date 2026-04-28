@@ -11,6 +11,7 @@ import { RbacModule } from './rbac/rbac.module';
 import { UsersModule } from './users/users.module';
 import { IdentityModule } from './identity/identity.module';
 import { CrmModule } from './crm/crm.module';
+import { OrgModule } from './org/org.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -34,6 +35,7 @@ import { buildLoggerConfig } from './common/logger';
     RbacModule,
     UsersModule,
     CrmModule,
+    OrgModule,
     HealthModule,
   ],
   providers: [

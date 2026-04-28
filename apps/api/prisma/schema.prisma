@@ -8,6 +8,8 @@
 // C9 introduces `UserSession` (refresh-token storage) for the auth API.
 // C10 introduces the CRM core: PipelineStage + Lead + Captain + LeadActivity.
 // C11 adds response-SLA tracking + auto round-robin reassignment on breach.
+// C12 introduces the org structure: Company → Country → Team, plus Team
+//     membership on User (nullable, since super_admin / ops are tenant-wide).
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -38,6 +40,9 @@ model Tenant {
   leads          Lead[]
   captains       Captain[]
   leadActivities LeadActivity[]
+  companies      Company[]
+  countries      Country[]
+  teams          Team[]
 
   @@map("tenants")
 }
@@ -125,8 +130,14 @@ model User {
   roleId String @map("role_id") @db.Uuid
   role   Role   @relation(fields: [roleId], references: [id])
 
+  /// Team membership (C12). Optional because tenant-wide roles
+  /// (super_admin, ops_manager, account_manager) don't belong to a single
+  /// team. Service-layer validation ensures the team is in the same tenant.
+  teamId String? @map("team_id") @db.Uuid
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   /// `invited` (set by admin invite flow, password unset until first login),
-  /// `active`, `disabled`. Future scope/team/country FKs land in C13/C14.
+  /// `active`, `disabled`.
   status String @default("active")
 
   mfaEnabled       Boolean   @default(false) @map("mfa_enabled")
@@ -150,6 +161,7 @@ model User {
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([tenantId, roleId])
+  @@index([tenantId, teamId])
   @@map("users")
 }
 
@@ -304,4 +316,80 @@ model LeadActivity {
   @@index([tenantId, leadId, createdAt])
   @@index([tenantId, type])
   @@map("lead_activities")
+}
+
+/// Company — a partner the tenant operates for (Uber, inDrive, Careem, …).
+///
+/// `code` is a short slug (e.g. `uber`, `indrive`) intended for URLs and
+/// integration mappings (Meta form_id → Company × Country pipeline). It's
+/// unique per tenant so two tenants can both have an `uber` row without
+/// colliding. Soft-delete via `isActive`; the FK from Country uses
+/// `onDelete: Restrict` so an in-use company cannot be hard-removed.
+model Company {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  countries Country[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@map("companies")
+}
+
+/// Country — a (Company × Country) operating unit.
+///
+/// Each Country row is scoped to a specific Company so the same ISO code
+/// (e.g. EG) can appear under multiple companies. Service-layer validation
+/// enforces that `companyId` resolves to a row in the same tenant — RLS on
+/// Company already returns null cross-tenant, so the lookup itself is the
+/// guard.
+model Country {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyId String   @map("company_id") @db.Uuid
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code      String
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  teams Team[]
+
+  // Same code may exist under different companies in one tenant, so the
+  // uniqueness constraint includes companyId.
+  @@unique([tenantId, companyId, code])
+  @@index([tenantId, companyId])
+  @@map("countries")
+}
+
+/// Team — a working group inside a (Company × Country).
+///
+/// Teams are the unit users belong to. `name` is unique per country so a
+/// "Sales" team can exist under (Uber, EG) and (inDrive, EG) without
+/// colliding. Disabling a team only flips `isActive` — the FK from User
+/// uses `SetNull` so users in a deleted team aren't orphan-blocked.
+model Team {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  countryId String   @map("country_id") @db.Uuid
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  users User[]
+
+  @@unique([tenantId, countryId, name])
+  @@index([tenantId, countryId])
+  @@map("teams")
 }
