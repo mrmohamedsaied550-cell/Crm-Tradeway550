@@ -4,6 +4,7 @@
 // helper that every tenant-scoped RLS policy reuses.
 // C7 introduces the RBAC catalogue: capabilities (global) plus tenant-scoped
 // roles + role↔capability mappings.
+// C8 introduces the tenant-scoped `User` model with bcrypt password hashing.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -28,6 +29,7 @@ model Tenant {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   roles Role[]
+  users User[]
 
   @@map("tenants")
 }
@@ -65,6 +67,7 @@ model Role {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   capabilities RoleCapability[]
+  users        User[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -88,4 +91,47 @@ model RoleCapability {
   @@index([tenantId])
   @@index([capabilityId])
   @@map("role_capabilities")
+}
+
+/// A user inside a single tenant.
+///
+/// Email is unique per tenant (case-insensitive: stored already-lowercased).
+/// Globally-unique email is intentionally NOT enforced — different tenants
+/// may have users with the same address. Login flows resolve the tenant
+/// before the email lookup (X-Tenant header in dev; JWT claim from C9).
+///
+/// `passwordHash` is bcrypt-hashed and must NEVER be returned by any public
+/// service method. UsersService exposes a `SafeUser` projection that omits
+/// the column; the only function that reads it is the internal
+/// `verifyPasswordById` used by the login flow added in C9.
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @map("tenant_id") @db.Uuid
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String
+  passwordHash String  @map("password_hash")
+  name         String
+  phone        String?
+  language     String  @default("en") // 'ar' | 'en'
+
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  /// `invited` (set by admin invite flow, password unset until first login),
+  /// `active`, `disabled`. Future scope/team/country FKs land in C13/C14.
+  status String @default("active")
+
+  mfaEnabled       Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret        String?   @map("mfa_secret")
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, email])
+  @@index([tenantId, status])
+  @@index([tenantId, roleId])
+  @@map("users")
 }

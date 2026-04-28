@@ -2,17 +2,24 @@
  * Prisma seed entrypoint.
  *
  * C6 added the default tenant.
- * C7 adds the global capability catalogue and per-tenant roles + mappings.
+ * C7 added the global capability catalogue + per-tenant roles + mappings.
+ * C8 adds 5 dev users for trade_way_default with bcrypt password hashes.
+ *
+ * Passwords come from the `SEED_DEFAULT_PASSWORD` environment variable when
+ * set; otherwise the dev placeholder `Password@123` is used. The plaintext
+ * is NEVER logged. Production deployments must set SEED_DEFAULT_PASSWORD or
+ * disable the seed entirely.
  *
  * Larger fixtures (companies Uber + inDrive, country EG with timezone
- * Africa/Cairo and holidays, teams, users) land in C18.
+ * Africa/Cairo and holidays, teams) land in C13/C14/C18.
  *
  * Run with: `pnpm db:seed`. Idempotent — safe to re-run repeatedly.
  */
 
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '../src/identity/password.util';
 import { CAPABILITY_DEFINITIONS } from '../src/rbac/capabilities.registry';
-import { ROLE_DEFINITIONS } from '../src/rbac/roles.registry';
+import { ROLE_DEFINITIONS, type RoleCode } from '../src/rbac/roles.registry';
 
 const DEFAULT_TENANT_CODE = 'trade_way_default';
 const DEFAULT_TENANT_NAME = 'Trade Way / Captain Masr (default)';
@@ -107,10 +114,77 @@ async function seedRolesAndMappings(
   );
 }
 
+interface SeedUserDef {
+  readonly email: string;
+  readonly name: string;
+  readonly role: RoleCode;
+}
+
+const SEED_USERS: readonly SeedUserDef[] = [
+  { email: 'super@tradeway.com', name: 'Super Admin', role: 'super_admin' },
+  { email: 'ops@tradeway.com', name: 'Operations Manager', role: 'ops_manager' },
+  { email: 'eg.manager@tradeway.com', name: 'Account Manager — Egypt', role: 'account_manager' },
+  { email: 'eg.uber.tl.sales@tradeway.com', name: 'TL Sales — Uber EG', role: 'tl_sales' },
+  {
+    email: 'eg.uber.sales1@tradeway.com',
+    name: 'Sara — Sales Agent (Uber EG)',
+    role: 'sales_agent',
+  },
+];
+
+async function seedUsers(tenantId: string, roleIdByCode: Map<string, string>): Promise<void> {
+  // Resolve plaintext from env; never log it. The placeholder default is
+  // documented in apps/api/.env.example so dev users can log in immediately.
+  const plaintext = process.env['SEED_DEFAULT_PASSWORD'] ?? 'Password@123';
+  const hash = await hashPassword(plaintext);
+
+  await withTenant(tenantId, async (tx) => {
+    for (const u of SEED_USERS) {
+      const roleId = roleIdByCode.get(u.role);
+      if (!roleId) {
+        throw new Error(`seed: role ${u.role} not found for tenant ${tenantId}`);
+      }
+      const email = u.email.trim().toLowerCase();
+      await tx.user.upsert({
+        where: { tenantId_email: { tenantId, email } },
+        update: {
+          name: u.name,
+          roleId,
+          status: 'active',
+          // Re-set hash on every run so dev environments stay consistent.
+          passwordHash: hash,
+        },
+        create: {
+          tenantId,
+          email,
+          name: u.name,
+          roleId,
+          status: 'active',
+          passwordHash: hash,
+          language: 'en',
+        },
+      });
+    }
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `seed: users ready — ${SEED_USERS.length} users for tenant ${tenantId} (passwords seeded from SEED_DEFAULT_PASSWORD; not logged)`,
+  );
+}
+
 async function main(): Promise<void> {
   const tenant = await seedTenant();
   const capabilityIdByCode = await seedCapabilities();
   await seedRolesAndMappings(tenant.id, capabilityIdByCode);
+
+  // Build a roleCode -> roleId map (read inside tenant context).
+  const roleIdByCode = new Map<string, string>();
+  await withTenant(tenant.id, async (tx) => {
+    const rows = await tx.role.findMany({ select: { id: true, code: true } });
+    for (const r of rows) roleIdByCode.set(r.code, r.id);
+  });
+  await seedUsers(tenant.id, roleIdByCode);
 }
 
 main()
