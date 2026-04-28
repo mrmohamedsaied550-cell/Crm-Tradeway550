@@ -1,0 +1,59 @@
+{
+  "app": {
+    "name": "Trade Way CRM",
+    "tagline": "Captain Acquisition & Activation"
+  },
+  "nav": {
+    "admin": "Admin",
+    "agent": "Agent",
+    "login": "Login",
+    "logout": "Logout"
+  },
+  "header": {
+    "language": "Language",
+    "userMenu": "Account",
+    "rolePlaceholder": "Role"
+  },
+  "language": {
+    "english": "English",
+    "arabic": "العربية",
+    "switchTo": "Switch to {target}"
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Sign-in flow lands in C9 (auth foundation). This page is a placeholder.",
+    "emailLabel": "Email",
+    "passwordLabel": "Password",
+    "submit": "Sign in",
+    "disabled": "Disabled in C4"
+  },
+  "admin": {
+    "title": "Admin Console",
+    "subtitle": "Insight Mode workspace for Super Admin, Operations, Account Manager, and Team Leader roles.",
+    "sideNav": {
+      "dashboard": "Dashboard",
+      "companies": "Companies",
+      "countries": "Countries",
+      "teams": "Teams",
+      "users": "Users",
+      "audit": "Audit Log"
+    },
+    "placeholder": {
+      "heading": "Admin shell",
+      "body": "C4 ships only the layout, side-nav, header, and i18n. Business screens (Companies, Countries, Teams, Users, Audit) are scheduled for chunks C12–C16."
+    }
+  },
+  "agent": {
+    "title": "My Day",
+    "subtitle": "Execution Mode workspace for Sales, Activation, and Driving agents.",
+    "placeholder": {
+      "heading": "Agent shell",
+      "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
+    }
+  },
+  "common": {
+    "comingSoon": "Coming in a later chunk",
+    "placeholder": "Placeholder",
+    "version": "Version"
+  }
+}
