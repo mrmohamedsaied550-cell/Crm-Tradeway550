@@ -1,0 +1,137 @@
+// Trade Way / Captain Masr CRM — Prisma schema.
+//
+// C6 introduced the cross-tenant `Tenant` registry + the current_tenant_id()
+// helper that every tenant-scoped RLS policy reuses.
+// C7 introduces the RBAC catalogue: capabilities (global) plus tenant-scoped
+// roles + role↔capability mappings.
+// C8 introduces the tenant-scoped `User` model with bcrypt password hashing.
+//
+// Documentation: https://www.prisma.io/docs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A tenant — one isolated logical CRM workspace.
+/// MVP runs as single-tenant; the column is added everywhere from day 1 so
+/// multi-tenant rollout in Phase 2 is a configuration change, not a rewrite.
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  roles Role[]
+  users User[]
+
+  @@map("tenants")
+}
+
+/// A capability — a single permission the system understands. The catalogue
+/// is global (one row per code, shared across tenants) so application code
+/// can reference capability codes as a stable contract. Roles map to
+/// capabilities per-tenant via RoleCapability.
+model Capability {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  description String
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roleCapabilities RoleCapability[]
+
+  @@map("capabilities")
+}
+
+/// A role inside a single tenant.
+///
+/// `level` is a sortable hierarchy proxy (super_admin = 100, ops = 90,
+/// account_manager = 80, team_leader = 60, qa_specialist = 50, agents = 30,
+/// viewer = 20). Used by future scope guards for "rank-at-least" checks.
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  nameAr    String   @map("name_ar")
+  nameEn    String   @map("name_en")
+  level     Int
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  capabilities RoleCapability[]
+  users        User[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@map("roles")
+}
+
+/// Mapping table: which capabilities a tenant's role grants. Tenant id is
+/// denormalized for cheap RLS isolation (no JOIN to roles on every read).
+/// The RLS WITH CHECK enforces that the column matches the active GUC, and
+/// the FK to roles ensures the role exists.
+model RoleCapability {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  capabilityId String   @map("capability_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  capability Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, capabilityId])
+  @@index([tenantId])
+  @@index([capabilityId])
+  @@map("role_capabilities")
+}
+
+/// A user inside a single tenant.
+///
+/// Email is unique per tenant (case-insensitive: stored already-lowercased).
+/// Globally-unique email is intentionally NOT enforced — different tenants
+/// may have users with the same address. Login flows resolve the tenant
+/// before the email lookup (X-Tenant header in dev; JWT claim from C9).
+///
+/// `passwordHash` is bcrypt-hashed and must NEVER be returned by any public
+/// service method. UsersService exposes a `SafeUser` projection that omits
+/// the column; the only function that reads it is the internal
+/// `verifyPasswordById` used by the login flow added in C9.
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @map("tenant_id") @db.Uuid
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String
+  passwordHash String  @map("password_hash")
+  name         String
+  phone        String?
+  language     String  @default("en") // 'ar' | 'en'
+
+  roleId String @map("role_id") @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  /// `invited` (set by admin invite flow, password unset until first login),
+  /// `active`, `disabled`. Future scope/team/country FKs land in C13/C14.
+  status String @default("active")
+
+  mfaEnabled       Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret        String?   @map("mfa_secret")
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, email])
+  @@index([tenantId, status])
+  @@index([tenantId, roleId])
+  @@map("users")
+}

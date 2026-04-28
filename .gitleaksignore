@@ -1,0 +1,20 @@
+# gitleaks fingerprints to ignore.
+#
+# Format: <commit_sha>:<file>:<rule_id>:<line>
+#
+# Rationale:
+#   The bootstrap README (commit e49032e — the initial "crm" import) contained
+#   curl examples with literal placeholders such as "Bearer YOUR_ACCESS_TOKEN"
+#   for documentation purposes. gitleaks' `curl-auth-header` rule flags any
+#   `Authorization: Bearer …` regardless of content, so it treats those
+#   placeholders as potential secrets.
+#
+#   The README was fully rewritten in commit 6bb69b0 ("docs: rewrite README to
+#   reflect actual C1+C2 state") and the current README contains no auth
+#   examples at all. The findings below remain only because gitleaks scans
+#   git history, where the original README is still part of the immutable log.
+#
+#   These fingerprints whitelist exactly those two historical lines and
+#   nothing else — any new occurrence of the rule will still fail CI.
+e49032ee3961abae858ced26432dd5a5419f6828:README.md:curl-auth-header:110
+e49032ee3961abae858ced26432dd5a5419f6828:README.md:curl-auth-header:117

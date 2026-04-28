@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Base CSS variables.
+ * Brand and status palettes live in tailwind.config.ts; the variables here
+ * cover semantic surface tokens used by future shadcn/ui components.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 215 19% 18%;       /* ink.primary */
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --border: 220 13% 91%;
+    --ring: 162 80% 28%;             /* brand.600 */
+  }
+
+  html, body {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-surface text-ink-primary font-sans antialiased;
+  }
+
+  /* Reduce layout flash for the language toggle. */
+  html {
+    color-scheme: light;
+  }
+
+  /* Mirror selection color to the brand. */
+  ::selection {
+    background-color: rgb(20 168 120 / 0.25);
+  }
+}

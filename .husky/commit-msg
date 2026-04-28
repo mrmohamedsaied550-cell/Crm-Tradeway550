@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# commit-msg: validate commit message against Conventional Commits.
+set -e
+
+pnpm exec commitlint --edit "$1"
