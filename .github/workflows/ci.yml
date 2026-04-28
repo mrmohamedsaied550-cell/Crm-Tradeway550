@@ -106,17 +106,31 @@ jobs:
       # `pnpm install` triggers apps/api's postinstall = `prisma generate`,
       # so the Prisma client types are produced before tsc / tests run.
       - run: pnpm install --frozen-lockfile
-      - name: Apply migrations + seed
+
+      - name: Wait for Postgres
         run: |
-          pnpm -F @crm/api exec prisma migrate deploy
-          pnpm db:seed
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -U crm_user -d crm_tradeway >/dev/null 2>&1; then
+              echo "postgres ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "postgres did not become ready"; exit 1
+
+      - name: Apply migrations
+        run: pnpm -F @crm/api exec prisma migrate deploy
+
+      - name: Seed database
+        run: pnpm db:seed
+
+      - name: Database state snapshot (diagnostic)
+        run: |
+          PGPASSWORD=crm_dev_pass_2026 psql -h localhost -U crm_user -d crm_tradeway -c "\dt" || true
+          PGPASSWORD=crm_dev_pass_2026 psql -h localhost -U crm_user -d crm_tradeway \
+            -c "SELECT (SELECT COUNT(*) FROM tenants) AS tenants, (SELECT COUNT(*) FROM capabilities) AS caps;" || true
+
       - name: Run tests
-        run: |
-          if pnpm -r --if-present test; then
-            echo "tests passed (or none defined yet)"
-          else
-            exit 1
-          fi
+        run: pnpm -r --if-present test
 
   build:
     name: Build
