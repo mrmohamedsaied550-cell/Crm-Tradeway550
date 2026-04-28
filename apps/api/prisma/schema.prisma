@@ -7,6 +7,7 @@
 // C8 introduces the tenant-scoped `User` model with bcrypt password hashing.
 // C9 introduces `UserSession` (refresh-token storage) for the auth API.
 // C10 introduces the CRM core: PipelineStage + Lead + Captain + LeadActivity.
+// C11 adds response-SLA tracking + auto round-robin reassignment on breach.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -230,6 +231,18 @@ model Lead {
   createdById  String?  @map("created_by_id") @db.Uuid
   createdBy    User?    @relation("LeadCreator", fields: [createdById], references: [id])
 
+  /// Response-SLA tracking (C11).
+  /// `slaDueAt` is when the assigned agent must produce a `note` or `call`
+  /// activity by; null when the lead is in a terminal stage (Converted /
+  /// Lost) and the SLA is paused.
+  /// `slaStatus`: 'active' | 'breached' | 'paused'.
+  /// `lastResponseAt` is the timestamp of the most recent agent-driven
+  /// activity (note/call/stage_change/assignment); used both for the
+  /// reset-on-activity rule and for reporting.
+  slaDueAt        DateTime? @map("sla_due_at") @db.Timestamptz(6)
+  slaStatus       String    @default("active") @map("sla_status")
+  lastResponseAt  DateTime? @map("last_response_at") @db.Timestamptz(6)
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -240,6 +253,8 @@ model Lead {
   @@index([tenantId, stageId])
   @@index([tenantId, assignedToId])
   @@index([tenantId, createdAt])
+  // Hot path for the SLA breach scanner: `WHERE tenant=? AND slaStatus='active' AND slaDueAt < now`.
+  @@index([tenantId, slaStatus, slaDueAt])
   @@map("leads")
 }
 

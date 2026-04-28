@@ -22,6 +22,7 @@ import type { AccessTokenClaims } from '../identity/jwt.types';
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
 import { PipelineService } from './pipeline.service';
+import { SlaService } from './sla.service';
 import {
   AddActivitySchema,
   AssignLeadSchema,
@@ -56,6 +57,7 @@ export class LeadsController {
     private readonly leads: LeadsService,
     private readonly captains: CaptainsService,
     private readonly pipeline: PipelineService,
+    private readonly sla: SlaService,
   ) {}
 
   // ───────── pipeline catalogue ─────────
@@ -114,6 +116,22 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.leads.assign(id, body.assignedToId, user.sub);
+  }
+
+  @Post('leads/:id/auto-assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Auto-assign the lead via round-robin' })
+  autoAssign(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.autoAssign(id, user.sub);
+  }
+
+  @Post('sla/run-breaches')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Scan SLA-breached leads and round-robin reassign them',
+  })
+  runSlaBreaches(@CurrentUser() user: AccessTokenClaims) {
+    return this.sla.runReassignmentForBreaches(user.sub);
   }
 
   @Post('leads/:id/stage')

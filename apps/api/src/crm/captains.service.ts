@@ -61,9 +61,11 @@ export class CaptainsService {
         });
 
         if (lead.stageId !== convertedStage.id) {
+          // `converted` is terminal — pause the SLA so the breach
+          // scanner stops considering this row.
           await tx.lead.update({
             where: { id: leadId },
-            data: { stageId: convertedStage.id },
+            data: { stageId: convertedStage.id, slaDueAt: null, slaStatus: 'paused' },
           });
           await this.leads.appendActivity(tx, {
             tenantId,
