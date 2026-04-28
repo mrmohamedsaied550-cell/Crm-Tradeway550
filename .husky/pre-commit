@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# pre-commit: format/lint staged files, then scan staged content for secrets.
+set -e
+
+pnpm exec lint-staged
+bash scripts/gitleaks.sh protect --staged --no-banner --redact -v

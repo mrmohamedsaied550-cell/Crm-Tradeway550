@@ -8,18 +8,30 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "pnpm --filter @crm/api dev",
+    "dev": "pnpm dev:db && concurrently --names api,web --prefix-colors blue,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "pnpm --filter @crm/api dev",
     "dev:web": "pnpm --filter @crm/web dev",
+    "dev:db": "docker compose up -d",
+    "dev:db:down": "docker compose down",
+    "dev:db:logs": "docker compose logs -f",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "secrets:scan": "bash scripts/gitleaks.sh detect --no-banner --redact -v",
+    "secrets:protect": "bash scripts/gitleaks.sh protect --staged --no-banner --redact -v",
     "db:migrate": "pnpm --filter @crm/api db:migrate",
     "db:seed": "pnpm --filter @crm/api db:seed",
     "db:reset": "pnpm --filter @crm/api db:reset",
-    "db:studio": "pnpm --filter @crm/api db:studio"
+    "db:studio": "pnpm --filter @crm/api db:studio",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.4.0",
+    "@commitlint/config-conventional": "^19.2.2",
+    "concurrently": "^8.2.2",
+    "husky": "^9.1.4",
+    "lint-staged": "^15.2.7",
     "prettier": "^3.3.3",
     "typescript": "^5.5.4"
   },
