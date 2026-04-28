@@ -5,6 +5,7 @@ import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { TenantContextMiddleware } from './tenants/tenant-context.middleware';
+import { RbacModule } from './rbac/rbac.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -19,6 +20,7 @@ import { buildLoggerConfig } from './common/logger';
     }),
     PrismaModule,
     TenantsModule,
+    RbacModule,
     HealthModule,
   ],
 })

@@ -1,11 +1,9 @@
 // Trade Way / Captain Masr CRM — Prisma schema.
 //
-// C6 introduces the first model: the cross-tenant `Tenant` registry.
-// Tenants is intentionally NOT row-level-security'd to itself — it is the
-// look-up table consulted before tenant context is established (e.g., when
-// resolving a user's tenant during login). Future tenant-scoped tables get
-// `tenant_id UUID NOT NULL` plus an RLS policy that calls
-// `current_tenant_id()` (declared in 0001_foundations).
+// C6 introduced the cross-tenant `Tenant` registry + the current_tenant_id()
+// helper that every tenant-scoped RLS policy reuses.
+// C7 introduces the RBAC catalogue: capabilities (global) plus tenant-scoped
+// roles + role↔capability mappings.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -29,5 +27,65 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  roles Role[]
+
   @@map("tenants")
+}
+
+/// A capability — a single permission the system understands. The catalogue
+/// is global (one row per code, shared across tenants) so application code
+/// can reference capability codes as a stable contract. Roles map to
+/// capabilities per-tenant via RoleCapability.
+model Capability {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  description String
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roleCapabilities RoleCapability[]
+
+  @@map("capabilities")
+}
+
+/// A role inside a single tenant.
+///
+/// `level` is a sortable hierarchy proxy (super_admin = 100, ops = 90,
+/// account_manager = 80, team_leader = 60, qa_specialist = 50, agents = 30,
+/// viewer = 20). Used by future scope guards for "rank-at-least" checks.
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code      String
+  nameAr    String   @map("name_ar")
+  nameEn    String   @map("name_en")
+  level     Int
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  capabilities RoleCapability[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive])
+  @@map("roles")
+}
+
+/// Mapping table: which capabilities a tenant's role grants. Tenant id is
+/// denormalized for cheap RLS isolation (no JOIN to roles on every read).
+/// The RLS WITH CHECK enforces that the column matches the active GUC, and
+/// the FK to roles ensures the role exists.
+model RoleCapability {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  capabilityId String   @map("capability_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  capability Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, capabilityId])
+  @@index([tenantId])
+  @@index([capabilityId])
+  @@map("role_capabilities")
 }
