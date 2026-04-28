@@ -4,6 +4,8 @@
  * C6 added the default tenant.
  * C7 added the global capability catalogue + per-tenant roles + mappings.
  * C8 adds 5 dev users for trade_way_default with bcrypt password hashes.
+ * C10 adds the 5 default pipeline stages (New / Contacted / Interested /
+ * Converted / Lost) per tenant.
  *
  * Passwords come from the `SEED_DEFAULT_PASSWORD` environment variable when
  * set; otherwise the dev placeholder `Password@123` is used. The plaintext
@@ -20,6 +22,7 @@ import { PrismaClient } from '@prisma/client';
 import { hashPassword } from '../src/identity/password.util';
 import { CAPABILITY_DEFINITIONS } from '../src/rbac/capabilities.registry';
 import { ROLE_DEFINITIONS, type RoleCode } from '../src/rbac/roles.registry';
+import { PIPELINE_STAGE_DEFINITIONS } from '../src/crm/pipeline.registry';
 
 const DEFAULT_TENANT_CODE = 'trade_way_default';
 const DEFAULT_TENANT_NAME = 'Trade Way / Captain Masr (default)';
@@ -173,6 +176,29 @@ async function seedUsers(tenantId: string, roleIdByCode: Map<string, string>): P
   );
 }
 
+async function seedPipelineStages(tenantId: string): Promise<void> {
+  await withTenant(tenantId, async (tx) => {
+    for (const def of PIPELINE_STAGE_DEFINITIONS) {
+      await tx.pipelineStage.upsert({
+        where: { tenantId_code: { tenantId, code: def.code } },
+        update: { name: def.name, order: def.order, isTerminal: def.isTerminal },
+        create: {
+          tenantId,
+          code: def.code,
+          name: def.name,
+          order: def.order,
+          isTerminal: def.isTerminal,
+        },
+      });
+    }
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `seed: pipeline stages ready — ${PIPELINE_STAGE_DEFINITIONS.length} stages for tenant ${tenantId}`,
+  );
+}
+
 async function main(): Promise<void> {
   const tenant = await seedTenant();
   const capabilityIdByCode = await seedCapabilities();
@@ -185,6 +211,7 @@ async function main(): Promise<void> {
     for (const r of rows) roleIdByCode.set(r.code, r.id);
   });
   await seedUsers(tenant.id, roleIdByCode);
+  await seedPipelineStages(tenant.id);
 }
 
 main()

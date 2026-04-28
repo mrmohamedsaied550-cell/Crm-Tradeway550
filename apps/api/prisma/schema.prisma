@@ -6,6 +6,7 @@
 // roles + role↔capability mappings.
 // C8 introduces the tenant-scoped `User` model with bcrypt password hashing.
 // C9 introduces `UserSession` (refresh-token storage) for the auth API.
+// C10 introduces the CRM core: PipelineStage + Lead + Captain + LeadActivity.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -29,9 +30,13 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  roles    Role[]
-  users    User[]
-  sessions UserSession[]
+  roles          Role[]
+  users          User[]
+  sessions       UserSession[]
+  pipelineStages PipelineStage[]
+  leads          Lead[]
+  captains       Captain[]
+  leadActivities LeadActivity[]
 
   @@map("tenants")
 }
@@ -132,7 +137,14 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  sessions UserSession[]
+  sessions       UserSession[]
+  // Back-relations for CRM core (C10). A user may own / be assigned to leads
+  // and may author activities. Kept on the User side so we can later list
+  // "all leads I created" or "all activities I logged" without a JOIN
+  // through the join table.
+  createdLeads   Lead[]         @relation("LeadCreator")
+  assignedLeads  Lead[]         @relation("LeadAssignee")
+  authoredActivities LeadActivity[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -169,4 +181,112 @@ model UserSession {
   @@index([tenantId, userId])
   @@index([refreshTokenHash])
   @@map("user_sessions")
+}
+
+/// PipelineStage — one node in a tenant's lead funnel.
+/// MVP ships a single shared funnel per tenant; per Company × Country
+/// pipelines (per the PRD) layer on later. Order is unique-per-tenant so
+/// admin UIs can render sorted lists deterministically. `isTerminal`
+/// flags Converted / Lost so reports can exclude them from "active" KPIs.
+model PipelineStage {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code       String
+  name       String
+  order      Int
+  isTerminal Boolean  @default(false) @map("is_terminal")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  leads Lead[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, order])
+  @@index([tenantId])
+  @@map("pipeline_stages")
+}
+
+/// Lead — a prospective captain in the funnel.
+/// Phone is normalised to E.164 before insert (see crm/phone.util.ts) and
+/// is unique per tenant so the same human cannot exist twice. The optional
+/// 1-1 Captain relation lives on the Captain side (`captains.lead_id`
+/// UNIQUE) — a Lead has at-most-one Captain via the back-relation.
+model Lead {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  phone        String
+  email        String?
+  source       String   @default("manual")
+
+  stageId      String   @map("stage_id") @db.Uuid
+  stage        PipelineStage @relation(fields: [stageId], references: [id])
+
+  assignedToId String?  @map("assigned_to_id") @db.Uuid
+  assignedTo   User?    @relation("LeadAssignee", fields: [assignedToId], references: [id])
+
+  createdById  String?  @map("created_by_id") @db.Uuid
+  createdBy    User?    @relation("LeadCreator", fields: [createdById], references: [id])
+
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  captain    Captain?
+  activities LeadActivity[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, stageId])
+  @@index([tenantId, assignedToId])
+  @@index([tenantId, createdAt])
+  @@map("leads")
+}
+
+/// Captain — a Lead converted to an active driver.
+/// One-to-one with Lead via the unique `leadId`. Onboarding flags track
+/// which documents have landed; an MVP scope (the full document
+/// review/approval lifecycle from the PRD lands in a later chunk).
+model Captain {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String   @map("tenant_id") @db.Uuid
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId                 String   @unique @map("lead_id") @db.Uuid
+  lead                   Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// `pending`, `in_progress`, `active`, `rejected`.
+  onboardingStatus       String   @default("pending") @map("onboarding_status")
+  hasIdCard              Boolean  @default(false) @map("has_id_card")
+  hasLicense             Boolean  @default(false) @map("has_license")
+  hasVehicleRegistration Boolean  @default(false) @map("has_vehicle_registration")
+  activatedAt            DateTime? @map("activated_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, onboardingStatus])
+  @@map("captains")
+}
+
+/// LeadActivity — append-only log of touchpoints + system events on a lead.
+/// `type` discriminates between agent-authored entries (`note`, `call`)
+/// and system-generated ones (`stage_change`, `assignment`, `system`).
+/// `payload` carries structured data for system events (e.g. from/to
+/// stage codes) so the UI can render diffs without regex on the body.
+model LeadActivity {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId      String   @map("lead_id") @db.Uuid
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        String
+  body        String?
+  payload     Json?
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId, createdAt])
+  @@index([tenantId, type])
+  @@map("lead_activities")
 }
