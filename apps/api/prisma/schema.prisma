@@ -5,6 +5,7 @@
 // C7 introduces the RBAC catalogue: capabilities (global) plus tenant-scoped
 // roles + role↔capability mappings.
 // C8 introduces the tenant-scoped `User` model with bcrypt password hashing.
+// C9 introduces `UserSession` (refresh-token storage) for the auth API.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -28,8 +29,9 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  roles Role[]
-  users User[]
+  roles    Role[]
+  users    User[]
+  sessions UserSession[]
 
   @@map("tenants")
 }
@@ -130,8 +132,41 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  sessions UserSession[]
+
   @@unique([tenantId, email])
   @@index([tenantId, status])
   @@index([tenantId, roleId])
   @@map("users")
+}
+
+/// A refresh-token-backed session.
+///
+/// Refresh tokens are stored as SHA-256 of the raw token (the raw token
+/// only lives in the client cookie and the JWT body). The hash is what
+/// we look up + revoke. The unique partial index on `refresh_token_hash`
+/// (where revoked_at IS NULL) lets the same physical bytes be re-issued
+/// after revocation in the unlikely event of a hash collision.
+///
+/// On rotation we mark the old session `revoked_at = now` and link the
+/// new session via `replaced_by_id`. Reuse-detection in C9 uses that
+/// chain: if a client presents a refresh token whose row already has
+/// `revoked_at`, every descendant session is revoked too.
+model UserSession {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String   @map("user_id") @db.Uuid
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String   @map("refresh_token_hash")
+  userAgent        String?  @map("user_agent")
+  ip               String?
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedById     String?  @map("replaced_by_id") @db.Uuid
+
+  @@index([tenantId, userId])
+  @@index([refreshTokenHash])
+  @@map("user_sessions")
 }

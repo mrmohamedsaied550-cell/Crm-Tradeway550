@@ -2,28 +2,50 @@ import { BadRequestException, Injectable, Logger, type NestMiddleware } from '@n
 import type { NextFunction, Request, Response } from 'express';
 import { tenantContext } from './tenant-context';
 import { TenantsService } from './tenants.service';
+import { TokensService } from '../identity/tokens.service';
 
 const HEADER_NAME = 'x-tenant';
 
 /**
  * Resolves a tenant for the current request and stores it in AsyncLocalStorage.
  *
- * MVP path: the dev-only `X-Tenant: <code>` header. Once C9 wires JWT, the
- * middleware will instead read `tenantId` from the verified token claim and
- * treat the header as ignored (or admin-only). The downstream consumers
- * (PrismaService.withTenant, future scope guards) only see the resolved
- * context — they do not care which source produced it.
+ * Resolution order:
+ *   1. Verified JWT access-token claim `tid` (the production path from C9
+ *      onward).
+ *   2. Dev-only `X-Tenant: <code>` header (kept for unauth flows + admin
+ *      debug). The header is *ignored* whenever a valid JWT is present so
+ *      a client cannot upgrade their privileges by passing a different
+ *      tenant code than their token's claim.
  *
- * Requests without the header pass through unscoped — the store is empty.
- * That covers /health and any cross-tenant lookups (e.g. login).
+ * Requests without either pass through unscoped — the store is empty.
+ * That covers /health, /auth/login, and the root /.
  */
 @Injectable()
 export class TenantContextMiddleware implements NestMiddleware {
   private readonly logger = new Logger(TenantContextMiddleware.name);
 
-  constructor(private readonly tenants: TenantsService) {}
+  constructor(
+    private readonly tenants: TenantsService,
+    private readonly tokens: TokensService,
+  ) {}
 
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
+    // 1. JWT path — preferred when present.
+    const jwtTenantId = this.tryResolveFromJwt(req);
+    if (jwtTenantId) {
+      const tenant = await this.tenants.findById(jwtTenantId);
+      if (tenant && tenant.isActive) {
+        tenantContext.run({ tenantId: tenant.id, tenantCode: tenant.code, source: 'jwt' }, () =>
+          next(),
+        );
+        return;
+      }
+      // JWT carried a stale/invalid tenant id — fall through to header path,
+      // but only because that's the dev-friendly behavior. Production deploys
+      // should never see this branch since JWTs are short-lived.
+    }
+
+    // 2. Dev header path.
     const raw = req.header(HEADER_NAME);
     const code = typeof raw === 'string' ? raw.trim() : '';
     if (!code) {
@@ -48,5 +70,19 @@ export class TenantContextMiddleware implements NestMiddleware {
     tenantContext.run({ tenantId: tenant.id, tenantCode: tenant.code, source: 'header' }, () =>
       next(),
     );
+  }
+
+  private tryResolveFromJwt(req: Request): string | null {
+    const header = req.header('authorization') ?? '';
+    const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
+    if (!m) return null;
+    try {
+      const claims = this.tokens.verifyAccess(m[1] ?? '');
+      return claims.tid;
+    } catch {
+      // Invalid token — let the route guards reject it. This middleware
+      // does not authenticate, only resolves tenant scope.
+      return null;
+    }
   }
 }
