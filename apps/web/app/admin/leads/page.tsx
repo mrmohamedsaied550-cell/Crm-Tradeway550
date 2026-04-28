@@ -7,6 +7,7 @@ import { Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
@@ -218,28 +219,62 @@ export default function LeadsPage(): JSX.Element {
         </div>
       </div>
 
-      {error ? <Notice tone="error">{error}</Notice> : null}
+      {error ? (
+        <Notice tone="error">
+          <div className="flex items-start justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => void reload()}>
+              {tCommon('retry')}
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        keyOf={(r) => r.id}
-        loading={loading}
-        rowActions={(row) => (
-          <>
-            <Link
-              href={`/admin/leads/${row.id}`}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-            >
-              {t('openDetail')}
-            </Link>
-            <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-              {tCommon('delete')}
-            </Button>
-          </>
-        )}
-      />
+      {!loading && !error && rows.length === 0 ? (
+        <EmptyState
+          title={filterStage || search ? t('emptyFiltered') : t('empty')}
+          body={filterStage || search ? t('emptyFilteredHint') : t('emptyHint')}
+          action={
+            filterStage || search ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setFilterStage('');
+                  setSearch('');
+                }}
+              >
+                {tCommon('clearFilters')}
+              </Button>
+            ) : (
+              <Button variant="primary" size="sm" onClick={openNew}>
+                {t('newButton')}
+              </Button>
+            )
+          }
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          keyOf={(r) => r.id}
+          loading={loading}
+          rowActions={(row) => (
+            <>
+              <Link
+                href={`/admin/leads/${row.id}`}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+              >
+                {t('openDetail')}
+              </Link>
+              <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                {tCommon('delete')}
+              </Button>
+            </>
+          )}
+        />
+      )}
 
       <Modal
         open={creating}

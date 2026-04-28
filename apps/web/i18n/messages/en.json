@@ -86,7 +86,10 @@
       "confirmDelete": "Are you sure you want to delete this {entity}?",
       "deleteFailed": "Delete failed",
       "saved": "Saved",
-      "created": "Created"
+      "created": "Created",
+      "retry": "Retry",
+      "clearFilters": "Clear filters",
+      "errorTitle": "Couldn't load data"
     },
     "companies": {
       "title": "Companies",
@@ -99,7 +102,9 @@
       "status": "Status",
       "createdAt": "Created",
       "deleteTitle": "Delete company",
-      "deleteHint": "Companies that still have countries cannot be deleted; deactivate them instead."
+      "deleteHint": "Companies that still have countries cannot be deleted; deactivate them instead.",
+      "empty": "No companies yet",
+      "emptyHint": "Create the first company to start adding countries and teams."
     },
     "countries": {
       "title": "Countries",
@@ -112,7 +117,12 @@
       "name": "Name",
       "status": "Status",
       "filterByCompany": "Filter by company",
-      "deleteHint": "Countries that still have teams cannot be deleted; deactivate them instead."
+      "deleteHint": "Countries that still have teams cannot be deleted; deactivate them instead.",
+      "empty": "No countries yet",
+      "emptyHint": "Add a country under a company to start grouping teams.",
+      "emptyFiltered": "No countries match the filter",
+      "emptyFilteredHint": "Try clearing the company filter.",
+      "noCompanies": "Create a company first before adding countries."
     },
     "teams": {
       "title": "Teams",
@@ -124,7 +134,12 @@
       "name": "Name",
       "status": "Status",
       "filterByCountry": "Filter by country",
-      "deleteHint": "Deleting a team detaches its users (no user is removed)."
+      "deleteHint": "Deleting a team detaches its users (no user is removed).",
+      "empty": "No teams yet",
+      "emptyHint": "Add a team under a country to start assigning users.",
+      "emptyFiltered": "No teams match the filter",
+      "emptyFilteredHint": "Try clearing the country filter.",
+      "noCountries": "Create a country first before adding teams."
     },
     "users": {
       "title": "Users",
@@ -147,11 +162,19 @@
       "noTeam": "No team",
       "disable": "Disable",
       "disableConfirm": "Disable this user? They will no longer be able to sign in.",
-      "rolePickerHint": "Pick a role discovered from existing users."
+      "rolePickerHint": "Pick a role discovered from existing users.",
+      "empty": "No users yet",
+      "emptyHint": "Invite the first operator to start working in this tenant.",
+      "emptyFiltered": "No users match the filters",
+      "emptyFilteredHint": "Try widening the team / role / status filters."
     },
     "leads": {
       "title": "Leads",
       "subtitle": "Prospective captains in the funnel.",
+      "empty": "No leads yet",
+      "emptyHint": "Create the first lead to start working the funnel.",
+      "emptyFiltered": "No leads match the filters",
+      "emptyFilteredHint": "Try clearing the stage filter or search box.",
       "newButton": "New lead",
       "newTitle": "New lead",
       "editTitle": "Edit lead",

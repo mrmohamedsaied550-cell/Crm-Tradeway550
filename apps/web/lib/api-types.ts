@@ -61,6 +61,15 @@ export interface PaginatedResult<T> {
   offset: number;
 }
 
+export interface RoleSummary {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  level: number;
+  capabilitiesCount: number;
+}
+
 export interface PipelineStage {
   id: string;
   code: string;

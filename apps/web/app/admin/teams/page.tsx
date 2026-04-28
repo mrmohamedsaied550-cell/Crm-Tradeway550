@@ -6,6 +6,7 @@ import { Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
@@ -166,25 +167,60 @@ export default function TeamsPage(): JSX.Element {
         </div>
       </div>
 
-      {error ? <Notice tone="error">{error}</Notice> : null}
+      {error ? (
+        <Notice tone="error">
+          <div className="flex items-start justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => void reload()}>
+              {tCommon('retry')}
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        keyOf={(r) => r.id}
-        loading={loading}
-        rowActions={(row) => (
-          <>
-            <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
-              {tCommon('edit')}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-              {tCommon('delete')}
-            </Button>
-          </>
-        )}
-      />
+      {!loading && !error && rows.length === 0 ? (
+        <EmptyState
+          title={
+            countries.length === 0 ? t('empty') : filterCountryId ? t('emptyFiltered') : t('empty')
+          }
+          body={
+            countries.length === 0
+              ? t('noCountries')
+              : filterCountryId
+                ? t('emptyFilteredHint')
+                : t('emptyHint')
+          }
+          action={
+            filterCountryId ? (
+              <Button variant="secondary" size="sm" onClick={() => setFilterCountryId('')}>
+                {tCommon('clearFilters')}
+              </Button>
+            ) : countries.length > 0 ? (
+              <Button variant="primary" size="sm" onClick={openNew}>
+                {t('newButton')}
+              </Button>
+            ) : null
+          }
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          keyOf={(r) => r.id}
+          loading={loading}
+          rowActions={(row) => (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
+                {tCommon('edit')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                {tCommon('delete')}
+              </Button>
+            </>
+          )}
+        />
+      )}
 
       <p className="text-xs text-ink-tertiary">{t('deleteHint')}</p>
 
