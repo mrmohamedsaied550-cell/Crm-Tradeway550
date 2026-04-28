@@ -1,0 +1,23 @@
+{
+  "name": "@crm/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -e \"console.log('hello from @crm/api')\"",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts --max-warnings 0"
+  },
+  "dependencies": {
+    "@crm/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@crm/config-eslint": "workspace:*",
+    "@crm/config-prettier": "workspace:*",
+    "@types/node": "^20.14.10",
+    "eslint": "^8.57.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

@@ -12,10 +12,16 @@
     "dev:api": "pnpm --filter @crm/api dev",
     "dev:web": "pnpm --filter @crm/web dev",
     "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
     "db:migrate": "pnpm --filter @crm/api db:migrate",
     "db:seed": "pnpm --filter @crm/api db:seed",
     "db:reset": "pnpm --filter @crm/api db:reset",
     "db:studio": "pnpm --filter @crm/api db:studio"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
   },
   "engines": {
     "node": ">=20.0.0",
