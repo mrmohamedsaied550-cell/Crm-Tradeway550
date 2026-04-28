@@ -1,0 +1,16 @@
+// Trade Way / Captain Masr CRM — Prisma schema baseline.
+//
+// C5 ships only the datasource + generator wiring. There are intentionally
+// no models yet. Tables land starting in C6 (tenants, RLS plumbing) and
+// proceed through C7–C18 per the Sprint 1 execution chunks.
+//
+// Documentation: https://www.prisma.io/docs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
