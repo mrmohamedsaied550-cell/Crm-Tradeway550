@@ -8,8 +8,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface TenantContext {
   tenantId: string;
   tenantCode: string;
-  /** Resolution source — useful for logs and tests. */
-  source: 'header' | 'jwt';
+  /**
+   * Resolution source — useful for logs and tests.
+   *   - 'header' — dev X-Tenant fallback (non-production only).
+   *   - 'jwt'    — verified access-token claim, the production path.
+   *   - 'system' — non-request entry points such as the SLA scheduler
+   *                that iterate tenants from a known-trusted source.
+   */
+  source: 'header' | 'jwt' | 'system';
 }
 
 export const tenantContext = new AsyncLocalStorage<TenantContext>();

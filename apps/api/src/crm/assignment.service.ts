@@ -18,7 +18,18 @@ import { requireTenantId } from '../tenants/tenant-context';
  * lead back; if the exclusion empties the candidate pool, the picker
  * returns null and the caller decides what to do (e.g. send to TL
  * unassigned queue — that lands when teams are introduced).
+ *
+ * Concurrency (C29): `assignLeadViaRoundRobin` takes a per-tenant
+ * Postgres advisory transaction lock before reading candidate counts.
+ * Without it, two concurrent assigns can both see "agent X has the
+ * lowest load" and both pick X, breaking distribution. The lock
+ * serialises round-robin within a tenant; concurrent assignments in
+ * different tenants run in parallel. The lock auto-releases at tx
+ * commit / rollback.
  */
+
+/** Stable namespace key for assignment advisory locks (C29). */
+const ASSIGNMENT_LOCK_NAMESPACE = 91924245;
 @Injectable()
 export class AssignmentService {
   private readonly logger = new Logger(AssignmentService.name);
@@ -87,6 +98,15 @@ export class AssignmentService {
     body: string;
     payload: Record<string, unknown>;
   }): Promise<string | null> {
+    // C29 — serialise round-robin within this tenant. The advisory lock
+    // is held until the caller's transaction commits (or rolls back),
+    // so concurrent assigns from the same tenant queue here instead of
+    // racing on a stale candidate-load read. `pg_advisory_xact_lock`
+    // returns void, so we go through $executeRaw rather than $queryRaw
+    // (which can't deserialize a void result).
+    await opts.tx
+      .$executeRaw`SELECT pg_advisory_xact_lock(${ASSIGNMENT_LOCK_NAMESPACE}::int, hashtext(${opts.tenantId}))`;
+
     const candidates = await opts.tx.user.findMany({
       where: {
         status: 'active',

@@ -2,6 +2,7 @@ import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -28,6 +29,11 @@ import { buildLoggerConfig } from './common/logger';
     // Default throttler: 60 requests per minute per IP. Auth endpoints opt
     // into tighter per-route limits via @Throttle().
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
+    // C29 — registers the @Cron decorators across the app. The actual
+    // scheduler tick is gated by the SLA_SCHEDULER_ENABLED env var
+    // inside SlaSchedulerService, so importing this module is safe in
+    // every environment (the tick simply no-ops outside production).
+    ScheduleModule.forRoot(),
     PrismaModule,
     // IdentityModule must be imported before TenantsModule because the
     // tenant-context middleware injects TokensService (provided by Identity).
