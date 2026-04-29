@@ -158,7 +158,7 @@ describe('whatsapp — MetaCloudProvider', () => {
             {
               value: {
                 metadata: { phone_number_id: 'pn-1' },
-                messages: [{ from: '20111', id: 'm1', type: 'text', text: { body: 'a' } }],
+                messages: [{ from: '201001110001', id: 'm1', type: 'text', text: { body: 'a' } }],
               },
             },
           ],
@@ -169,8 +169,8 @@ describe('whatsapp — MetaCloudProvider', () => {
               value: {
                 metadata: { phone_number_id: 'pn-2' },
                 messages: [
-                  { from: '20222', id: 'm2', type: 'text', text: { body: 'b' } },
-                  { from: '20333', id: 'm3', type: 'text', text: { body: 'c' } },
+                  { from: '201002220002', id: 'm2', type: 'text', text: { body: 'b' } },
+                  { from: '201003330003', id: 'm3', type: 'text', text: { body: 'c' } },
                 ],
               },
             },
@@ -184,6 +184,50 @@ describe('whatsapp — MetaCloudProvider', () => {
       out.map((m) => m.providerMessageId),
       ['m1', 'm2', 'm3'],
     );
+    // C26 — every phone is canonical E.164 after parsing.
+    assert.deepEqual(
+      out.map((m) => m.phone),
+      ['+201001110001', '+201002220002', '+201003330003'],
+    );
+  });
+
+  // C26 — the inbound parser now funnels phones through the canonical
+  // normaliser, so malformed `from` values are dropped instead of
+  // poisoning conversation rows with unmatchable strings.
+  it('parseInbound drops messages with a phone that does not coerce to E.164 (C26)', () => {
+    const body = {
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: '123456789012345' },
+                messages: [
+                  {
+                    from: 'not-a-phone',
+                    id: 'wamid.bad',
+                    timestamp: '1698768000',
+                    type: 'text',
+                    text: { body: 'should be dropped' },
+                  },
+                  {
+                    from: '201001112222',
+                    id: 'wamid.good',
+                    timestamp: '1698768060',
+                    type: 'text',
+                    text: { body: 'should be kept' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const out = provider.parseInbound(body);
+    assert.equal(out.length, 1);
+    assert.equal(out[0]?.providerMessageId, 'wamid.good');
+    assert.equal(out[0]?.phone, '+201001112222');
   });
 
   it('sendText posts to the Cloud API and returns the provider message id', async () => {

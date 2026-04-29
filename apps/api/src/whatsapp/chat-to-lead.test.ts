@@ -280,6 +280,57 @@ describe('whatsapp — chat-to-lead linkage (C25)', () => {
     assert.equal(after?.leadId, leadId);
   });
 
+  // ─── C26: phone normalization parity between WhatsApp inbound and lead.
+  // The WhatsApp parser used to slap a `+` on the raw `from` value via a
+  // local helper. If a conversation row was written before C26 (or via a
+  // future code path that bypasses the normaliser), its phone could be
+  // non-canonical. C26 has the auto-link defensively run normalizeE164
+  // on conversation.phone so that case still matches a canonical lead.
+  it('auto-links a conversation persisted with a bare-digit phone to a +E.164 lead (C26)', async () => {
+    // Simulate a legacy / non-canonical conversation row by writing
+    // directly through the raw client (bypasses the parser fix).
+    const rawPhone = '201001100099';
+    const canonical = '+201001100099';
+
+    const convoId = await withTenantRaw(tenantAId, async (tx) => {
+      const c = await tx.whatsAppConversation.create({
+        data: { tenantId: tenantAId, accountId: accountAId, phone: rawPhone, status: 'open' },
+        select: { id: true },
+      });
+      return c.id;
+    });
+    const leadId = await makeLead(tenantAId, stageANewId, 'C26 match', canonical);
+
+    const fetched = await svc.findConversationById(tenantAId, convoId);
+    assert.equal(fetched?.leadId, leadId, 'auto-link must reach across the +/no-+ boundary');
+    assert.equal(fetched?.lead?.id, leadId);
+  });
+
+  it('still auto-links cleanly when both sides are already canonical (C26 regression)', async () => {
+    const phone = '+201001100098';
+    const convoId = await makeConversation(tenantAId, accountAId, phone);
+    const leadId = await makeLead(tenantAId, stageANewId, 'Canonical both', phone);
+
+    const fetched = await svc.findConversationById(tenantAId, convoId);
+    assert.equal(fetched?.leadId, leadId);
+  });
+
+  it('does not auto-link when the conversation phone cannot be coerced to E.164 (C26)', async () => {
+    // Junk phone — neither E.164 nor a country-code-prefixed digit string.
+    // Defensive normalisation skips auto-link rather than throwing out of
+    // the read path.
+    const convoId = await withTenantRaw(tenantAId, async (tx) => {
+      const c = await tx.whatsAppConversation.create({
+        data: { tenantId: tenantAId, accountId: accountAId, phone: 'garbage', status: 'open' },
+        select: { id: true },
+      });
+      return c.id;
+    });
+    const fetched = await svc.findConversationById(tenantAId, convoId);
+    assert.equal(fetched?.leadId, null);
+    assert.equal(fetched?.lead, null);
+  });
+
   // ─── Pure helper: covers the no-match / single-match / multi-match
   // policy without needing to violate the (tenantId, phone) unique.
   it('pickAutoLinkLead returns null on 0 matches', () => {
