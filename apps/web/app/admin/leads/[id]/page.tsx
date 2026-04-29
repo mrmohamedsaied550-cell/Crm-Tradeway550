@@ -2,14 +2,16 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRightLeft,
   CheckCircle2,
+  ChevronDown,
   Mail,
   Phone,
+  PhoneCall,
   Settings,
   StickyNote,
   Trophy,
@@ -144,6 +146,12 @@ export default function LeadDetailPage(): JSX.Element {
   const [activityBody, setActivityBody] = useState<string>('');
   const [actionPending, setActionPending] = useState<string | null>(null);
 
+  // Refs used by the quick-actions bar to focus the composer + open the
+  // move-stage dropdown.
+  const composerSectionRef = useRef<HTMLElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [stageMenuOpen, setStageMenuOpen] = useState<boolean>(false);
+
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
     setLoading(true);
@@ -227,6 +235,41 @@ export default function LeadDetailPage(): JSX.Element {
     } finally {
       setActionPending(null);
     }
+  }
+
+  /**
+   * Quick-action variant: move the lead to `code` directly (skipping the
+   * sidebar's "select then save" two-step). The sidebar's `stageCode`
+   * state is updated optimistically so the dropdown stays in sync after
+   * reload.
+   */
+  async function quickMoveToStage(code: LeadStageCode): Promise<void> {
+    if (!lead || code === lead.stage.code) return;
+    setStageMenuOpen(false);
+    setStageCode(code);
+    setActionPending('stage');
+    setError(null);
+    try {
+      await leadsApi.moveStage(lead.id, code);
+      setNotice(tCommon('saved'));
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setActionPending(null);
+    }
+  }
+
+  /**
+   * Focus the activity composer textarea + scroll it into view. Used by
+   * the quick-action bar's "Add note" button.
+   */
+  function focusComposer(type: 'note' | 'call'): void {
+    setActivityType(type);
+    requestAnimationFrame(() => {
+      composerSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      composerTextareaRef.current?.focus();
+    });
   }
 
   async function onAddActivity(e: FormEvent<HTMLFormElement>): Promise<void> {
@@ -336,6 +379,29 @@ export default function LeadDetailPage(): JSX.Element {
             ) : null}
           </div>
         }
+      />
+
+      {/* ───── Quick actions bar (C20) ─────
+          Three high-frequency actions surfaced right under the header so an
+          agent doesn't have to scroll into the sidebar to call / take a
+          note / move the stage. */}
+      <QuickActionsBar
+        phone={lead.phone}
+        currentStageCode={lead.stage.code}
+        stages={stages}
+        stageMenuOpen={stageMenuOpen}
+        setStageMenuOpen={setStageMenuOpen}
+        disabled={isConverted}
+        actionPending={actionPending}
+        onCall={() => focusComposer('call')}
+        onAddNote={() => focusComposer('note')}
+        onPickStage={(c) => void quickMoveToStage(c)}
+        labels={{
+          call: tDetail('quickActions.call'),
+          addNote: tDetail('quickActions.addNote'),
+          moveStage: tDetail('quickActions.moveStage'),
+          terminalHint: tDetail('quickActions.terminalHint'),
+        }}
       />
 
       {error ? (
@@ -448,7 +514,11 @@ export default function LeadDetailPage(): JSX.Element {
         {/* Left: activity timeline + add-activity composer */}
         <div className="flex flex-col gap-4">
           {/* Add activity composer */}
-          <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+          <section
+            ref={composerSectionRef}
+            id="lead-activity-composer"
+            className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card"
+          >
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-primary">
               <StickyNote className="h-4 w-4 text-brand-700" aria-hidden="true" />
               {tDetail('logActivity')}
@@ -466,6 +536,7 @@ export default function LeadDetailPage(): JSX.Element {
                 </Field>
                 <Field label={t('addActivityBody')}>
                   <Textarea
+                    ref={composerTextareaRef}
                     value={activityBody}
                     onChange={(e) => setActivityBody(e.target.value)}
                     maxLength={4000}
@@ -614,6 +685,128 @@ export default function LeadDetailPage(): JSX.Element {
 // ───────────────────────────────────────────────────────────────────────
 // Small subcomponents
 // ───────────────────────────────────────────────────────────────────────
+
+interface QuickActionsBarProps {
+  phone: string;
+  currentStageCode: string;
+  stages: ReadonlyArray<PipelineStage>;
+  stageMenuOpen: boolean;
+  setStageMenuOpen: (open: boolean) => void;
+  disabled: boolean;
+  actionPending: string | null;
+  onCall: () => void;
+  onAddNote: () => void;
+  onPickStage: (code: LeadStageCode) => void;
+  labels: { call: string; addNote: string; moveStage: string; terminalHint: string };
+}
+
+/**
+ * Three-button action bar surfaced at the top of the lead detail.
+ *   - Call: opens the lead's tel: link in the OS dialer + flips the
+ *     activity composer to "call" so the agent can log the outcome.
+ *   - Add note: focuses the composer and scrolls it into view.
+ *   - Move stage: dropdown of the non-current pipeline stages; picking a
+ *     stage moves the lead immediately (skips the "select then save"
+ *     two-step still available in the sidebar).
+ */
+function QuickActionsBar({
+  phone,
+  currentStageCode,
+  stages,
+  stageMenuOpen,
+  setStageMenuOpen,
+  disabled,
+  actionPending,
+  onCall,
+  onAddNote,
+  onPickStage,
+  labels,
+}: QuickActionsBarProps): JSX.Element {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the dropdown when the user clicks outside or hits Escape.
+  useEffect(() => {
+    if (!stageMenuOpen) return;
+    function onDocClick(e: MouseEvent): void {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setStageMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setStageMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [stageMenuOpen, setStageMenuOpen]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+      <a
+        href={`tel:${phone}`}
+        onClick={onCall}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+      >
+        <PhoneCall className="h-4 w-4" aria-hidden="true" />
+        {labels.call}
+      </a>
+
+      <Button variant="secondary" size="md" onClick={onAddNote}>
+        <StickyNote className="h-4 w-4" aria-hidden="true" />
+        {labels.addNote}
+      </Button>
+
+      <div ref={wrapperRef} className="relative">
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => setStageMenuOpen(!stageMenuOpen)}
+          disabled={disabled || actionPending === 'stage'}
+          loading={actionPending === 'stage'}
+        >
+          <ArrowRightLeft className="h-4 w-4" aria-hidden="true" />
+          {labels.moveStage}
+          <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+        {stageMenuOpen ? (
+          <ul
+            role="menu"
+            className="absolute end-0 z-10 mt-1 min-w-[180px] overflow-hidden rounded-md border border-surface-border bg-surface-card py-1 text-sm shadow-card"
+          >
+            {stages.map((s) => {
+              const isCurrent = s.code === currentStageCode;
+              return (
+                <li key={s.code}>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    disabled={isCurrent}
+                    onClick={() => onPickStage(s.code as LeadStageCode)}
+                    className={cn(
+                      'flex w-full items-center justify-between gap-3 px-3 py-1.5 text-start',
+                      isCurrent
+                        ? 'cursor-not-allowed text-ink-tertiary'
+                        : 'text-ink-primary hover:bg-brand-50',
+                    )}
+                  >
+                    <span>{s.name}</span>
+                    {isCurrent ? (
+                      <span className="text-[11px] uppercase text-ink-tertiary">·</span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </div>
+
+      {disabled ? <span className="text-xs text-ink-tertiary">{labels.terminalHint}</span> : null}
+    </div>
+  );
+}
 
 function ProfileField({
   label,

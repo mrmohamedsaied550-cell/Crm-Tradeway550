@@ -222,6 +222,12 @@
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
         "viewCaptain": "View captain →",
+        "quickActions": {
+          "call": "Call",
+          "addNote": "Add note",
+          "moveStage": "Move stage",
+          "terminalHint": "Lead is in a terminal stage"
+        },
         "createdLabel": "Created",
         "lastResponseLabel": "Last response",
         "source": "Source",
