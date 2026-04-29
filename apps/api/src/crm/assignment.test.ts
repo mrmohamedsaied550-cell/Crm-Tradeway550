@@ -373,4 +373,60 @@ describe('crm — round-robin assignment (C11)', () => {
       assert.ok(!seen.has(u.id), `must not pick user ${u.id} from other tenant`);
     }
   });
+
+  // C29 — race protection. Without the per-tenant advisory lock, multiple
+  // concurrent autoAssign calls all read identical candidate-load
+  // snapshots and stack onto the same agent. With the lock, each
+  // assignment commits before the next reads, so distribution stays
+  // balanced.
+  it('serialises concurrent assigns within a tenant — distribution stays balanced (C29)', async () => {
+    // Reset both eligible agents to the SAME active load by clearing
+    // any leftover assignments from prior tests.
+    await withTenantRaw(tenantId, async (tx) => {
+      await tx.lead.updateMany({
+        where: { assignedToId: { in: [agentLowLoadId, agentHighLoadId] } },
+        data: { assignedToId: null },
+      });
+    });
+
+    // Plant 6 unassigned, non-terminal leads.
+    const phones = Array.from({ length: 6 }, (_, i) => `+20111290000${i}`);
+    const leadIds: string[] = [];
+    for (const phone of phones) {
+      const lead = await inTenant(() =>
+        leads.create({ name: `C29 Race ${phone}`, phone, source: 'manual' }, actorUserId),
+      );
+      leadIds.push(lead.id);
+    }
+
+    // Fire all autoAssign calls concurrently. Without the advisory lock
+    // the candidate read happens in parallel, all see "Low=0, High=0",
+    // and pile every assignment onto the lowest-id agent.
+    await Promise.all(leadIds.map((id) => inTenant(() => leads.autoAssign(id, actorUserId))));
+
+    // Inspect outcomes.
+    const final = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findMany({
+        where: { id: { in: leadIds } },
+        select: { assignedToId: true },
+      }),
+    );
+    const counts = new Map<string, number>();
+    for (const row of final) {
+      const id = row.assignedToId ?? 'none';
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    const lowCount = counts.get(agentLowLoadId) ?? 0;
+    const highCount = counts.get(agentHighLoadId) ?? 0;
+
+    // Every lead got a real assignee.
+    assert.equal(lowCount + highCount, 6, 'all leads must end up assigned');
+    // The stronger property: distribution is balanced (each agent within 1
+    // of the average). Without the lock this fails because all 6 stack
+    // on the lowest-id agent.
+    assert.ok(
+      Math.abs(lowCount - highCount) <= 1,
+      `expected balanced distribution; got Low=${lowCount} High=${highCount}`,
+    );
+  });
 });
