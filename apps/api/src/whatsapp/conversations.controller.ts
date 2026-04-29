@@ -18,6 +18,7 @@ import type { AccessTokenClaims } from '../identity/jwt.types';
 
 import { WhatsAppService } from './whatsapp.service';
 import {
+  LinkConversationLeadSchema,
   ListConversationMessagesQuerySchema,
   ListConversationsQuerySchema,
   SendConversationMessageSchema,
@@ -26,6 +27,7 @@ import {
 class ListConversationsQueryDto extends createZodDto(ListConversationsQuerySchema) {}
 class ListConversationMessagesQueryDto extends createZodDto(ListConversationMessagesQuerySchema) {}
 class SendConversationMessageDto extends createZodDto(SendConversationMessageSchema) {}
+class LinkConversationLeadDto extends createZodDto(LinkConversationLeadSchema) {}
 
 /**
  * /api/v1/conversations — read-only WhatsApp conversation admin surface.
@@ -82,6 +84,22 @@ export class ConversationsController {
       });
     }
     return rows;
+  }
+
+  /**
+   * C25 — attach a conversation to a lead in the same tenant. Idempotent:
+   * relinking to a different lead overwrites the previous link (latest
+   * wins). Cross-tenant ids surface as 404 because RLS hides them from
+   * the lookup.
+   */
+  @Post(':id/link-lead')
+  @ApiOperation({ summary: 'Link a conversation to a lead (idempotent)' })
+  link(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: LinkConversationLeadDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.whatsapp.linkConversationToLead(user.tid, id, body.leadId);
   }
 
   /**
