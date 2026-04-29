@@ -207,7 +207,58 @@
       "stageContacted": "تم التواصل",
       "stageInterested": "مهتم",
       "stageConverted": "محوَّل",
-      "stageLost": "مفقود"
+      "stageLost": "مفقود",
+      "detail": {
+        "phoneLabel": "الهاتف",
+        "emailLabel": "البريد الإلكتروني",
+        "assigneeLabel": "المُسنَد إليه",
+        "stageLabel": "المرحلة",
+        "slaLabel": "اتفاقية المستوى",
+        "slaDue": "تستحق",
+        "captainLabel": "الكابتن",
+        "captainBadge": "كابتن",
+        "captainOnboarding": "كابتن · {status}",
+        "captainNotYet": "لم يتم التحويل بعد",
+        "captainLost": "تم وضعه كمفقود",
+        "createdLabel": "تاريخ الإنشاء",
+        "lastResponseLabel": "آخر استجابة",
+        "source": "المصدر",
+        "unassigned": "غير مُسنَد",
+        "logActivity": "تسجيل تواصل",
+        "noActivities": "لا يوجد نشاط بعد",
+        "noActivitiesHint": "ستظهر هنا الملاحظات والمكالمات والأحداث الأخرى مع تقدّم العميل المحتمل.",
+        "notePlaceholder": "ماذا ناقشت مع العميل؟",
+        "callPlaceholder": "نتيجة المكالمة (مثل: مهتم، لا رد، بريد صوتي)…",
+        "postActivity": "نشر",
+        "quickActionsTitle": "الإجراءات السريعة",
+        "saveAssignee": "حفظ المُسنَد إليه",
+        "saveStage": "حفظ المرحلة",
+        "cantConvertLost": "أعد فتح العميل المحتمل في مرحلة غير نهائية قبل التحويل.",
+        "systemAuthor": "النظام",
+        "activityAuthorBy": "بواسطة",
+        "activity": {
+          "type": {
+            "note": "ملاحظة",
+            "call": "مكالمة",
+            "stage_change": "تغيير المرحلة",
+            "assignment": "إسناد",
+            "auto_assignment": "إسناد تلقائي",
+            "sla_breach": "خرق المستوى",
+            "system": "نظام"
+          },
+          "summary": {
+            "stageChange": "تم النقل من {from} إلى {to}",
+            "assigned": "تم الإسناد إلى {user}",
+            "unassigned": "تم إلغاء الإسناد",
+            "reassigned": "تم إعادة الإسناد من {from} إلى {to}",
+            "autoAssignment": "إسناد تلقائي عبر {strategy}",
+            "slaBreach": "تم خرق اتفاقية المستوى",
+            "converted": "تم التحويل إلى كابتن",
+            "created": "تم إنشاء العميل المحتمل في مرحلة {stage}",
+            "updated": "تم تحديث ملف العميل المحتمل"
+          }
+        }
+      }
     },
     "discoveredRoles": "الأدوار المكتشفة",
     "pipeline": {
