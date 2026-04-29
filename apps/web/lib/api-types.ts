@@ -90,13 +90,23 @@ export type LeadActivityType =
   | 'sla_breach'
   | 'system';
 
+export type CaptainStatus = 'active' | 'inactive' | 'archived';
+
 export interface Captain {
   id: string;
+  tenantId: string;
+  leadId: string;
+  name: string;
+  phone: string;
+  teamId: string | null;
+  status: CaptainStatus;
   onboardingStatus: string;
   hasIdCard: boolean;
   hasLicense: boolean;
   hasVehicleRegistration: boolean;
   activatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Lead {

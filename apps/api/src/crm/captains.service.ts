@@ -1,24 +1,34 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { CONVERTED_STAGE_CODE } from './pipeline.registry';
 import { PipelineService } from './pipeline.service';
 import { LeadsService } from './leads.service';
-import type { ConvertLeadDto } from './leads.dto';
+import type { ConvertLeadDto, ListCaptainsQueryDto } from './leads.dto';
 
 /**
  * Captain conversion + read access.
  *
  * `convertFromLead` is the canonical Lead → Captain transition:
  *   1. Validate the lead exists and has no Captain yet.
- *   2. In a single transaction:
- *      a. Create the Captain row.
- *      b. Move the lead to the `converted` (terminal) stage.
- *      c. Append a `system` activity describing the conversion.
+ *   2. If a teamId was supplied, validate it belongs to the active tenant.
+ *   3. In a single transaction:
+ *      a. Create the Captain row, denormalising name + phone from the lead
+ *         and stamping the optional teamId.
+ *      b. Move the lead to the `converted` (terminal) stage and pause SLA.
+ *      c. Append `stage_change` + `system` activities.
  *
  * The whole flow runs inside `prisma.withTenant(...)` so RLS catches any
  * cross-tenant attempt as a side-effect of the SET LOCAL GUC.
+ *
+ * C18 added the `list` + `findByIdOrThrow` read paths used by the captain
+ * admin screens. Both pass through `withTenant(...)` for the same reason.
  */
 @Injectable()
 export class CaptainsService {
@@ -28,11 +38,63 @@ export class CaptainsService {
     private readonly leads: LeadsService,
   ) {}
 
+  // ───────── reads ─────────
+
   findByLeadId(leadId: string) {
     return this.prisma.withTenant(requireTenantId(), (tx) =>
       tx.captain.findUnique({ where: { leadId } }),
     );
   }
+
+  /**
+   * Tenant-scoped paginated list. `q` matches name + phone case-insensitively.
+   * Ordered by createdAt DESC so newest captains land first.
+   */
+  async list(query: ListCaptainsQueryDto) {
+    const tenantId = requireTenantId();
+    const where: Prisma.CaptainWhereInput = {
+      ...(query.teamId && { teamId: query.teamId }),
+      ...(query.status && { status: query.status }),
+      ...(query.q && {
+        OR: [
+          { name: { contains: query.q, mode: 'insensitive' } },
+          { phone: { contains: query.q } },
+        ],
+      }),
+    };
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const [items, total] = await Promise.all([
+        tx.captain.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: query.limit,
+          skip: query.offset,
+        }),
+        tx.captain.count({ where }),
+      ]);
+      return { items, total, limit: query.limit, offset: query.offset };
+    });
+  }
+
+  findById(id: string) {
+    return this.prisma.withTenant(requireTenantId(), (tx) =>
+      tx.captain.findUnique({ where: { id } }),
+    );
+  }
+
+  async findByIdOrThrow(id: string) {
+    const row = await this.findById(id);
+    if (!row) {
+      throw new NotFoundException({
+        code: 'captain.not_found',
+        message: `Captain not found: ${id}`,
+      });
+    }
+    return row;
+  }
+
+  // ───────── conversion ─────────
 
   async convertFromLead(leadId: string, dto: ConvertLeadDto, actorUserId: string) {
     const tenantId = requireTenantId();
@@ -45,6 +107,10 @@ export class CaptainsService {
       });
     }
 
+    if (typeof dto.teamId === 'string') {
+      await this.assertTeamInTenant(dto.teamId);
+    }
+
     const convertedStage = await this.pipeline.findByCodeOrThrow(CONVERTED_STAGE_CODE);
 
     try {
@@ -53,6 +119,11 @@ export class CaptainsService {
           data: {
             tenantId,
             leadId,
+            // Denormalised from the lead so captain-only screens never need
+            // a JOIN through leads to render a name / phone.
+            name: lead.name,
+            phone: lead.phone,
+            teamId: dto.teamId ?? null,
             onboardingStatus: 'in_progress',
             hasIdCard: dto.hasIdCard ?? false,
             hasLicense: dto.hasLicense ?? false,
@@ -90,6 +161,7 @@ export class CaptainsService {
           payload: {
             event: 'converted',
             captainId: captain.id,
+            teamId: captain.teamId,
             documents: {
               hasIdCard: captain.hasIdCard,
               hasLicense: captain.hasLicense,
@@ -109,6 +181,32 @@ export class CaptainsService {
         });
       }
       throw err;
+    }
+  }
+
+  // ───────── private guards ─────────
+
+  /**
+   * Cross-tenant guard for team writes. Mirrors the helper in
+   * AdminUsersService so the UI sees a consistent `team.not_in_tenant`
+   * error code on cross-tenant ids.
+   */
+  private async assertTeamInTenant(teamId: string): Promise<void> {
+    const tenantId = requireTenantId();
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.team.findUnique({ where: { id: teamId }, select: { id: true, isActive: true } }),
+    );
+    if (!row) {
+      throw new NotFoundException({
+        code: 'team.not_in_tenant',
+        message: `Team ${teamId} is not defined in the active tenant`,
+      });
+    }
+    if (!row.isActive) {
+      throw new BadRequestException({
+        code: 'team.inactive',
+        message: `Team ${teamId} is not active`,
+      });
     }
   }
 }

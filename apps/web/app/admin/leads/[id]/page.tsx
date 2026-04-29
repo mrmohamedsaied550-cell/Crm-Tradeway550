@@ -412,11 +412,19 @@ export default function LeadDetailPage(): JSX.Element {
 
         <ProfileField label={tDetail('captainLabel')}>
           {isConverted ? (
-            <span className="text-sm font-medium text-status-healthy">
-              {lead.captain?.onboardingStatus
-                ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
-                : tDetail('captainBadge')}
-            </span>
+            <div className="flex flex-col leading-tight">
+              <span className="text-sm font-medium text-status-healthy">
+                {lead.captain?.onboardingStatus
+                  ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
+                  : tDetail('captainBadge')}
+              </span>
+              <Link
+                href="/admin/captains"
+                className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+              >
+                {tDetail('viewCaptain')}
+              </Link>
+            </div>
           ) : isLost ? (
             <span className="text-sm text-ink-tertiary">{tDetail('captainLost')}</span>
           ) : (

@@ -41,6 +41,7 @@
       "users": "المستخدمون",
       "leads": "العملاء المحتملون",
       "pipeline": "خط الأنابيب",
+      "captains": "الكباتن",
       "audit": "سجلّ التدقيق"
     },
     "authBar": {
@@ -220,6 +221,7 @@
         "captainOnboarding": "كابتن · {status}",
         "captainNotYet": "لم يتم التحويل بعد",
         "captainLost": "تم وضعه كمفقود",
+        "viewCaptain": "عرض الكابتن ←",
         "createdLabel": "تاريخ الإنشاء",
         "lastResponseLabel": "آخر استجابة",
         "source": "المصدر",
@@ -272,6 +274,25 @@
       "moveBlocked": "لا يمكن الإفلات على نفس المرحلة",
       "movedTo": "تم النقل إلى {stage}",
       "moveFailed": "فشل النقل"
+    },
+    "captains": {
+      "title": "الكباتن",
+      "subtitle": "العملاء المحتملون الذين تم تحويلهم إلى سائقين نشطين.",
+      "name": "الاسم",
+      "phone": "الهاتف",
+      "team": "الفريق",
+      "status": "الحالة",
+      "onboardingStatus": "حالة التهيئة",
+      "noTeam": "بدون فريق",
+      "filterByTeam": "تصفية حسب الفريق",
+      "filterByStatus": "تصفية حسب الحالة",
+      "search": "بحث بالاسم / الهاتف",
+      "openLead": "فتح العميل المحتمل",
+      "viewCaptain": "عرض الكابتن",
+      "empty": "لا يوجد كباتن بعد",
+      "emptyHint": "حوّل عميلاً محتملاً من قائمة العملاء لإنشاء أول كابتن.",
+      "emptyFiltered": "لا يوجد كباتن يطابقون الفلاتر",
+      "emptyFilteredHint": "جرّب مسح الفلاتر."
     }
   },
   "agent": {

@@ -74,9 +74,28 @@ export const ConvertLeadSchema = z
     hasIdCard: z.boolean().optional(),
     hasLicense: z.boolean().optional(),
     hasVehicleRegistration: z.boolean().optional(),
+    /** Optional team to own the captain post-handover. Validated cross-tenant. */
+    teamId: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type ConvertLeadDto = z.infer<typeof ConvertLeadSchema>;
+
+// ───── Captains (C18) ─────
+
+const captainStatus = z.enum(['active', 'inactive', 'archived']);
+export type CaptainStatus = z.infer<typeof captainStatus>;
+
+export const ListCaptainsQuerySchema = z
+  .object({
+    teamId: z.string().uuid().optional(),
+    status: captainStatus.optional(),
+    /** Free-text match across name + phone. */
+    q: z.string().trim().min(1).max(120).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+export type ListCaptainsQueryDto = z.infer<typeof ListCaptainsQuerySchema>;
 
 export const ListLeadsQuerySchema = z
   .object({
