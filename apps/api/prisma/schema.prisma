@@ -447,6 +447,8 @@ model WhatsAppAccount {
   id            String  @id @default(uuid()) @db.Uuid
   tenantId      String  @map("tenant_id") @db.Uuid
   tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Friendly label shown in admin lists (e.g. "Egypt — Uber sales line").
+  displayName   String  @map("display_name")
   /// E.164 phone number this account sends from (display number).
   phoneNumber   String  @map("phone_number")
   /// Meta's phone-number-id used in URL paths + webhook routing.

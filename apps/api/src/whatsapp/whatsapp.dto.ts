@@ -37,3 +37,54 @@ export const SendConversationMessageSchema = z
   })
   .strict();
 export type SendConversationMessageDto = z.infer<typeof SendConversationMessageSchema>;
+
+// ───── WhatsApp accounts admin (C24A) ─────
+
+const provider = z.enum(['meta_cloud']);
+export type WhatsAppProviderCode = z.infer<typeof provider>;
+
+const phoneE164 = z
+  .string()
+  .trim()
+  .min(6)
+  .max(32)
+  .regex(/^\+?[0-9]+$/u, 'must be digits with optional leading +');
+
+const accessToken = z.string().trim().min(8).max(2048);
+const appSecret = z.string().trim().min(4).max(512);
+const verifyTokenField = z
+  .string()
+  .trim()
+  .min(8)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/u, 'use letters / digits / `_` / `-`');
+
+export const CreateWhatsAppAccountSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120),
+    phoneNumber: phoneE164,
+    phoneNumberId: z.string().trim().min(1).max(64),
+    provider: provider.default('meta_cloud'),
+    accessToken,
+    /** Optional in dev; required for production signature verification. */
+    appSecret: appSecret.optional(),
+    verifyToken: verifyTokenField,
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+export type CreateWhatsAppAccountDto = z.infer<typeof CreateWhatsAppAccountSchema>;
+
+export const UpdateWhatsAppAccountSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    phoneNumber: phoneE164.optional(),
+    phoneNumberId: z.string().trim().min(1).max(64).optional(),
+    /** Pass a new value to rotate the token; omit to leave unchanged. */
+    accessToken: accessToken.optional(),
+    /** Pass `null` to clear, a string to rotate, or omit to leave unchanged. */
+    appSecret: appSecret.nullable().optional(),
+    verifyToken: verifyTokenField.optional(),
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateWhatsAppAccountDto = z.infer<typeof UpdateWhatsAppAccountSchema>;

@@ -303,6 +303,7 @@ describe('whatsapp — service + persistence (C21)', () => {
         update: {},
         create: {
           tenantId: tenantAId,
+          displayName: 'C21 Account A',
           phoneNumber: '+201111111111',
           phoneNumberId: 'PNID-A',
           provider: 'meta_cloud',
@@ -320,6 +321,7 @@ describe('whatsapp — service + persistence (C21)', () => {
         update: {},
         create: {
           tenantId: tenantBId,
+          displayName: 'C21 Account B',
           phoneNumber: '+966222222222',
           phoneNumberId: 'PNID-B',
           provider: 'meta_cloud',
