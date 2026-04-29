@@ -40,6 +40,7 @@
       "teams": "Teams",
       "users": "Users",
       "leads": "Leads",
+      "pipeline": "Pipeline",
       "audit": "Audit Log"
     },
     "authBar": {
@@ -208,7 +209,19 @@
       "stageConverted": "Converted",
       "stageLost": "Lost"
     },
-    "discoveredRoles": "Discovered roles"
+    "discoveredRoles": "Discovered roles",
+    "pipeline": {
+      "title": "Pipeline",
+      "subtitle": "Drag a lead between columns to move its stage.",
+      "filterByTeam": "Filter by team",
+      "filterByAssignee": "Filter by assignee",
+      "unassigned": "Unassigned",
+      "anyTeam": "Any team",
+      "noLeads": "No leads",
+      "moveBlocked": "Cannot drop on the same stage",
+      "movedTo": "Moved to {stage}",
+      "moveFailed": "Move failed"
+    }
   },
   "agent": {
     "title": "My Day",

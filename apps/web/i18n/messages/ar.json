@@ -40,6 +40,7 @@
       "teams": "الفرق",
       "users": "المستخدمون",
       "leads": "العملاء المحتملون",
+      "pipeline": "خط الأنابيب",
       "audit": "سجلّ التدقيق"
     },
     "authBar": {
@@ -208,7 +209,19 @@
       "stageConverted": "محوَّل",
       "stageLost": "مفقود"
     },
-    "discoveredRoles": "الأدوار المكتشفة"
+    "discoveredRoles": "الأدوار المكتشفة",
+    "pipeline": {
+      "title": "خط الأنابيب",
+      "subtitle": "اسحب عميلاً محتملاً بين الأعمدة لتغيير مرحلته.",
+      "filterByTeam": "تصفية حسب الفريق",
+      "filterByAssignee": "تصفية حسب المُسنَد إليه",
+      "unassigned": "غير مُسنَد",
+      "anyTeam": "أي فريق",
+      "noLeads": "لا يوجد عملاء",
+      "moveBlocked": "لا يمكن الإفلات على نفس المرحلة",
+      "movedTo": "تم النقل إلى {stage}",
+      "moveFailed": "فشل النقل"
+    }
   },
   "agent": {
     "title": "يومي",

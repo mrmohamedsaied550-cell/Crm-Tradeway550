@@ -11,13 +11,22 @@ import {
   UserCog,
   ScrollText,
   Contact,
+  Columns,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
   href: string;
-  labelKey: 'dashboard' | 'companies' | 'countries' | 'teams' | 'users' | 'leads' | 'audit';
+  labelKey:
+    | 'dashboard'
+    | 'companies'
+    | 'countries'
+    | 'teams'
+    | 'users'
+    | 'leads'
+    | 'pipeline'
+    | 'audit';
   icon: LucideIcon;
   /** When true, the link is rendered but disabled — destination doesn't exist. */
   pending?: boolean;
@@ -30,6 +39,7 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/teams', labelKey: 'teams', icon: Users2 },
   { href: '/admin/users', labelKey: 'users', icon: UserCog },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact },
+  { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, pending: true },
 ];
 
