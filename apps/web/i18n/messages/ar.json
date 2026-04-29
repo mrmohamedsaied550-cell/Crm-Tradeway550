@@ -313,20 +313,29 @@
       "subtitle": "محادثات مباشرة مع العملاء المحتملين والكباتن.",
       "phoneFilter": "تصفية حسب الهاتف",
       "phoneFilterPlaceholder": "+201001112222",
+      "accountFilter": "حساب واتساب",
+      "allAccounts": "كل الحسابات",
+      "accountInactive": "(غير نشط)",
       "status": {
         "open": "مفتوحة",
-        "closed": "مغلقة"
+        "closed": "مغلقة",
+        "all": "الكل"
       },
       "empty": "لا توجد محادثات بعد",
       "emptyHint": "ستظهر الرسائل الواردة عبر واتساب هنا.",
       "emptyFiltered": "لا توجد محادثات تطابق التصفية",
-      "emptyFilteredHint": "جرّب مسح فلتر الهاتف أو الحالة.",
+      "emptyFilteredHint": "جرّب مسح فلتر الحساب أو الهاتف أو الحالة.",
       "noMessages": "لا توجد رسائل بعد",
+      "noMessagesHint": "بمجرد ردّ العميل عبر واتساب ستظهر المحادثة هنا.",
       "selectAConversation": "اختر محادثة",
       "selectAConversationHint": "اختر واحدة من القائمة للقراءة والردّ.",
       "composerPlaceholder": "اكتب ردّاً…",
+      "composerClosed": "المحادثة مغلقة — الردّ معطّل.",
       "send": "إرسال",
-      "back": "العودة إلى القائمة"
+      "sending": "جارٍ الإرسال…",
+      "back": "العودة إلى القائمة",
+      "today": "اليوم",
+      "yesterday": "أمس"
     }
   },
   "common": {

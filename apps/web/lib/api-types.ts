@@ -194,3 +194,25 @@ export interface SendConversationMessageResult {
   providerMessageId: string;
   conversationId: string;
 }
+
+// ───── WhatsApp accounts (C24A) — read-only client view ─────
+
+/**
+ * No-secret projection of a WhatsApp provider account, mirroring the
+ * `WhatsAppAccountView` returned by the API. The access token and app
+ * secret are never carried over the wire — `hasAppSecret` is the only
+ * signal the UI gets about the secret.
+ */
+export interface WhatsAppAccount {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  phoneNumber: string;
+  phoneNumberId: string;
+  provider: string;
+  verifyToken: string;
+  hasAppSecret: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
