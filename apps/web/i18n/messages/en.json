@@ -207,7 +207,58 @@
       "stageContacted": "Contacted",
       "stageInterested": "Interested",
       "stageConverted": "Converted",
-      "stageLost": "Lost"
+      "stageLost": "Lost",
+      "detail": {
+        "phoneLabel": "Phone",
+        "emailLabel": "Email",
+        "assigneeLabel": "Assignee",
+        "stageLabel": "Stage",
+        "slaLabel": "SLA",
+        "slaDue": "due",
+        "captainLabel": "Captain",
+        "captainBadge": "Captain",
+        "captainOnboarding": "Captain · {status}",
+        "captainNotYet": "Not converted yet",
+        "captainLost": "Marked as lost",
+        "createdLabel": "Created",
+        "lastResponseLabel": "Last response",
+        "source": "Source",
+        "unassigned": "Unassigned",
+        "logActivity": "Log a touchpoint",
+        "noActivities": "No activity yet",
+        "noActivitiesHint": "Notes, calls, and system events will appear here as the lead progresses.",
+        "notePlaceholder": "What did you discuss with the lead?",
+        "callPlaceholder": "Outcome of the call (e.g. interested, no answer, voicemail)…",
+        "postActivity": "Post",
+        "quickActionsTitle": "Quick actions",
+        "saveAssignee": "Save assignee",
+        "saveStage": "Save stage",
+        "cantConvertLost": "Re-open the lead to a non-terminal stage before converting.",
+        "systemAuthor": "system",
+        "activityAuthorBy": "by",
+        "activity": {
+          "type": {
+            "note": "Note",
+            "call": "Call",
+            "stage_change": "Stage change",
+            "assignment": "Assignment",
+            "auto_assignment": "Auto-assignment",
+            "sla_breach": "SLA breach",
+            "system": "System"
+          },
+          "summary": {
+            "stageChange": "Moved from {from} to {to}",
+            "assigned": "Assigned to {user}",
+            "unassigned": "Unassigned",
+            "reassigned": "Reassigned from {from} to {to}",
+            "autoAssignment": "Auto-assigned via {strategy}",
+            "slaBreach": "SLA breached",
+            "converted": "Converted to captain",
+            "created": "Lead created in stage {stage}",
+            "updated": "Lead profile updated"
+          }
+        }
+      }
     },
     "discoveredRoles": "Discovered roles",
     "pipeline": {
