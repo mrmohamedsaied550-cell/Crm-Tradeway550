@@ -17,6 +17,8 @@ import { API_BASE_URL, API_VERSION_PREFIX } from './api-base';
 import { getAccessToken, getTenantCode } from './auth';
 import type {
   AdminUser,
+  Captain,
+  CaptainStatus,
   Company,
   Country,
   Lead,
@@ -293,10 +295,29 @@ export const leadsApi = {
       hasIdCard?: boolean;
       hasLicense?: boolean;
       hasVehicleRegistration?: boolean;
+      teamId?: string | null;
     } = {},
-  ): Promise<{ id: string; onboardingStatus: string }> =>
-    apiFetch<{ id: string; onboardingStatus: string }>(`/leads/${id}/convert`, {
+  ): Promise<Captain> =>
+    apiFetch<Captain>(`/leads/${id}/convert`, {
       method: 'POST',
       body: input,
     }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// CRM — captains (read-only) (C18)
+// ───────────────────────────────────────────────────────────────────────
+
+export const captainsApi = {
+  list: (
+    query: {
+      teamId?: string;
+      status?: CaptainStatus;
+      q?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PaginatedResult<Captain>> =>
+    apiFetch<PaginatedResult<Captain>>('/captains', { query }),
+  get: (id: string): Promise<Captain> => apiFetch<Captain>(`/captains/${id}`),
 };

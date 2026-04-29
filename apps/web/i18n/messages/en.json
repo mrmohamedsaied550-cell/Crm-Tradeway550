@@ -41,6 +41,7 @@
       "users": "Users",
       "leads": "Leads",
       "pipeline": "Pipeline",
+      "captains": "Captains",
       "audit": "Audit Log"
     },
     "authBar": {
@@ -220,6 +221,7 @@
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
+        "viewCaptain": "View captain →",
         "createdLabel": "Created",
         "lastResponseLabel": "Last response",
         "source": "Source",
@@ -272,6 +274,25 @@
       "moveBlocked": "Cannot drop on the same stage",
       "movedTo": "Moved to {stage}",
       "moveFailed": "Move failed"
+    },
+    "captains": {
+      "title": "Captains",
+      "subtitle": "Leads converted to active drivers.",
+      "name": "Name",
+      "phone": "Phone",
+      "team": "Team",
+      "status": "Status",
+      "onboardingStatus": "Onboarding",
+      "noTeam": "No team",
+      "filterByTeam": "Filter by team",
+      "filterByStatus": "Filter by status",
+      "search": "Search name / phone",
+      "openLead": "Open lead",
+      "viewCaptain": "View captain",
+      "empty": "No captains yet",
+      "emptyHint": "Convert a lead from the leads list to create the first captain.",
+      "emptyFiltered": "No captains match the filters",
+      "emptyFilteredHint": "Try clearing the filters."
     }
   },
   "agent": {

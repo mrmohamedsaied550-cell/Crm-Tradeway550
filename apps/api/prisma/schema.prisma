@@ -274,12 +274,31 @@ model Lead {
 /// One-to-one with Lead via the unique `leadId`. Onboarding flags track
 /// which documents have landed; an MVP scope (the full document
 /// review/approval lifecycle from the PRD lands in a later chunk).
+///
+/// C18 denormalises `name` + `phone` from the lead at conversion time so
+/// downstream captain-only screens don't need to JOIN through the lead;
+/// adds an optional `teamId` (the activation/driving team that owns the
+/// captain post-handover); adds a top-level lifecycle `status` distinct
+/// from `onboardingStatus` (active / inactive / archived) so the captain
+/// can be deactivated without touching the onboarding state.
 model Captain {
   id                     String   @id @default(uuid()) @db.Uuid
   tenantId               String   @map("tenant_id") @db.Uuid
   tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   leadId                 String   @unique @map("lead_id") @db.Uuid
   lead                   Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// Denormalised from the lead at conversion time.
+  name  String
+  phone String
+
+  /// Activation / driving team that owns this captain (nullable —
+  /// a freshly-converted captain may not yet be assigned to a team).
+  teamId String? @map("team_id") @db.Uuid
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  /// Captain lifecycle status: 'active' | 'inactive' | 'archived'.
+  status String @default("active")
 
   /// `pending`, `in_progress`, `active`, `rejected`.
   onboardingStatus       String   @default("pending") @map("onboarding_status")
@@ -292,6 +311,8 @@ model Captain {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, onboardingStatus])
+  @@index([tenantId, status])
+  @@index([tenantId, teamId])
   @@map("captains")
 }
 
@@ -387,7 +408,8 @@ model Team {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users User[]
+  users    User[]
+  captains Captain[]
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
