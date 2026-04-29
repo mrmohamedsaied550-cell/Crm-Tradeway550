@@ -13,6 +13,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 
+import { isProduction } from '../common/env';
 import { WhatsAppService } from './whatsapp.service';
 
 /**
@@ -106,11 +107,14 @@ export class WhatsAppController {
 
     const provider = this.whatsapp.providerFor(account.provider);
 
-    // Signature verification — only enforced when the account is
-    // configured with an appSecret.
+    // Signature verification. C27 — enforce signing in production: an
+    // account without an appSecret is rejected outright, and a missing
+    // / wrong signature is rejected as before. In dev/test the unsigned
+    // path stays open so local fixtures don't need a real Meta secret.
     const signature = req.header('x-hub-signature-256') ?? undefined;
     const raw = req.rawBody?.toString('utf8') ?? JSON.stringify(body);
-    if (!provider.verifySignature(raw, signature, account.appSecret)) {
+    const requireSigned = isProduction();
+    if (!provider.verifySignature(raw, signature, account.appSecret, requireSigned)) {
       throw new BadRequestException({
         code: 'whatsapp.invalid_signature',
         message: 'Webhook signature does not match',

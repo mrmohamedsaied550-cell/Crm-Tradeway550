@@ -91,6 +91,12 @@ export interface WhatsAppProvider {
     rawBody: string,
     signatureHeader: string | undefined,
     appSecret: string | null,
+    /**
+     * C27 — when `true`, reject any payload whose account has no
+     * appSecret configured. The webhook controller passes
+     * `requireSigned = isProduction()`.
+     */
+    requireSigned?: boolean,
   ): boolean;
 
   /**

@@ -33,6 +33,7 @@
     "@nestjs/throttler": "^6.2.0",
     "@prisma/client": "^5.19.1",
     "bcryptjs": "^2.4.3",
+    "helmet": "^8",
     "nestjs-pino": "^4.1.0",
     "nestjs-zod": "^3.0.0",
     "pino": "^9.4.0",
