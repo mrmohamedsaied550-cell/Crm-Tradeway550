@@ -12,6 +12,7 @@ import { UsersModule } from './users/users.module';
 import { IdentityModule } from './identity/identity.module';
 import { CrmModule } from './crm/crm.module';
 import { OrgModule } from './org/org.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -36,6 +37,7 @@ import { buildLoggerConfig } from './common/logger';
     UsersModule,
     CrmModule,
     OrgModule,
+    WhatsAppModule,
     HealthModule,
   ],
   providers: [
