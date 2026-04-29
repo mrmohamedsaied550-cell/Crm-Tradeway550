@@ -8,8 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { hashPassword } from '../identity/password.util';
-import { TeamsService } from './teams.service';
-import type { CreateUserDto, ListUsersQueryDto, UpdateUserDto } from './org.dto';
+import type { CreateUserDto, ListUsersQueryDto, UpdateUserDto, UserStatus } from './org.dto';
 
 const SAFE_USER_SELECT = {
   id: true,
@@ -35,18 +34,24 @@ const SAFE_USER_SELECT = {
  * write surface used by org admins. Both go through the same SafeUser
  * projection so the password hash never leaves the persistence layer.
  *
- * Validation rules:
- *   - The role must exist in the active tenant (RBAC catalogue).
- *   - When `teamId` is supplied, the team must exist in the active tenant.
- *   - Setting status='disabled' here is the one-shot deactivation path;
- *     it does NOT revoke active sessions (that lives in the auth module).
+ * Tenant safety:
+ *   - Every read/write goes through `prisma.withTenant(...)` so RLS catches
+ *     cross-tenant attempts as a side-effect.
+ *   - `roleId` and `teamId` writes pass through `assertRoleInTenant` and
+ *     `assertTeamInTenant` first — both lookups run under the active GUC
+ *     so a foreign id surfaces as a typed BadRequest / NotFound instead
+ *     of leaking via a raw FK insert.
+ *   - `enable` and `disable` are idempotent — calling them twice never
+ *     errors and never writes a no-op activity log (we don't have a user
+ *     activity log yet anyway).
  */
 @Injectable()
 export class AdminUsersService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly teams: TeamsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
+
+  // ───────────────────────────────────────────────────────────────────────
+  // read / list
+  // ───────────────────────────────────────────────────────────────────────
 
   async list(query: ListUsersQueryDto) {
     const tenantId = requireTenantId();
@@ -91,11 +96,15 @@ export class AdminUsersService {
     return row;
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // create / update / delete
+  // ───────────────────────────────────────────────────────────────────────
+
   async create(dto: CreateUserDto) {
     const tenantId = requireTenantId();
     await this.assertRoleInTenant(dto.roleId);
     if (dto.teamId) {
-      await this.teams.findByIdOrThrow(dto.teamId);
+      await this.assertTeamInTenant(dto.teamId);
     }
     const passwordHash = await hashPassword(dto.password);
     try {
@@ -132,8 +141,10 @@ export class AdminUsersService {
     if (dto.roleId !== undefined) {
       await this.assertRoleInTenant(dto.roleId);
     }
-    if (dto.teamId) {
-      await this.teams.findByIdOrThrow(dto.teamId);
+    // teamId === undefined → unchanged; null → clear (no validation needed);
+    // string → must resolve to a team in the active tenant.
+    if (typeof dto.teamId === 'string') {
+      await this.assertTeamInTenant(dto.teamId);
     }
 
     return this.prisma.withTenant(tenantId, (tx) =>
@@ -142,7 +153,6 @@ export class AdminUsersService {
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
           ...(dto.roleId !== undefined && { roleId: dto.roleId }),
-          // teamId === undefined → leave alone; null → clear.
           ...(dto.teamId !== undefined && { teamId: dto.teamId }),
           ...(dto.phone !== undefined && { phone: dto.phone }),
           ...(dto.language !== undefined && { language: dto.language }),
@@ -153,23 +163,81 @@ export class AdminUsersService {
     );
   }
 
-  async disable(id: string) {
-    const tenantId = requireTenantId();
-    await this.findByIdOrThrow(id);
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.user.update({
-        where: { id },
-        data: { status: 'disabled' },
-        select: SAFE_USER_SELECT,
-      }),
-    );
-  }
-
   async delete(id: string) {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
     await this.prisma.withTenant(tenantId, (tx) => tx.user.delete({ where: { id } }));
   }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // focused mutations — used by the admin UI's per-row action menu
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Set the user's role. Validates the new role belongs to the active
+   * tenant before writing; surfaces `role.not_in_tenant` BadRequest on
+   * cross-tenant attempts (RLS would also reject, but the typed error is
+   * nicer for the UI).
+   */
+  async setRole(id: string, roleId: string) {
+    const tenantId = requireTenantId();
+    await this.findByIdOrThrow(id);
+    await this.assertRoleInTenant(roleId);
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: { roleId },
+        select: SAFE_USER_SELECT,
+      }),
+    );
+  }
+
+  /**
+   * Set or clear the user's team. Pass `null` to detach. Validates the
+   * new team belongs to the active tenant; cross-tenant ids surface as
+   * `team.not_in_tenant` NotFound.
+   */
+  async setTeam(id: string, teamId: string | null) {
+    const tenantId = requireTenantId();
+    await this.findByIdOrThrow(id);
+    if (teamId !== null) {
+      await this.assertTeamInTenant(teamId);
+    }
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: { teamId },
+        select: SAFE_USER_SELECT,
+      }),
+    );
+  }
+
+  /** Set the user's status to one of `active | invited | disabled`. Idempotent. */
+  async setStatus(id: string, status: UserStatus) {
+    const tenantId = requireTenantId();
+    await this.findByIdOrThrow(id);
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.user.update({
+        where: { id },
+        data: { status },
+        select: SAFE_USER_SELECT,
+      }),
+    );
+  }
+
+  /** Set status='disabled'. Does NOT revoke active sessions (handled elsewhere). */
+  disable(id: string) {
+    return this.setStatus(id, 'disabled');
+  }
+
+  /** Set status='active'. Useful for re-enabling a previously disabled user. */
+  enable(id: string) {
+    return this.setStatus(id, 'active');
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // private guards
+  // ───────────────────────────────────────────────────────────────────────
 
   private async assertRoleInTenant(roleId: string): Promise<void> {
     const tenantId = requireTenantId();
@@ -186,6 +254,30 @@ export class AdminUsersService {
       throw new BadRequestException({
         code: 'role.inactive',
         message: `Role ${roleId} is not active`,
+      });
+    }
+  }
+
+  /**
+   * Cross-tenant guard for team writes. Mirrors `assertRoleInTenant` so the
+   * UI sees a stable shape (`{code,message}`) for both kinds of foreign-id
+   * rejection.
+   */
+  private async assertTeamInTenant(teamId: string): Promise<void> {
+    const tenantId = requireTenantId();
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.team.findUnique({ where: { id: teamId }, select: { id: true, isActive: true } }),
+    );
+    if (!row) {
+      throw new NotFoundException({
+        code: 'team.not_in_tenant',
+        message: `Team ${teamId} is not defined in the active tenant`,
+      });
+    }
+    if (!row.isActive) {
+      throw new BadRequestException({
+        code: 'team.inactive',
+        message: `Team ${teamId} is not active`,
       });
     }
   }

@@ -29,6 +29,9 @@ import {
   ListCountriesQuerySchema,
   ListTeamsQuerySchema,
   ListUsersQuerySchema,
+  SetUserRoleSchema,
+  SetUserStatusSchema,
+  SetUserTeamSchema,
   UpdateCompanySchema,
   UpdateCountrySchema,
   UpdateTeamSchema,
@@ -46,6 +49,9 @@ class ListTeamsQueryDto extends createZodDto(ListTeamsQuerySchema) {}
 class CreateUserDto extends createZodDto(CreateUserSchema) {}
 class UpdateUserDto extends createZodDto(UpdateUserSchema) {}
 class ListUsersQueryDto extends createZodDto(ListUsersQuerySchema) {}
+class SetUserRoleDto extends createZodDto(SetUserRoleSchema) {}
+class SetUserTeamDto extends createZodDto(SetUserTeamSchema) {}
+class SetUserStatusDto extends createZodDto(SetUserStatusSchema) {}
 
 /**
  * /api/v1 — org-structure admin surface (C12).
@@ -193,11 +199,41 @@ export class OrgController {
     return this.users.update(id, body);
   }
 
+  @Post('users/:id/enable')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Enable a user (status → active). Idempotent.' })
+  enableUser(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.users.enable(id);
+  }
+
   @Post('users/:id/disable')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Disable a user (soft-deactivate)' })
+  @ApiOperation({ summary: 'Disable a user (status → disabled). Idempotent.' })
   disableUser(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.users.disable(id);
+  }
+
+  @Patch('users/:id/role')
+  @ApiOperation({
+    summary: 'Set the user role; rejects role IDs from another tenant',
+  })
+  setUserRole(@Param('id', new ParseUUIDPipe()) id: string, @Body() body: SetUserRoleDto) {
+    return this.users.setRole(id, body.roleId);
+  }
+
+  @Patch('users/:id/team')
+  @ApiOperation({
+    summary:
+      'Set or clear the user team; pass `null` to detach. Rejects team IDs from another tenant.',
+  })
+  setUserTeam(@Param('id', new ParseUUIDPipe()) id: string, @Body() body: SetUserTeamDto) {
+    return this.users.setTeam(id, body.teamId);
+  }
+
+  @Patch('users/:id/status')
+  @ApiOperation({ summary: 'Set the user status (active / invited / disabled).' })
+  setUserStatus(@Param('id', new ParseUUIDPipe()) id: string, @Body() body: SetUserStatusDto) {
+    return this.users.setStatus(id, body.status);
   }
 
   @Delete('users/:id')

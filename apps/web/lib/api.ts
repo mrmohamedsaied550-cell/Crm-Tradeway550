@@ -221,8 +221,16 @@ export const usersApi = {
       status?: UserStatus;
     },
   ): Promise<AdminUser> => apiFetch<AdminUser>(`/users/${id}`, { method: 'PATCH', body: input }),
+  enable: (id: string): Promise<AdminUser> =>
+    apiFetch<AdminUser>(`/users/${id}/enable`, { method: 'POST' }),
   disable: (id: string): Promise<AdminUser> =>
     apiFetch<AdminUser>(`/users/${id}/disable`, { method: 'POST' }),
+  setRole: (id: string, roleId: string): Promise<AdminUser> =>
+    apiFetch<AdminUser>(`/users/${id}/role`, { method: 'PATCH', body: { roleId } }),
+  setTeam: (id: string, teamId: string | null): Promise<AdminUser> =>
+    apiFetch<AdminUser>(`/users/${id}/team`, { method: 'PATCH', body: { teamId } }),
+  setStatus: (id: string, status: UserStatus): Promise<AdminUser> =>
+    apiFetch<AdminUser>(`/users/${id}/status`, { method: 'PATCH', body: { status } }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/users/${id}`, { method: 'DELETE' }),
 };
 
