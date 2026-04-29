@@ -316,6 +316,44 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     );
     assert.equal(remainingActs.length, 0);
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // C20 — every mutation path emits an activity with consistent metadata
+  // (non-empty type + body, createdById === actor for actor-driven paths).
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('every lead mutation emits an activity with type + body + actor', async () => {
+    const lead = await inTenant(() =>
+      leads.create({ name: 'C20 Audit', phone: '+201002999000', source: 'manual' }, actorUserId),
+    );
+    await inTenant(() => leads.update(lead.id, { name: 'C20 Audit (renamed)' }, actorUserId));
+    await inTenant(() => leads.assign(lead.id, assigneeUserId, actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, 'contacted', actorUserId));
+    await inTenant(() =>
+      leads.addActivity(lead.id, { type: 'note', body: 'spoke briefly' }, actorUserId),
+    );
+    await inTenant(() =>
+      leads.addActivity(lead.id, { type: 'call', body: 'voicemail' }, actorUserId),
+    );
+
+    const acts = await inTenant(() => leads.listActivities(lead.id));
+    // Six events expected: created, updated, assignment, stage_change, note, call.
+    assert.equal(acts.length, 6, `expected 6 activities, got ${acts.length}`);
+
+    for (const a of acts) {
+      assert.ok(typeof a.type === 'string' && a.type.length > 0, `type must be set on ${a.id}`);
+      assert.ok(
+        typeof a.body === 'string' && a.body.length > 0,
+        `body must be non-empty on ${a.id} (${a.type})`,
+      );
+      assert.equal(a.createdById, actorUserId, `createdById must equal actor on ${a.type}`);
+    }
+
+    const types = new Set(acts.map((a) => a.type));
+    for (const expected of ['system', 'assignment', 'stage_change', 'note', 'call']) {
+      assert.ok(types.has(expected), `expected activity type ${expected} present`);
+    }
+  });
 });
 
 describe('crm — RLS isolation across tenants', () => {

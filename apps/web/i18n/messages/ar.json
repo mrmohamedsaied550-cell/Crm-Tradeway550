@@ -222,6 +222,12 @@
         "captainNotYet": "لم يتم التحويل بعد",
         "captainLost": "تم وضعه كمفقود",
         "viewCaptain": "عرض الكابتن ←",
+        "quickActions": {
+          "call": "اتصال",
+          "addNote": "إضافة ملاحظة",
+          "moveStage": "نقل المرحلة",
+          "terminalHint": "العميل المحتمل في مرحلة نهائية"
+        },
         "createdLabel": "تاريخ الإنشاء",
         "lastResponseLabel": "آخر استجابة",
         "source": "المصدر",
