@@ -28,6 +28,7 @@ import type {
   MeUser,
   PaginatedResult,
   PipelineStage,
+  RoleSummary,
   Team,
   UserStatus,
 } from './api-types';
@@ -223,6 +224,14 @@ export const usersApi = {
   disable: (id: string): Promise<AdminUser> =>
     apiFetch<AdminUser>(`/users/${id}/disable`, { method: 'POST' }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/users/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// RBAC — read-only roles list (C14)
+// ───────────────────────────────────────────────────────────────────────
+
+export const rolesApi = {
+  list: (): Promise<RoleSummary[]> => apiFetch<RoleSummary[]>('/rbac/roles'),
 };
 
 // ───────────────────────────────────────────────────────────────────────

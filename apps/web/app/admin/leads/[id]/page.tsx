@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
@@ -152,12 +153,38 @@ export default function LeadDetailPage(): JSX.Element {
   }
 
   if (loading && !lead) {
-    return <p className="text-sm text-ink-secondary">{tCommon('loading')}</p>;
+    return (
+      <p className="rounded-lg border border-surface-border bg-surface-card px-4 py-10 text-center text-sm text-ink-secondary shadow-card">
+        {tCommon('loading')}
+      </p>
+    );
   }
   if (error && !lead) {
-    return <Notice tone="error">{error}</Notice>;
+    return (
+      <div className="flex flex-col gap-3">
+        <Notice tone="error">
+          <div className="flex items-start justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => void reload()}>
+              {tCommon('retry')}
+            </Button>
+          </div>
+        </Notice>
+      </div>
+    );
   }
-  if (!lead) return <p className="text-sm text-ink-secondary">{tCommon('loading')}</p>;
+  if (!lead) {
+    return (
+      <EmptyState
+        title={tCommon('errorTitle')}
+        action={
+          <Button variant="secondary" size="sm" onClick={() => router.push('/admin/leads')}>
+            {t('title')}
+          </Button>
+        }
+      />
+    );
+  }
 
   const isConverted = Boolean(lead.captain) || lead.stage.code === 'converted';
 

@@ -1,17 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, authApi, teamsApi, usersApi } from '@/lib/api';
-import type { AdminUser, MeUser, Team, UserStatus } from '@/lib/api-types';
+import { ApiError, rolesApi, teamsApi, usersApi } from '@/lib/api';
+import type { AdminUser, RoleSummary, Team, UserStatus } from '@/lib/api-types';
 
 interface CreateForm {
   email: string;
@@ -46,14 +47,24 @@ interface EditForm {
 
 const STATUSES: readonly UserStatus[] = ['active', 'invited', 'disabled'] as const;
 
+function statusTone(s: UserStatus): 'healthy' | 'warning' | 'inactive' {
+  if (s === 'active') return 'healthy';
+  if (s === 'invited') return 'warning';
+  return 'inactive';
+}
+
 export default function UsersPage(): JSX.Element {
   const t = useTranslations('admin.users');
   const tCommon = useTranslations('admin.common');
-  const tAdmin = useTranslations('admin');
+  const locale = useLocale();
+  const roleLabel = useCallback(
+    (r: { nameEn: string; nameAr: string }) => (locale === 'ar' ? r.nameAr : r.nameEn),
+    [locale],
+  );
 
   const [rows, setRows] = useState<AdminUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [me, setMe] = useState<MeUser | null>(null);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -73,7 +84,7 @@ export default function UsersPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [page, allTeams, meRow] = await Promise.all([
+      const [page, allTeams, allRoles] = await Promise.all([
         usersApi.list({
           teamId: filterTeamId || undefined,
           roleId: filterRoleId || undefined,
@@ -81,11 +92,11 @@ export default function UsersPage(): JSX.Element {
           limit: 200,
         }),
         teamsApi.list(),
-        authApi.me().catch(() => null),
+        rolesApi.list(),
       ]);
       setRows(page.items);
       setTeams(allTeams);
-      setMe(meRow);
+      setRoles(allRoles);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -98,27 +109,13 @@ export default function UsersPage(): JSX.Element {
   }, [reload]);
 
   const teamById = useMemo(() => new Map(teams.map((t2) => [t2.id, t2])), [teams]);
-
-  // Roles aren't exposed via a list endpoint yet; derive what we know from
-  // existing users + the current me payload (which carries id+code+labels).
-  const discoveredRoles = useMemo(() => {
-    const map = new Map<string, { id: string; label: string }>();
-    if (me) {
-      map.set(me.role.id, { id: me.role.id, label: me.role.nameEn });
-    }
-    for (const u of rows) {
-      if (!map.has(u.roleId)) {
-        map.set(u.roleId, { id: u.roleId, label: `role:${u.roleId.slice(0, 8)}` });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
-  }, [rows, me]);
+  const roleById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
 
   function openNew(): void {
     setEditing(null);
     setCreateForm({
       ...EMPTY_CREATE_FORM,
-      roleId: filterRoleId || me?.role.id || discoveredRoles[0]?.id || '',
+      roleId: filterRoleId || roles[0]?.id || '',
       teamId: filterTeamId || '',
     });
     setFormError(null);
@@ -205,10 +202,17 @@ export default function UsersPage(): JSX.Element {
     }
   }
 
-  function statusTone(s: UserStatus): 'healthy' | 'warning' | 'inactive' {
-    if (s === 'active') return 'healthy';
-    if (s === 'invited') return 'warning';
-    return 'inactive';
+  function renderRoleCell(roleId: string): React.ReactNode {
+    const r = roleById.get(roleId);
+    if (!r) {
+      return <code className="font-mono text-xs text-ink-tertiary">{roleId.slice(0, 8)}…</code>;
+    }
+    return (
+      <span className="text-ink-secondary">
+        {roleLabel(r)}{' '}
+        <code className="ms-1 font-mono text-[11px] text-ink-tertiary">({r.code})</code>
+      </span>
+    );
   }
 
   const columns: ReadonlyArray<Column<AdminUser>> = [
@@ -218,13 +222,7 @@ export default function UsersPage(): JSX.Element {
       header: t('email'),
       render: (r) => <span className="text-ink-secondary">{r.email}</span>,
     },
-    {
-      key: 'role',
-      header: t('role'),
-      render: (r) => (
-        <code className="font-mono text-xs text-ink-secondary">{r.roleId.slice(0, 8)}…</code>
-      ),
-    },
+    { key: 'role', header: t('role'), render: (r) => renderRoleCell(r.roleId) },
     {
       key: 'team',
       header: t('team'),
@@ -242,13 +240,16 @@ export default function UsersPage(): JSX.Element {
     },
   ];
 
+  const hasActiveFilter = Boolean(filterTeamId || filterRoleId || filterStatus);
+  const isEmpty = !loading && !error && rows.length === 0;
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button onClick={openNew} disabled={discoveredRoles.length === 0}>
+          <Button onClick={openNew} disabled={roles.length === 0 || loading}>
             <Plus className="h-4 w-4" />
             {t('newButton')}
           </Button>
@@ -272,9 +273,9 @@ export default function UsersPage(): JSX.Element {
           <Field label={t('filterByRole')}>
             <Select value={filterRoleId} onChange={(e) => setFilterRoleId(e.target.value)}>
               <option value="">{tCommon('all')}</option>
-              {discoveredRoles.map((r) => (
+              {roles.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.label}
+                  {roleLabel(r)} ({r.code})
                 </option>
               ))}
             </Select>
@@ -297,38 +298,54 @@ export default function UsersPage(): JSX.Element {
         </div>
       </div>
 
-      {discoveredRoles.length > 0 ? (
-        <div className="rounded-md border border-surface-border bg-surface-card px-3 py-2 text-xs">
-          <span className="font-medium text-ink-secondary">{tAdmin('discoveredRoles')}:</span>{' '}
-          {discoveredRoles.map((r) => (
-            <code key={r.id} className="me-2 inline-block font-mono text-ink-tertiary">
-              {r.label}={r.id.slice(0, 8)}…
-            </code>
-          ))}
-        </div>
-      ) : null}
-
       {error ? <Notice tone="error">{error}</Notice> : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        keyOf={(r) => r.id}
-        loading={loading}
-        rowActions={(row) => (
-          <>
-            <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
-              {tCommon('edit')}
-            </Button>
-            {row.status !== 'disabled' ? (
-              <Button variant="ghost" size="sm" onClick={() => void onDisable(row)}>
-                {t('disable')}
+      {isEmpty ? (
+        <EmptyState
+          title={hasActiveFilter ? t('emptyFiltered') : t('empty')}
+          body={hasActiveFilter ? t('emptyFilteredHint') : t('emptyHint')}
+          action={
+            hasActiveFilter ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setFilterTeamId('');
+                  setFilterRoleId('');
+                  setFilterStatus('');
+                }}
+              >
+                {tCommon('clearFilters')}
               </Button>
-            ) : null}
-          </>
-        )}
-      />
+            ) : (
+              <Button variant="primary" size="sm" onClick={openNew} disabled={roles.length === 0}>
+                <Plus className="h-4 w-4" />
+                {t('newButton')}
+              </Button>
+            )
+          }
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          keyOf={(r) => r.id}
+          loading={loading}
+          rowActions={(row) => (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
+                {tCommon('edit')}
+              </Button>
+              {row.status !== 'disabled' ? (
+                <Button variant="ghost" size="sm" onClick={() => void onDisable(row)}>
+                  {t('disable')}
+                </Button>
+              ) : null}
+            </>
+          )}
+        />
+      )}
 
       {/* CREATE modal */}
       <Modal
@@ -375,7 +392,7 @@ export default function UsersPage(): JSX.Element {
               maxLength={128}
             />
           </Field>
-          <Field label={t('role')} hint={t('rolePickerHint')} required>
+          <Field label={t('role')} required>
             <Select
               value={createForm.roleId}
               onChange={(e) => setCreateForm((f) => ({ ...f, roleId: e.target.value }))}
@@ -384,9 +401,9 @@ export default function UsersPage(): JSX.Element {
               <option value="" disabled>
                 —
               </option>
-              {discoveredRoles.map((r) => (
+              {roles.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.label}
+                  {roleLabel(r)} ({r.code})
                 </option>
               ))}
             </Select>
@@ -475,9 +492,9 @@ export default function UsersPage(): JSX.Element {
                 onChange={(e) => setEditForm((f) => (f ? { ...f, roleId: e.target.value } : f))}
                 required
               >
-                {discoveredRoles.map((r) => (
+                {roles.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.label}
+                    {roleLabel(r)} ({r.code})
                   </option>
                 ))}
               </Select>
