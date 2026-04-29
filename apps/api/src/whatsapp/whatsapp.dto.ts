@@ -38,6 +38,18 @@ export const SendConversationMessageSchema = z
   .strict();
 export type SendConversationMessageDto = z.infer<typeof SendConversationMessageSchema>;
 
+/**
+ * C25 — body for POST /conversations/:id/link-lead.
+ * The service validates same-tenant + lead-exists itself; this schema
+ * just guards the input shape.
+ */
+export const LinkConversationLeadSchema = z
+  .object({
+    leadId: z.string().uuid(),
+  })
+  .strict();
+export type LinkConversationLeadDto = z.infer<typeof LinkConversationLeadSchema>;
+
 // ───── WhatsApp accounts admin (C24A) ─────
 
 const provider = z.enum(['meta_cloud']);

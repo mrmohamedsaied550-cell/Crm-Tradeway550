@@ -270,6 +270,7 @@ model Lead {
 
   captain    Captain?
   activities LeadActivity[]
+  whatsappConversations WhatsAppConversation[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
@@ -557,6 +558,14 @@ model WhatsAppConversation {
   lastMessageAt   DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
   lastMessageText String    @default("") @map("last_message_text")
 
+  /// C25 — optional link to a Lead in the same tenant. Set explicitly via
+  /// the link-lead endpoint, or auto-linked on read when exactly one
+  /// tenant-scoped lead matches `phone`. Multiple-match leads are not
+  /// auto-linked (admin must pick). FK is ON DELETE SET NULL so deleting
+  /// a lead does not cascade-delete the conversation history.
+  leadId          String?  @map("lead_id") @db.Uuid
+  lead            Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -564,6 +573,7 @@ model WhatsAppConversation {
 
   @@index([tenantId, accountId, lastMessageAt])
   @@index([tenantId, status, lastMessageAt])
+  @@index([tenantId, leadId])
   @@map("whatsapp_conversations")
 }
 
