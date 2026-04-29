@@ -121,8 +121,8 @@ export class WhatsAppController {
     let ingested = 0;
     let duplicates = 0;
     for (const msg of messages) {
-      const id = await this.whatsapp.persistInbound(account, msg);
-      if (id === null) duplicates += 1;
+      const result = await this.whatsapp.persistInbound(account, msg);
+      if (result === null) duplicates += 1;
       else ingested += 1;
     }
 

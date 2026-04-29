@@ -16,7 +16,7 @@ export interface RoutedAccount {
   verifyToken: string;
 }
 
-/** Raw shape returned by the SECURITY DEFINER routing functions. */
+/** Raw shape returned by the routing-table lookups. */
 interface RoutingRow {
   id: string;
   tenantId: string;
@@ -48,13 +48,20 @@ export interface WhatsAppAccountSummary {
  * Responsibilities:
  *   1. Cross-tenant routing of inbound webhook payloads to the right
  *      WhatsAppAccount via Meta's `phone_number_id`.
- *   2. Idempotent persistence of inbound + outbound messages under the
- *      account's tenant scope (so RLS + tenant isolation hold).
+ *   2. Idempotent threaded persistence of inbound + outbound messages
+ *      (C22): every message is attached to a WhatsAppConversation keyed on
+ *      `(tenantId, accountId, phone)`. The conversation summary
+ *      (`lastMessageAt`, `lastMessageText`) is kept in sync inside the
+ *      same transaction as the message insert.
  *   3. Outbound `sendText` that routes through the appropriate provider
- *      and logs the resulting message.
+ *      and threads the outgoing message into the conversation.
  *
- * The provider layer is injected via the `providerFor` factory so the
- * unit tests can substitute a stub without hitting Meta.
+ * Conversation lifecycle:
+ *   - "open" by default. The partial unique index
+ *     `(tenantId, accountId, phone) WHERE status='open'` enforces at most
+ *     one open thread per phone per account.
+ *   - "closed" — soft archive. New inbound from the same phone opens a
+ *     fresh thread; closing is admin-driven (no automatic close in C22).
  */
 @Injectable()
 export class WhatsAppService {
@@ -137,20 +144,80 @@ export class WhatsAppService {
     };
   }
 
+  // ─────── Conversation threading helper (C22) ───────
+
+  /**
+   * Find or create the open conversation for `(tenantId, accountId, phone)`.
+   * Runs inside the caller's transaction so the message + summary update
+   * stay atomic. Returns the conversation id.
+   *
+   * Handles the partial-unique race: if two concurrent inbound webhooks
+   * arrive for the same (account, phone) pair, exactly one will create
+   * the conversation row; the other catches the P2002 and re-reads.
+   */
+  private async ensureOpenConversation(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    accountId: string,
+    phone: string,
+  ): Promise<string> {
+    const existing = await tx.whatsAppConversation.findFirst({
+      where: { tenantId, accountId, phone, status: 'open' },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    try {
+      const created = await tx.whatsAppConversation.create({
+        data: { tenantId, accountId, phone, status: 'open' },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (err) {
+      // Race: another transaction created the open conversation between
+      // our SELECT and INSERT. Fall back to a re-read.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const reread = await tx.whatsAppConversation.findFirst({
+          where: { tenantId, accountId, phone, status: 'open' },
+          select: { id: true },
+        });
+        if (reread) return reread.id;
+      }
+      throw err;
+    }
+  }
+
   // ─────── Inbound persistence ───────
 
   /**
    * Persist a parsed inbound message under the account's tenant scope.
-   * Returns the new message id, or `null` when the message has already
-   * been ingested (idempotent on `(tenantId, providerMessageId)`).
+   * Returns the new message id + conversation id, or `null` when the
+   * message has already been ingested (idempotent on
+   * `(tenantId, providerMessageId)`).
+   *
+   * In a single transaction we:
+   *   1. Find or create the open conversation for (account, phone).
+   *   2. Insert the message linked to that conversation.
+   *   3. Bump `lastMessageAt` + `lastMessageText` on the conversation.
    */
-  async persistInbound(account: RoutedAccount, msg: InboundMessage): Promise<string | null> {
+  async persistInbound(
+    account: RoutedAccount,
+    msg: InboundMessage,
+  ): Promise<{ messageId: string; conversationId: string } | null> {
     try {
-      const created = await this.prisma.withTenant(account.tenantId, (tx) =>
-        tx.whatsAppMessage.create({
+      return await this.prisma.withTenant(account.tenantId, async (tx) => {
+        const conversationId = await this.ensureOpenConversation(
+          tx,
+          account.tenantId,
+          account.id,
+          msg.phone,
+        );
+
+        const message = await tx.whatsAppMessage.create({
           data: {
             tenantId: account.tenantId,
             accountId: account.id,
+            conversationId,
             phone: msg.phone,
             text: msg.text,
             direction: 'inbound',
@@ -159,9 +226,15 @@ export class WhatsAppService {
             createdAt: msg.receivedAt,
           },
           select: { id: true },
-        }),
-      );
-      return created.id;
+        });
+
+        await tx.whatsAppConversation.update({
+          where: { id: conversationId },
+          data: { lastMessageAt: msg.receivedAt, lastMessageText: msg.text },
+        });
+
+        return { messageId: message.id, conversationId };
+      });
     } catch (err) {
       // Duplicate provider id within the same tenant → idempotent no-op.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -178,16 +251,16 @@ export class WhatsAppService {
 
   /**
    * Send a plain-text message via the provider configured on the
-   * account, then persist the outbound row. Tenant scope is required —
-   * the caller (a future API endpoint, currently nothing) must run
-   * under the active tenant context.
+   * account, thread it into the open conversation for (account, to),
+   * and bump the conversation summary. Tenant scope is required — the
+   * caller must run under the active tenant context.
    */
   async sendText(input: {
     tenantId: string;
     accountId: string;
     to: string;
     text: string;
-  }): Promise<{ messageId: string; providerMessageId: string }> {
+  }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
     const { tenantId, accountId, to, text } = input;
 
     // Read the full account row including the access token. The token
@@ -223,11 +296,15 @@ export class WhatsAppService {
 
     const { providerMessageId } = await provider.sendText({ config, to, text });
 
-    const created = await this.prisma.withTenant(tenantId, (tx) =>
-      tx.whatsAppMessage.create({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversationId = await this.ensureOpenConversation(tx, tenantId, accountId, to);
+      const sentAt = new Date();
+
+      const message = await tx.whatsAppMessage.create({
         data: {
           tenantId,
           accountId,
+          conversationId,
           phone: to,
           text,
           direction: 'outbound',
@@ -235,12 +312,18 @@ export class WhatsAppService {
           status: 'sent',
         },
         select: { id: true },
-      }),
-    );
-    return { messageId: created.id, providerMessageId };
+      });
+
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: sentAt, lastMessageText: text },
+      });
+
+      return { messageId: message.id, providerMessageId, conversationId };
+    });
   }
 
-  // ─────── Module-internal helpers used by tests + admin tooling ───────
+  // ─────── Read helpers (used by the C22 admin endpoints + tests) ───────
 
   /** Tenant-scoped account read used by tests / future admin screens. */
   findAccountById(tenantId: string, accountId: string): Promise<WhatsAppAccountSummary | null> {
@@ -259,6 +342,70 @@ export class WhatsAppService {
         },
       }),
     );
+  }
+
+  /**
+   * Tenant-scoped paginated conversations list — newest activity first.
+   * Filters by accountId / status / free-text phone match.
+   */
+  listConversations(
+    tenantId: string,
+    opts: {
+      accountId?: string;
+      status?: 'open' | 'closed';
+      phone?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const where: Prisma.WhatsAppConversationWhereInput = {
+        ...(opts.accountId && { accountId: opts.accountId }),
+        ...(opts.status && { status: opts.status }),
+        ...(opts.phone && { phone: { contains: opts.phone } }),
+      };
+      const [items, total] = await Promise.all([
+        tx.whatsAppConversation.findMany({
+          where,
+          orderBy: { lastMessageAt: 'desc' },
+          take: opts.limit ?? 50,
+          skip: opts.offset ?? 0,
+        }),
+        tx.whatsAppConversation.count({ where }),
+      ]);
+      return { items, total, limit: opts.limit ?? 50, offset: opts.offset ?? 0 };
+    });
+  }
+
+  /** Tenant-scoped single-conversation read. Returns null on cross-tenant ids. */
+  findConversationById(tenantId: string, id: string) {
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.whatsAppConversation.findUnique({ where: { id } }),
+    );
+  }
+
+  /**
+   * Messages for a conversation — oldest first so the inbox can render
+   * chronologically without an extra reverse step. Returns null when the
+   * conversation isn't visible to the active tenant.
+   */
+  async listConversationMessages(
+    tenantId: string,
+    conversationId: string,
+    opts: { limit?: number } = {},
+  ) {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversation = await tx.whatsAppConversation.findUnique({
+        where: { id: conversationId },
+        select: { id: true },
+      });
+      if (!conversation) return null;
+      return tx.whatsAppMessage.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: 'asc' },
+        take: opts.limit ?? 200,
+      });
+    });
   }
 
   /** Tenant-scoped messages list — newest first. Used by tests + future admin. */
