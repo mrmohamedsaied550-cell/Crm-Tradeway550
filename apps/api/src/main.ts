@@ -3,16 +3,24 @@ import { NestFactory } from '@nestjs/core';
 import { Logger as NestLogger, RequestMethod } from '@nestjs/common';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/error-filter';
 import { ZodValidationPipe } from './common/zod-pipe';
 import { buildCorsOptions } from './common/cors';
 import { setupOpenApi } from './common/openapi';
+import { buildJwtConfig } from './identity/jwt.config';
 
 const DEFAULT_PORT = 3000;
 const API_GLOBAL_PREFIX = 'api/v1';
 
 async function bootstrap(): Promise<void> {
+  // C27 — fail fast in production when JWT secrets are missing or still
+  // set to the dev placeholders. The identity module also calls this
+  // lazily, but invoking it at the very top of bootstrap means a
+  // misconfigured deploy never finishes wiring routes.
+  buildJwtConfig();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
     cors: false, // we wire CORS explicitly below
@@ -38,6 +46,13 @@ async function bootstrap(): Promise<void> {
 
   // Global error filter: standardized envelope { code, message, details, request_id }.
   app.useGlobalFilters(new GlobalExceptionFilter());
+
+  // C27 — security headers (X-Frame-Options, X-Content-Type-Options,
+  // Strict-Transport-Security, Referrer-Policy, etc). CSP is left
+  // disabled here because the OpenAPI / Swagger UI bundle ships inline
+  // scripts; tightening CSP belongs to a follow-up that audits each
+  // page's asset graph.
+  app.use(helmet({ contentSecurityPolicy: false }));
 
   // CORS allowlist from CORS_ALLOWED_ORIGINS.
   app.enableCors(buildCorsOptions(process.env));

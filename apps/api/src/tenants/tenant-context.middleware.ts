@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, type NestMiddleware } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
+import { isProduction } from '../common/env';
 import { tenantContext } from './tenant-context';
 import { TenantsService } from './tenants.service';
 import { TokensService } from '../identity/tokens.service';
@@ -15,7 +16,9 @@ const HEADER_NAME = 'x-tenant';
  *   2. Dev-only `X-Tenant: <code>` header (kept for unauth flows + admin
  *      debug). The header is *ignored* whenever a valid JWT is present so
  *      a client cannot upgrade their privileges by passing a different
- *      tenant code than their token's claim.
+ *      tenant code than their token's claim. C27 — the header path is
+ *      additionally gated off entirely when `NODE_ENV=production`, so
+ *      the dev convenience cannot leak into a deployed environment.
  *
  * Requests without either pass through unscoped — the store is empty.
  * That covers /health, /auth/login, and the root /.
@@ -45,7 +48,11 @@ export class TenantContextMiddleware implements NestMiddleware {
       // should never see this branch since JWTs are short-lived.
     }
 
-    // 2. Dev header path.
+    // 2. Dev header path. Disabled in production — verified JWT is the
+    // only accepted source of tenant scope when deployed.
+    if (isProduction()) {
+      return next();
+    }
     const raw = req.header(HEADER_NAME);
     const code = typeof raw === 'string' ? raw.trim() : '';
     if (!code) {

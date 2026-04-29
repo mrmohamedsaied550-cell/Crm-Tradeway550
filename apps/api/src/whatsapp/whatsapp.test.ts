@@ -79,9 +79,18 @@ describe('whatsapp — MetaCloudProvider', () => {
     );
   });
 
-  it('verifySignature returns true when no app secret is configured', () => {
+  it('verifySignature returns true when no app secret is configured (dev / test)', () => {
     assert.equal(provider.verifySignature('any body', undefined, null), true);
     assert.equal(provider.verifySignature('any body', undefined, ''), true);
+  });
+
+  // C27 — production callers pass `requireSigned = true`. An account
+  // without an appSecret must be rejected outright, even if no signature
+  // header is present (otherwise an attacker could just omit it).
+  it('verifySignature rejects unsigned payloads when requireSigned is true (C27)', () => {
+    assert.equal(provider.verifySignature('any body', undefined, null, true), false);
+    assert.equal(provider.verifySignature('any body', undefined, '', true), false);
+    assert.equal(provider.verifySignature('any body', 'sha256=deadbeef', null, true), false);
   });
 
   it('verifySignature accepts a correct sha256 HMAC and rejects a tampered one', () => {

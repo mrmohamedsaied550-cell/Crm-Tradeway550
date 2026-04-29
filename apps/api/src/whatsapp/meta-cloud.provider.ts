@@ -70,10 +70,17 @@ export class MetaCloudProvider implements WhatsAppProvider {
     rawBody: string,
     signatureHeader: string | undefined,
     appSecret: string | null,
+    /**
+     * C27 — when `true`, reject any payload whose account has no
+     * appSecret configured. The webhook controller passes
+     * `requireSigned = isProduction()` so production cannot accept
+     * unsigned payloads, while dev / test continue to allow them.
+     */
+    requireSigned = false,
   ): boolean {
     // No app secret configured → signatures aren't enforceable. Acceptable
-    // in dev; deployments must always set an appSecret in production.
-    if (appSecret === null || appSecret.length === 0) return true;
+    // in dev; rejected when the caller is enforcing production policy.
+    if (appSecret === null || appSecret.length === 0) return !requireSigned;
     if (!signatureHeader) return false;
 
     // Meta sends `sha256=<hex>`; some BSP relays drop the prefix.

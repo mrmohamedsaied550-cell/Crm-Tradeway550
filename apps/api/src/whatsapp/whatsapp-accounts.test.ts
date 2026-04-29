@@ -248,6 +248,41 @@ describe('whatsapp — accounts admin (C24A)', () => {
     assert.equal(enabled2.isActive, true);
   });
 
+  // C27 — production may not enable an account that has no appSecret;
+  // the webhook would reject every payload anyway since signatures
+  // cannot be verified. Disable continues to work so an admin can park
+  // a misconfigured account.
+  it('refuses to enable an account without appSecret in production (C27)', async () => {
+    const originalNodeEnv = process.env['NODE_ENV'];
+    const created = await svc.create(tenantAId, {
+      displayName: 'Prod gate',
+      phoneNumber: '+201111000050',
+      phoneNumberId: 'PNID-C24A-prod-gate',
+      provider: 'meta_cloud',
+      accessToken: 'x'.repeat(20),
+      // appSecret intentionally omitted
+      verifyToken: 'verify-c27-aa',
+    });
+    // Disable first — the freshly-created account is active by default.
+    await svc.disable(tenantAId, created.id);
+
+    process.env['NODE_ENV'] = 'production';
+    try {
+      await assert.rejects(() => svc.enable(tenantAId, created.id), /appSecret/);
+      // disable must still succeed in production.
+      const disabled = await svc.disable(tenantAId, created.id);
+      assert.equal(disabled.isActive, false);
+
+      // Set an appSecret, THEN enable should succeed.
+      await svc.update(tenantAId, created.id, { appSecret: 'prod-secret' });
+      const enabled = await svc.enable(tenantAId, created.id);
+      assert.equal(enabled.isActive, true);
+      assert.equal(enabled.hasAppSecret, true);
+    } finally {
+      process.env['NODE_ENV'] = originalNodeEnv;
+    }
+  });
+
   it('runTest delegates to the provider and returns ConnectionTestResult', async () => {
     const created = await svc.create(tenantAId, {
       displayName: 'Test conn',

@@ -3,9 +3,14 @@
  *
  * `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` are required in production. In
  * dev/test we fall back to placeholders so `pnpm dev` works out of the box.
- * The production deployment guide (Sprint 1 hardening) wires real secrets
- * via the deployment platform's secret manager.
+ *
+ * C27 — when `NODE_ENV=production`, `buildJwtConfig` refuses to return
+ * a config whose secret is missing or still equals the dev placeholder.
+ * That makes a misconfigured deploy fail loudly at boot rather than
+ * silently issue forgeable tokens.
  */
+
+import { isProduction } from '../common/env';
 
 export interface JwtConfig {
   accessSecret: string;
@@ -27,14 +32,49 @@ const DEFAULTS: JwtConfig = {
   issuer: 'crm-tradeway',
 };
 
+const DEV_DEFAULT_SECRETS: ReadonlySet<string> = new Set([
+  DEFAULTS.accessSecret,
+  DEFAULTS.refreshSecret,
+]);
+
+export class JwtConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JwtConfigError';
+  }
+}
+
 export function buildJwtConfig(env: NodeJS.ProcessEnv = process.env): JwtConfig {
-  return {
+  const cfg: JwtConfig = {
     accessSecret: env['JWT_ACCESS_SECRET'] ?? DEFAULTS.accessSecret,
     refreshSecret: env['JWT_REFRESH_SECRET'] ?? DEFAULTS.refreshSecret,
     accessTtl: env['JWT_ACCESS_TTL'] ?? DEFAULTS.accessTtl,
     refreshTtl: env['JWT_REFRESH_TTL'] ?? DEFAULTS.refreshTtl,
     issuer: env['JWT_ISSUER'] ?? DEFAULTS.issuer,
   };
+  if (isProduction(env)) {
+    assertProductionSecret('JWT_ACCESS_SECRET', cfg.accessSecret);
+    assertProductionSecret('JWT_REFRESH_SECRET', cfg.refreshSecret);
+    if (cfg.accessSecret === cfg.refreshSecret) {
+      throw new JwtConfigError(
+        'JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ in production',
+      );
+    }
+  }
+  return cfg;
+}
+
+function assertProductionSecret(name: string, value: string): void {
+  // Placeholder check first so the operator gets a clearer message
+  // ("you forgot to set $name") than the generic length error.
+  if (DEV_DEFAULT_SECRETS.has(value)) {
+    throw new JwtConfigError(
+      `${name} is still set to the development placeholder; refusing to boot in production`,
+    );
+  }
+  if (!value || value.length < 32) {
+    throw new JwtConfigError(`${name} must be set to a strong (>=32 char) secret in production`);
+  }
 }
 
 /**

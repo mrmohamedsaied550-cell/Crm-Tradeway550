@@ -1,6 +1,13 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { isProduction } from '../common/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from './whatsapp.service';
 import type { CreateWhatsAppAccountDto, UpdateWhatsAppAccountDto } from './whatsapp.dto';
@@ -218,7 +225,18 @@ export class WhatsAppAccountsService {
     id: string,
     isActive: boolean,
   ): Promise<WhatsAppAccountView> {
-    await this.findByIdOrThrow(tenantId, id);
+    const current = await this.findByIdOrThrow(tenantId, id);
+    // C27 — refuse to enable an account in production without an
+    // appSecret. The webhook controller would reject every inbound
+    // payload anyway (signature can't be verified), so this is a
+    // friendlier failure mode than silently routing nothing.
+    if (isActive && !current.hasAppSecret && isProduction()) {
+      throw new BadRequestException({
+        code: 'whatsapp.app_secret_required_in_production',
+        message:
+          'WhatsApp account cannot be enabled in production without an appSecret — set it via PATCH first',
+      });
+    }
     const row = await this.prisma.withTenant(tenantId, (tx) =>
       tx.whatsAppAccount.update({
         where: { id },
