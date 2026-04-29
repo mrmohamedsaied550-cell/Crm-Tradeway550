@@ -202,6 +202,16 @@ export default function UsersPage(): JSX.Element {
     }
   }
 
+  async function onEnable(row: AdminUser): Promise<void> {
+    try {
+      await usersApi.enable(row.id);
+      setNotice(tCommon('saved'));
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   function renderRoleCell(roleId: string): React.ReactNode {
     const r = roleById.get(roleId);
     if (!r) {
@@ -298,7 +308,16 @@ export default function UsersPage(): JSX.Element {
         </div>
       </div>
 
-      {error ? <Notice tone="error">{error}</Notice> : null}
+      {error ? (
+        <Notice tone="error">
+          <div className="flex items-start justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => void reload()}>
+              {tCommon('retry')}
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
       {isEmpty ? (
@@ -337,11 +356,15 @@ export default function UsersPage(): JSX.Element {
               <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
                 {tCommon('edit')}
               </Button>
-              {row.status !== 'disabled' ? (
+              {row.status === 'disabled' ? (
+                <Button variant="ghost" size="sm" onClick={() => void onEnable(row)}>
+                  {t('enable')}
+                </Button>
+              ) : (
                 <Button variant="ghost" size="sm" onClick={() => void onDisable(row)}>
                   {t('disable')}
                 </Button>
-              ) : null}
+              )}
             </>
           )}
         />

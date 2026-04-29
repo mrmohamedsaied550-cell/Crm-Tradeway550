@@ -77,7 +77,7 @@ describe('org — companies / countries / teams CRUD on a throwaway tenant', () 
     companies = new CompaniesService(prismaSvc);
     countries = new CountriesService(prismaSvc, companies);
     teams = new TeamsService(prismaSvc, countries);
-    users = new AdminUsersService(prismaSvc, teams);
+    users = new AdminUsersService(prismaSvc);
 
     const t = await prisma.tenant.upsert({
       where: { code: TEST_TENANT_CODE },
@@ -284,7 +284,7 @@ describe('org — companies / countries / teams CRUD on a throwaway tenant', () 
             teamId: fakeUuid,
           }),
         ),
-      /Team not found/,
+      /Team .* is not defined in the active tenant/,
     );
   });
 
@@ -338,6 +338,181 @@ describe('org — companies / countries / teams CRUD on a throwaway tenant', () 
 
     const reread = await inTenant(() => users.findByIdOrThrow(user.id));
     assert.equal(reread.teamId, null, 'team_id should be SET NULL');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // C15 — focused mutations + cross-tenant guards
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('setRole switches the user role; rejects a role from another tenant', async () => {
+    // Need two roles in the active tenant and one in the other tenant.
+    const tlSalesRole = await withTenantRaw(tenantId, (tx) =>
+      tx.role.upsert({
+        where: { tenantId_code: { tenantId, code: 'tl_sales' } },
+        update: {},
+        create: {
+          tenantId,
+          code: 'tl_sales',
+          nameAr: 'قائد فريق',
+          nameEn: 'Team Leader — Sales',
+          level: 60,
+        },
+      }),
+    );
+
+    const otherSalesRole = await withTenantRaw(otherTenantId, (tx) =>
+      tx.role.upsert({
+        where: { tenantId_code: { tenantId: otherTenantId, code: 'sales_agent' } },
+        update: {},
+        create: {
+          tenantId: otherTenantId,
+          code: 'sales_agent',
+          nameAr: 'وكيل',
+          nameEn: 'Sales Agent (other)',
+          level: 30,
+        },
+      }),
+    );
+
+    const user = await inTenant(() =>
+      users.create({
+        email: 'c15.role1@test',
+        name: 'C15 Role User',
+        password: 'Password@123',
+        roleId: salesAgentRoleId,
+      }),
+    );
+    assert.equal(user.roleId, salesAgentRoleId);
+
+    const promoted = await inTenant(() => users.setRole(user.id, tlSalesRole.id));
+    assert.equal(promoted.roleId, tlSalesRole.id);
+
+    await assert.rejects(
+      () => inTenant(() => users.setRole(user.id, otherSalesRole.id)),
+      /not defined in the active tenant/,
+    );
+
+    // Sanity: cross-tenant attempt did not write.
+    const reread = await inTenant(() => users.findByIdOrThrow(user.id));
+    assert.equal(reread.roleId, tlSalesRole.id);
+  });
+
+  it('setTeam switches or clears the user team; rejects a team from another tenant', async () => {
+    // Build two teams in the active tenant + a team in the other tenant.
+    const company = await inTenant(() => companies.create({ code: 'careem15', name: 'Careem 15' }));
+    const country = await inTenant(() =>
+      countries.create({ companyId: company.id, code: 'KW', name: 'Kuwait' }),
+    );
+    const teamA = await inTenant(() => teams.create({ countryId: country.id, name: 'Sales' }));
+    const teamB = await inTenant(() => teams.create({ countryId: country.id, name: 'Activation' }));
+
+    // Plant a team in the OTHER tenant via raw GUC.
+    const otherCompany = await withTenantRaw(otherTenantId, (tx) =>
+      tx.company.create({ data: { tenantId: otherTenantId, code: 'careem15', name: 'Careem' } }),
+    );
+    const otherCountry = await withTenantRaw(otherTenantId, (tx) =>
+      tx.country.create({
+        data: {
+          tenantId: otherTenantId,
+          companyId: otherCompany.id,
+          code: 'KW',
+          name: 'Kuwait Other',
+        },
+      }),
+    );
+    const otherTeam = await withTenantRaw(otherTenantId, (tx) =>
+      tx.team.create({
+        data: { tenantId: otherTenantId, countryId: otherCountry.id, name: 'Sales' },
+      }),
+    );
+
+    const user = await inTenant(() =>
+      users.create({
+        email: 'c15.team1@test',
+        name: 'C15 Team User',
+        password: 'Password@123',
+        roleId: salesAgentRoleId,
+        teamId: teamA.id,
+      }),
+    );
+
+    const moved = await inTenant(() => users.setTeam(user.id, teamB.id));
+    assert.equal(moved.teamId, teamB.id);
+
+    const detached = await inTenant(() => users.setTeam(user.id, null));
+    assert.equal(detached.teamId, null);
+
+    await assert.rejects(
+      () => inTenant(() => users.setTeam(user.id, otherTeam.id)),
+      /not defined in the active tenant/,
+    );
+
+    const reread = await inTenant(() => users.findByIdOrThrow(user.id));
+    assert.equal(reread.teamId, null, 'cross-tenant attempt must not have written');
+  });
+
+  it('enable/disable/setStatus toggle status idempotently', async () => {
+    const user = await inTenant(() =>
+      users.create({
+        email: 'c15.status1@test',
+        name: 'C15 Status User',
+        password: 'Password@123',
+        roleId: salesAgentRoleId,
+      }),
+    );
+    assert.equal(user.status, 'active');
+
+    const disabled = await inTenant(() => users.disable(user.id));
+    assert.equal(disabled.status, 'disabled');
+
+    // Calling disable again must succeed (idempotent).
+    const disabledAgain = await inTenant(() => users.disable(user.id));
+    assert.equal(disabledAgain.status, 'disabled');
+
+    const enabled = await inTenant(() => users.enable(user.id));
+    assert.equal(enabled.status, 'active');
+
+    const invited = await inTenant(() => users.setStatus(user.id, 'invited'));
+    assert.equal(invited.status, 'invited');
+  });
+
+  it('update() also rejects cross-tenant role + team in a single call', async () => {
+    const user = await inTenant(() =>
+      users.create({
+        email: 'c15.update1@test',
+        name: 'C15 Update User',
+        password: 'Password@123',
+        roleId: salesAgentRoleId,
+      }),
+    );
+
+    const otherRole = await withTenantRaw(otherTenantId, (tx) =>
+      tx.role.findFirstOrThrow({
+        where: { tenantId: otherTenantId, code: 'sales_agent' },
+      }),
+    );
+
+    await assert.rejects(
+      () => inTenant(() => users.update(user.id, { roleId: otherRole.id })),
+      /not defined in the active tenant/,
+    );
+
+    // Sanity: still the original role.
+    const reread = await inTenant(() => users.findByIdOrThrow(user.id));
+    assert.equal(reread.roleId, salesAgentRoleId);
+  });
+
+  it('focused mutations on a foreign user id surface as user.not_found', async () => {
+    const fakeUuid = '00000000-0000-4000-8000-000000000999';
+    await assert.rejects(
+      () => inTenant(() => users.setRole(fakeUuid, salesAgentRoleId)),
+      /User not found/,
+    );
+    await assert.rejects(() => inTenant(() => users.setTeam(fakeUuid, null)), /User not found/);
+    await assert.rejects(
+      () => inTenant(() => users.setStatus(fakeUuid, 'disabled')),
+      /User not found/,
+    );
   });
 });
 

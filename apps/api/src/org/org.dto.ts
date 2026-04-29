@@ -143,3 +143,21 @@ export const ListUsersQuerySchema = z
   })
   .strict();
 export type ListUsersQueryDto = z.infer<typeof ListUsersQuerySchema>;
+
+// Focused single-field mutation DTOs used by the per-row admin actions.
+// Strict so any extra field (e.g. accidentally posting the whole user
+// payload) is rejected — keeps the surface area auditable.
+
+export const SetUserRoleSchema = z.object({ roleId: z.string().uuid() }).strict();
+export type SetUserRoleDto = z.infer<typeof SetUserRoleSchema>;
+
+export const SetUserTeamSchema = z
+  .object({
+    /** Pass `null` to detach the user from any team. */
+    teamId: z.string().uuid().nullable(),
+  })
+  .strict();
+export type SetUserTeamDto = z.infer<typeof SetUserTeamSchema>;
+
+export const SetUserStatusSchema = z.object({ status: userStatus }).strict();
+export type SetUserStatusDto = z.infer<typeof SetUserStatusSchema>;

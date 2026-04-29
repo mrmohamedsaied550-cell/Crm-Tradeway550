@@ -161,6 +161,7 @@
       "filterByStatus": "Filter by status",
       "noTeam": "No team",
       "disable": "Disable",
+      "enable": "Enable",
       "disableConfirm": "Disable this user? They will no longer be able to sign in.",
       "rolePickerHint": "Pick a role discovered from existing users.",
       "empty": "No users yet",
