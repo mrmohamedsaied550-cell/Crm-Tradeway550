@@ -70,6 +70,7 @@ describe('whatsapp — conversation threading (C22)', () => {
         update: {},
         create: {
           tenantId: tenantAId,
+          displayName: 'C22 Account A',
           phoneNumber: '+201111111111',
           phoneNumberId: 'PNID-C22-A',
           provider: 'meta_cloud',
@@ -87,6 +88,7 @@ describe('whatsapp — conversation threading (C22)', () => {
         update: {},
         create: {
           tenantId: tenantBId,
+          displayName: 'C22 Account B',
           phoneNumber: '+966222222222',
           phoneNumberId: 'PNID-C22-B',
           provider: 'meta_cloud',
@@ -347,6 +349,7 @@ describe('whatsapp — conversation threading (C22)', () => {
         update: {},
         create: {
           tenantId: tenantAId,
+          displayName: 'C22 Account A2',
           phoneNumber: '+201111111112',
           phoneNumberId: 'PNID-C22-A2',
           provider: 'meta_cloud',

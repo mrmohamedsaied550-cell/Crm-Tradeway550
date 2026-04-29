@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
+  ConnectionTestResult,
   InboundMessage,
   OutboundResult,
   WhatsAppAccountConfig,
@@ -186,6 +187,55 @@ export class MetaCloudProvider implements WhatsAppProvider {
       throw new Error('whatsapp_send_missing_message_id');
     }
     return { providerMessageId: id };
+  }
+
+  // ─────── Test connection (admin liveness check) ───────
+
+  /**
+   * Hits Meta's `GET /v20.0/{phone-number-id}?fields=display_phone_number,verified_name`.
+   * A 200 response with a recognisable shape means the access token + phone
+   * number id are paired correctly. Any non-2xx is reported as `ok: false`
+   * with the message redacted of raw provider error bodies (so we never
+   * leak token-related strings into the admin UI).
+   */
+  async testConnection(input: { config: WhatsAppAccountConfig }): Promise<ConnectionTestResult> {
+    const { config } = input;
+    const url =
+      `${META_GRAPH_BASE}/${encodeURIComponent(config.phoneNumberId)}` +
+      `?fields=display_phone_number,verified_name`;
+
+    let res: Awaited<ReturnType<FetchFn>>;
+    try {
+      res = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${config.accessToken}` },
+      });
+    } catch (err) {
+      // Network-level failure (DNS, TLS, timeout). Don't include the
+      // exception message verbatim — it could echo the raw URL with the
+      // (sensitive) phone-number-id.
+      this.logger.warn(`testConnection network error: ${(err as Error).name}`);
+      return { ok: false, message: 'Network error reaching Meta' };
+    }
+
+    if (!res.ok) {
+      return { ok: false, message: `Meta rejected the request (HTTP ${res.status})` };
+    }
+
+    const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const displayPhoneNumber =
+      typeof parsed['display_phone_number'] === 'string'
+        ? (parsed['display_phone_number'] as string)
+        : undefined;
+    const verifiedName =
+      typeof parsed['verified_name'] === 'string' ? (parsed['verified_name'] as string) : undefined;
+
+    return {
+      ok: true,
+      message: 'Connection healthy',
+      ...(displayPhoneNumber !== undefined && { displayPhoneNumber }),
+      ...(verifiedName !== undefined && { verifiedName }),
+    };
   }
 }
 

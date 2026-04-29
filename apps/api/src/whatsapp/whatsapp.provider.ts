@@ -58,6 +58,17 @@ export interface OutboundResult {
   readonly providerMessageId: string;
 }
 
+/** Result of `WhatsAppProvider.testConnection`. */
+export interface ConnectionTestResult {
+  readonly ok: boolean;
+  /** Human-readable status — surfaced to the admin UI. */
+  readonly message: string;
+  /** Provider-confirmed display number, when the API returned it. */
+  readonly displayPhoneNumber?: string;
+  /** Provider-confirmed business name, when the API returned it. */
+  readonly verifiedName?: string;
+}
+
 export interface WhatsAppProvider {
   /**
    * Reply to the GET-handshake the provider sends when registering the
@@ -97,4 +108,13 @@ export interface WhatsAppProvider {
     to: string;
     text: string;
   }): Promise<OutboundResult>;
+
+  /**
+   * Lightweight liveness check — used by the admin "Test connection"
+   * button to verify that the access token + phone-number-id pair is
+   * accepted by the provider. Implementations MUST NOT mutate state on
+   * the provider side. Errors are reported via `ok: false` rather than
+   * throwing, so the UI can render a friendly message in either branch.
+   */
+  testConnection(input: { config: WhatsAppAccountConfig }): Promise<ConnectionTestResult>;
 }
