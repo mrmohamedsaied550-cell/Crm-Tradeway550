@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
+
+import { normalizeE164 } from '../crm/phone.util';
 import type {
   ConnectionTestResult,
   InboundMessage,
@@ -134,8 +136,20 @@ export class MetaCloudProvider implements WhatsAppProvider {
               : NaN;
           const receivedAt = Number.isFinite(ts) ? new Date(ts * 1000) : new Date();
           if (phone.length === 0 || id.length === 0 || phoneNumberId.length === 0) continue;
+          // Funnel inbound phones through the canonical CRM normaliser so
+          // conversation rows store the same E.164 form leads use. A
+          // malformed `from` (rare; would break threading anyway) is
+          // skipped just like the empty-phone branch above — no throwing
+          // out of a webhook handler.
+          let normalizedPhone: string;
+          try {
+            normalizedPhone = normalizeE164(phone);
+          } catch {
+            this.logger.warn(`parseInbound: dropping message with malformed phone`);
+            continue;
+          }
           out.push({
-            phone: normalizeLeadingPlus(phone),
+            phone: normalizedPhone,
             text,
             providerMessageId: id,
             receivedAt,
@@ -241,11 +255,6 @@ export class MetaCloudProvider implements WhatsAppProvider {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
-}
-
-/** Meta returns sender phone without `+`; we keep ours with `+` to match leads. */
-function normalizeLeadingPlus(phone: string): string {
-  return phone.startsWith('+') ? phone : `+${phone}`;
 }
 
 function stripLeadingPlus(phone: string): string {

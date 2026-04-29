@@ -25,6 +25,20 @@ describe('phone.util — normalizeE164', () => {
     assert.throws(() => normalizeE164('01001234567'), /Invalid phone number/);
   });
 
+  // C26 — WhatsApp Cloud delivers `from` as bare digits with country code,
+  // e.g. "201001234567". Treat that as E.164 missing the conventional `+`
+  // so inbound conversations and lead lookups land on the same canonical
+  // string.
+  it('accepts bare-digit input with a country code (WhatsApp Cloud form)', () => {
+    assert.equal(normalizeE164('201001234567'), '+201001234567');
+    assert.equal(normalizeE164(' 20 100 123 4567 '), '+201001234567');
+    assert.equal(normalizeE164('966500110099'), '+966500110099');
+  });
+
+  it('still rejects bare digits that are too short', () => {
+    assert.throws(() => normalizeE164('1234567'), /Invalid phone number/);
+  });
+
   it('rejects too-short or too-long numbers', () => {
     assert.throws(() => normalizeE164('+1234'), /Invalid phone number/);
     assert.throws(() => normalizeE164('+12345678901234567890'), /Invalid phone number/);

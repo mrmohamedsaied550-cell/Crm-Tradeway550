@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { normalizeE164 } from '../crm/phone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
@@ -490,6 +491,12 @@ export class WhatsAppService {
    * `pickAutoLinkLead` policy (length === 1) so future schema changes
    * that loosen the constraint don't silently link the wrong row.
    *
+   * The phone is funnelled through `normalizeE164` before lookup so
+   * historical conversation rows persisted before C26 (when the
+   * inbound parser used a thinner `+`-prepend helper) still match
+   * leads stored in canonical E.164. New rows are already normalized
+   * at parse time — the call here is the safety net.
+   *
    * Returns the conversation row reloaded with the (possibly newly
    * attached) lead included, mirroring `findConversationById`'s shape.
    */
@@ -497,8 +504,19 @@ export class WhatsAppService {
     tx: Prisma.TransactionClient,
     conversation: { id: string; phone: string },
   ) {
+    let lookupPhone: string;
+    try {
+      lookupPhone = normalizeE164(conversation.phone);
+    } catch {
+      // Conversation has a phone we can't coerce to E.164 — skip
+      // auto-link silently rather than block the read.
+      return tx.whatsAppConversation.findUnique({
+        where: { id: conversation.id },
+        include: { lead: true },
+      });
+    }
     const matches = await tx.lead.findMany({
-      where: { phone: conversation.phone },
+      where: { phone: lookupPhone },
       select: { id: true },
       take: 2,
     });
