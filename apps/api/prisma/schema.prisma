@@ -14,6 +14,9 @@
 //     the lead at convert time; kept additive — no breaking changes).
 // C21 introduces WhatsApp foundation: WhatsAppAccount (provider config per
 //     tenant) + WhatsAppMessage (inbound + outbound traffic log).
+// C22 introduces WhatsAppConversation: per (account × other-party-phone)
+//     thread; messages attach to a conversation and the conversation
+//     summary tracks the most recent message timestamp + body.
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -47,8 +50,9 @@ model Tenant {
   companies        Company[]
   countries        Country[]
   teams            Team[]
-  whatsAppAccounts WhatsAppAccount[]
-  whatsAppMessages WhatsAppMessage[]
+  whatsAppAccounts      WhatsAppAccount[]
+  whatsAppMessages      WhatsAppMessage[]
+  whatsAppConversations WhatsAppConversation[]
 
   @@map("tenants")
 }
@@ -460,7 +464,8 @@ model WhatsAppAccount {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  messages WhatsAppMessage[]
+  messages      WhatsAppMessage[]
+  conversations WhatsAppConversation[]
 
   // Phone number is unique per tenant; phoneNumberId is unique globally
   // (Meta-assigned), so we add a stable lookup index for inbound routing.
@@ -490,6 +495,12 @@ model WhatsAppMessage {
   accountId         String  @map("account_id") @db.Uuid
   account           WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  /// Conversation this message belongs to (C22). Required after migration —
+  /// every inbound + outbound message attaches to exactly one conversation
+  /// keyed on (tenantId, accountId, phone).
+  conversationId    String  @map("conversation_id") @db.Uuid
+  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
   /// Other party's E.164 phone number.
   phone             String
   /// Plain text body. Media / templated messages land in a later chunk.
@@ -511,5 +522,67 @@ model WhatsAppMessage {
   @@index([tenantId, phone, createdAt])
   @@index([tenantId, direction])
   @@index([accountId, createdAt])
+  @@index([conversationId, createdAt])
   @@map("whatsapp_messages")
+}
+
+/// WhatsAppConversation — one threaded conversation per (account × other-party-phone).
+///
+/// Messages always belong to exactly one conversation. The "open"/"closed"
+/// status acts as a soft-archive flag: a closed conversation lets the
+/// next inbound message start a fresh thread, so a partial-unique index
+/// `(tenant_id, account_id, phone) WHERE status = 'open'` enforces the
+/// "one open conversation per phone per account" rule.
+///
+/// `lastMessageAt` + `lastMessageText` are denormalised summaries kept in
+/// sync at every message-insert. The inbox UI (later chunks) renders the
+/// list against these columns without joining the messages table.
+model WhatsAppConversation {
+  id              String  @id @default(uuid()) @db.Uuid
+  tenantId        String  @map("tenant_id") @db.Uuid
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId       String  @map("account_id") @db.Uuid
+  account         WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// Other party's E.164 phone number.
+  phone           String
+  /// `open` | `closed`. The partial unique index below enforces "one
+  /// open conversation per (tenantId, accountId, phone)" — a closed
+  /// thread doesn't block a new one.
+  status          String  @default("open")
+  /// Most recent message timestamp + text body, denormalised for cheap
+  /// inbox-list rendering. Kept in sync at message-insert time.
+  lastMessageAt   DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
+  lastMessageText String    @default("") @map("last_message_text")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  messages WhatsAppMessage[]
+
+  @@index([tenantId, accountId, lastMessageAt])
+  @@index([tenantId, status, lastMessageAt])
+  @@map("whatsapp_conversations")
+}
+
+/// WhatsAppRoute — denormalised routing projection of WhatsAppAccount.
+///
+/// Created in 0009; declared here so Prisma stops trying to drop it on
+/// every subsequent migration. The table is intentionally NOT
+/// row-level-security'd and carries only routing fields (no access
+/// token). A trigger on `whatsapp_accounts` keeps it in sync; the
+/// application reads it directly via $queryRaw for the public webhook's
+/// pre-tenant lookup.
+model WhatsAppRoute {
+  /// PK is account_id (one route per account).
+  accountId     String  @id @map("account_id") @db.Uuid
+  phoneNumberId String  @unique @map("phone_number_id")
+  verifyToken   String  @map("verify_token")
+  tenantId      String  @map("tenant_id") @db.Uuid
+  provider      String
+  appSecret     String? @map("app_secret")
+  isActive      Boolean @map("is_active")
+
+  @@index([verifyToken])
+  @@map("whatsapp_routes")
 }
