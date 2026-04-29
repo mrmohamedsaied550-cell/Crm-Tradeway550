@@ -266,6 +266,20 @@ export class WhatsAppService {
    * account, thread it into the open conversation for (account, to),
    * and bump the conversation summary. Tenant scope is required — the
    * caller must run under the active tenant context.
+   *
+   * Transaction discipline (C28 — production hardening):
+   *   1. READ tx: load the account row (including the access token).
+   *      The transaction closes immediately when the await returns.
+   *   2. EXTERNAL CALL: hit the provider OUTSIDE any DB transaction.
+   *      Holding a Postgres connection across a Meta round-trip
+   *      (~500ms typical, multi-second under retry) starves the
+   *      connection pool under modest load, so this MUST stay tx-free.
+   *   3. WRITE tx: persist the outbound message + bump the conversation
+   *      summary in a single short transaction.
+   *
+   * If the provider throws (network error, 4xx, 5xx), the WRITE tx is
+   * never reached — no fake "sent" row is persisted. The caller sees
+   * the original provider error.
    */
   async sendText(input: {
     tenantId: string;

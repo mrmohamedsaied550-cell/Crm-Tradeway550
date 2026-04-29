@@ -299,6 +299,11 @@ export class WhatsAppAccountsService {
    * Run a provider-side liveness check. Reads the access token + app
    * secret inside the service, hands them to the provider, returns only
    * the public test result. Never logs the secrets.
+   *
+   * Transaction discipline (C28): the credential read is its own short
+   * `withTenant` transaction; `provider.testConnection` runs OUTSIDE
+   * any DB transaction so the Meta round-trip never holds a Postgres
+   * connection. See `WhatsAppService.sendText` for the same pattern.
    */
   async runTest(tenantId: string, id: string): Promise<ConnectionTestResult> {
     // Pull the sensitive columns ONLY inside this method.
