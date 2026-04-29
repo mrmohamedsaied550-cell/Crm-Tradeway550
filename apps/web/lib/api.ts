@@ -33,6 +33,7 @@ import type {
   PipelineStage,
   RoleSummary,
   SendConversationMessageResult,
+  WhatsAppAccount,
   Team,
   UserStatus,
   WhatsAppConversation,
@@ -350,4 +351,18 @@ export const conversationsApi = {
       method: 'POST',
       body: { text },
     }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// WhatsApp accounts — read-only list for the inbox account filter (C24)
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * The full accounts CRUD ships in the admin module (C24A). The agent
+ * inbox only needs the list, so this is a thin read-only surface that
+ * intentionally does not re-export create/update/enable/disable/test —
+ * those belong on the admin client.
+ */
+export const whatsappAccountsApi = {
+  list: (): Promise<WhatsAppAccount[]> => apiFetch<WhatsAppAccount[]>('/whatsapp/accounts'),
 };

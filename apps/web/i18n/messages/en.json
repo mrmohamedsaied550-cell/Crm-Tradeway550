@@ -313,20 +313,29 @@
       "subtitle": "Live conversations with leads and captains.",
       "phoneFilter": "Filter by phone",
       "phoneFilterPlaceholder": "+201001112222",
+      "accountFilter": "WhatsApp account",
+      "allAccounts": "All accounts",
+      "accountInactive": "(inactive)",
       "status": {
         "open": "Open",
-        "closed": "Closed"
+        "closed": "Closed",
+        "all": "All"
       },
       "empty": "No conversations yet",
       "emptyHint": "Inbound WhatsApp messages will appear here.",
-      "emptyFiltered": "No conversations match the filter",
-      "emptyFilteredHint": "Try clearing the phone or status filter.",
+      "emptyFiltered": "No conversations match the filters",
+      "emptyFilteredHint": "Try clearing the account, phone, or status filters.",
       "noMessages": "No messages yet",
+      "noMessagesHint": "Once the lead replies on WhatsApp the thread will appear here.",
       "selectAConversation": "Select a conversation",
       "selectAConversationHint": "Pick one from the list to read and reply.",
       "composerPlaceholder": "Type a reply…",
+      "composerClosed": "Conversation is closed — replies are disabled.",
       "send": "Send",
-      "back": "Back to list"
+      "sending": "Sending…",
+      "back": "Back to list",
+      "today": "Today",
+      "yesterday": "Yesterday"
     }
   },
   "common": {
