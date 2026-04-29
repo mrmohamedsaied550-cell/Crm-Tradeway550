@@ -1,9 +1,11 @@
 import {
+  Body,
   Controller,
   Get,
   NotFoundException,
   Param,
   ParseUUIDPipe,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -15,10 +17,15 @@ import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 
 import { WhatsAppService } from './whatsapp.service';
-import { ListConversationMessagesQuerySchema, ListConversationsQuerySchema } from './whatsapp.dto';
+import {
+  ListConversationMessagesQuerySchema,
+  ListConversationsQuerySchema,
+  SendConversationMessageSchema,
+} from './whatsapp.dto';
 
 class ListConversationsQueryDto extends createZodDto(ListConversationsQuerySchema) {}
 class ListConversationMessagesQueryDto extends createZodDto(ListConversationMessagesQuerySchema) {}
+class SendConversationMessageDto extends createZodDto(SendConversationMessageSchema) {}
 
 /**
  * /api/v1/conversations — read-only WhatsApp conversation admin surface.
@@ -75,5 +82,38 @@ export class ConversationsController {
       });
     }
     return rows;
+  }
+
+  /**
+   * Send a plain-text outbound message into the conversation. The
+   * conversation row already carries `accountId` + `phone`, so the body
+   * only needs the text. The service threads the new message into the
+   * same conversation and bumps `lastMessageAt + lastMessageText`.
+   */
+  @Post(':id/messages')
+  @ApiOperation({ summary: 'Send a text message in this conversation' })
+  async send(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SendConversationMessageDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    if (!conversation) {
+      throw new NotFoundException({
+        code: 'whatsapp.conversation_not_found',
+        message: `Conversation ${id} not found in active tenant`,
+      });
+    }
+    const result = await this.whatsapp.sendText({
+      tenantId: user.tid,
+      accountId: conversation.accountId,
+      to: conversation.phone,
+      text: body.text,
+    });
+    return {
+      messageId: result.messageId,
+      providerMessageId: result.providerMessageId,
+      conversationId: result.conversationId,
+    };
   }
 }

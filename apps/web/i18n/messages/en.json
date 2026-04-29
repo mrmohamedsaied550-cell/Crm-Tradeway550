@@ -307,6 +307,26 @@
     "placeholder": {
       "heading": "Agent shell",
       "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
+    },
+    "inbox": {
+      "title": "WhatsApp inbox",
+      "subtitle": "Live conversations with leads and captains.",
+      "phoneFilter": "Filter by phone",
+      "phoneFilterPlaceholder": "+201001112222",
+      "status": {
+        "open": "Open",
+        "closed": "Closed"
+      },
+      "empty": "No conversations yet",
+      "emptyHint": "Inbound WhatsApp messages will appear here.",
+      "emptyFiltered": "No conversations match the filter",
+      "emptyFilteredHint": "Try clearing the phone or status filter.",
+      "noMessages": "No messages yet",
+      "selectAConversation": "Select a conversation",
+      "selectAConversationHint": "Pick one from the list to read and reply.",
+      "composerPlaceholder": "Type a reply…",
+      "send": "Send",
+      "back": "Back to list"
     }
   },
   "common": {

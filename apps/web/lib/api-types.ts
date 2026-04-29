@@ -158,3 +158,39 @@ export interface LoginResponse {
   refreshToken: string;
   user: MeUser;
 }
+
+// ───── WhatsApp (C21 / C22 / C23) ─────
+
+export type ConversationStatus = 'open' | 'closed';
+export type WhatsAppDirection = 'inbound' | 'outbound';
+
+export interface WhatsAppConversation {
+  id: string;
+  tenantId: string;
+  accountId: string;
+  phone: string;
+  status: ConversationStatus;
+  lastMessageAt: string;
+  lastMessageText: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WhatsAppMessage {
+  id: string;
+  tenantId: string;
+  accountId: string;
+  conversationId: string;
+  phone: string;
+  text: string;
+  direction: WhatsAppDirection;
+  providerMessageId: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface SendConversationMessageResult {
+  messageId: string;
+  providerMessageId: string;
+  conversationId: string;
+}

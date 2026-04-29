@@ -20,6 +20,7 @@ import type {
   Captain,
   CaptainStatus,
   Company,
+  ConversationStatus,
   Country,
   Lead,
   LeadActivity,
@@ -31,8 +32,11 @@ import type {
   PaginatedResult,
   PipelineStage,
   RoleSummary,
+  SendConversationMessageResult,
   Team,
   UserStatus,
+  WhatsAppConversation,
+  WhatsAppMessage,
 } from './api-types';
 
 export class ApiError extends Error {
@@ -320,4 +324,30 @@ export const captainsApi = {
   ): Promise<PaginatedResult<Captain>> =>
     apiFetch<PaginatedResult<Captain>>('/captains', { query }),
   get: (id: string): Promise<Captain> => apiFetch<Captain>(`/captains/${id}`),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// WhatsApp — conversations + messages (C22 / C23)
+// ───────────────────────────────────────────────────────────────────────
+
+export const conversationsApi = {
+  list: (
+    query: {
+      accountId?: string;
+      status?: ConversationStatus;
+      phone?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PaginatedResult<WhatsAppConversation>> =>
+    apiFetch<PaginatedResult<WhatsAppConversation>>('/conversations', { query }),
+  get: (id: string): Promise<WhatsAppConversation> =>
+    apiFetch<WhatsAppConversation>(`/conversations/${id}`),
+  listMessages: (id: string, query: { limit?: number } = {}): Promise<WhatsAppMessage[]> =>
+    apiFetch<WhatsAppMessage[]>(`/conversations/${id}/messages`, { query }),
+  sendText: (id: string, text: string): Promise<SendConversationMessageResult> =>
+    apiFetch<SendConversationMessageResult>(`/conversations/${id}/messages`, {
+      method: 'POST',
+      body: { text },
+    }),
 };
