@@ -16,6 +16,10 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
     cors: false, // we wire CORS explicitly below
+    // Preserves req.rawBody alongside the parsed JSON body so the WhatsApp
+    // webhook can verify Meta's HMAC signature against the original bytes
+    // (re-stringifying the parsed body is unreliable across providers).
+    rawBody: true,
   });
 
   // Replace the default Nest logger with Pino so HTTP requests get structured.

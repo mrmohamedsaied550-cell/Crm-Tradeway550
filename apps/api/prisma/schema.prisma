@@ -10,6 +10,10 @@
 // C11 adds response-SLA tracking + auto round-robin reassignment on breach.
 // C12 introduces the org structure: Company → Country → Team, plus Team
 //     membership on User (nullable, since super_admin / ops are tenant-wide).
+// C18 extends Captain with name / phone / teamId / status (denormalised from
+//     the lead at convert time; kept additive — no breaking changes).
+// C21 introduces WhatsApp foundation: WhatsAppAccount (provider config per
+//     tenant) + WhatsAppMessage (inbound + outbound traffic log).
 //
 // Documentation: https://www.prisma.io/docs
 
@@ -33,16 +37,18 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  roles          Role[]
-  users          User[]
-  sessions       UserSession[]
-  pipelineStages PipelineStage[]
-  leads          Lead[]
-  captains       Captain[]
-  leadActivities LeadActivity[]
-  companies      Company[]
-  countries      Country[]
-  teams          Team[]
+  roles            Role[]
+  users            User[]
+  sessions         UserSession[]
+  pipelineStages   PipelineStage[]
+  leads            Lead[]
+  captains         Captain[]
+  leadActivities   LeadActivity[]
+  companies        Company[]
+  countries        Country[]
+  teams            Team[]
+  whatsAppAccounts WhatsAppAccount[]
+  whatsAppMessages WhatsAppMessage[]
 
   @@map("tenants")
 }
@@ -414,4 +420,96 @@ model Team {
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
   @@map("teams")
+}
+
+/// WhatsAppAccount — per-tenant configuration for one provider connection.
+///
+/// MVP supports `meta_cloud` (WhatsApp Business Platform — Cloud API). The
+/// `accessToken` is stored as-is for now; production deployments must wrap
+/// the column with field-level encryption. The token is NEVER returned to
+/// clients — services that read the column live behind module-internal
+/// helpers and the controller never selects it.
+///
+/// `verifyToken` is the value Meta sends on the GET handshake when first
+/// registering the webhook (`hub.verify_token`); kept per-account so two
+/// tenants in the same deployment can wire up independent webhooks.
+/// `phoneNumberId` is Meta's identifier in the Cloud API URL path
+/// (`/v20.0/{phone-number-id}/messages`) and inside inbound webhook
+/// `value.metadata.phone_number_id` — used to route inbound messages to
+/// the right account/tenant.
+/// `appSecret` enables HMAC-SHA256 signature verification of inbound
+/// webhooks (`x-hub-signature-256`); optional in dev, recommended in prod.
+model WhatsAppAccount {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// E.164 phone number this account sends from (display number).
+  phoneNumber   String  @map("phone_number")
+  /// Meta's phone-number-id used in URL paths + webhook routing.
+  phoneNumberId String  @map("phone_number_id")
+  /// `meta_cloud` for now; extensible (e.g. `360dialog`, `gupshup`).
+  provider      String
+  /// Long-lived access token. Sensitive — never returned to clients.
+  accessToken   String  @map("access_token")
+  /// Meta App secret for HMAC signature verification (optional).
+  appSecret     String? @map("app_secret")
+  /// Webhook GET-handshake verify token. Unique-per-tenant.
+  verifyToken   String  @map("verify_token")
+  isActive      Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  messages WhatsAppMessage[]
+
+  // Phone number is unique per tenant; phoneNumberId is unique globally
+  // (Meta-assigned), so we add a stable lookup index for inbound routing.
+  @@unique([tenantId, phoneNumber])
+  @@unique([phoneNumberId])
+  @@index([tenantId, isActive])
+  @@map("whatsapp_accounts")
+}
+
+/// WhatsAppMessage — append-only traffic log (inbound + outbound).
+///
+/// Direction:
+///   `inbound`   the OTHER party sent us a message (persisted by the webhook).
+///   `outbound`  we sent a message via the provider (persisted by sendText).
+///
+/// `phone` is always the OTHER party's E.164 number; for inbound it's the
+/// customer, for outbound the recipient. The account's own number lives on
+/// the related WhatsAppAccount row, not duplicated here.
+///
+/// `providerMessageId` is the id Meta assigns. It's globally unique on
+/// Meta's side, but we constrain uniqueness per-tenant so duplicate
+/// webhook deliveries are idempotent (P2002 → no-op).
+model WhatsAppMessage {
+  id                String  @id @default(uuid()) @db.Uuid
+  tenantId          String  @map("tenant_id") @db.Uuid
+  tenant            Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId         String  @map("account_id") @db.Uuid
+  account           WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// Other party's E.164 phone number.
+  phone             String
+  /// Plain text body. Media / templated messages land in a later chunk.
+  text              String
+  /// `inbound` | `outbound`.
+  direction         String
+  /// Meta's message id (whatsapp_business_api id). Optional for queued
+  /// outbound messages where we haven't received a provider id yet.
+  providerMessageId String? @map("provider_message_id")
+  /// Outbound lifecycle: `queued` → `sent` → `delivered` → `read` | `failed`.
+  /// Inbound rows always start at `received` (terminal for inbound).
+  status            String  @default("received")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Idempotent webhook ingestion: same providerMessageId in the same
+  // tenant is rejected by the unique constraint.
+  @@unique([tenantId, providerMessageId])
+  @@index([tenantId, phone, createdAt])
+  @@index([tenantId, direction])
+  @@index([accountId, createdAt])
+  @@map("whatsapp_messages")
 }
