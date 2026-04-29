@@ -29,3 +29,11 @@ export const ListConversationMessagesQuerySchema = z
   })
   .strict();
 export type ListConversationMessagesQueryDto = z.infer<typeof ListConversationMessagesQuerySchema>;
+
+export const SendConversationMessageSchema = z
+  .object({
+    /** Plain text body. Media + templates land in a later chunk. */
+    text: z.string().trim().min(1).max(4096),
+  })
+  .strict();
+export type SendConversationMessageDto = z.infer<typeof SendConversationMessageSchema>;
