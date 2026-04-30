@@ -78,7 +78,17 @@ async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T>
   };
   const token = opts.bearerToken === undefined ? getAccessToken() : opts.bearerToken;
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const tenantCode = opts.tenantCode === undefined ? getTenantCode() : opts.tenantCode;
+  // X-Tenant is the dev fallback for unauthenticated paths. The server's
+  // tenant context middleware (C27) prefers the JWT `tid` claim and only
+  // honours the header in non-production. Sending it on authenticated
+  // calls accomplishes nothing except triggering a CORS preflight that
+  // fails unless the operator has explicitly added X-Tenant to the
+  // server's allowedHeaders list — so we omit it whenever a Bearer
+  // token is already present. Callers can still pass `tenantCode`
+  // explicitly (e.g. login passes `null`); only the implicit
+  // localStorage-driven path is gated.
+  const explicitTenant = opts.tenantCode !== undefined;
+  const tenantCode = explicitTenant ? opts.tenantCode : token ? null : getTenantCode();
   if (tenantCode) headers['X-Tenant'] = tenantCode;
 
   let body: BodyInit | undefined;

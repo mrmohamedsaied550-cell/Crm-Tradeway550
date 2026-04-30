@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { authApi } from '@/lib/api';
+import { ApiError, authApi } from '@/lib/api';
 import {
   clearAuth,
   getAccessToken,
@@ -27,16 +27,20 @@ import {
 export function AuthBar(): JSX.Element {
   const router = useRouter();
   const t = useTranslations('admin.authBar');
-  const [me, setMe] = useState<MeCache | null>(getCachedMe());
-  const [hasToken, setHasToken] = useState<boolean>(Boolean(getAccessToken()));
+  // Initialise from neutral defaults so SSR and the first client render
+  // match (localStorage isn't available on the server). The mount
+  // effect populates from localStorage right after hydration.
+  const [me, setMe] = useState<MeCache | null>(null);
+  const [hasToken, setHasToken] = useState<boolean>(false);
+  const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     const token = getAccessToken();
+    const cachedMe = getCachedMe();
     setHasToken(Boolean(token));
-    if (!token) {
-      setMe(null);
-      return;
-    }
+    setMe(cachedMe);
+    setHydrated(true);
+    if (!token) return;
     let cancelled = false;
     authApi
       .me()
@@ -55,12 +59,17 @@ export function AuthBar(): JSX.Element {
         setCachedMe(next);
         setMe(next);
       })
-      .catch(() => {
-        // Token expired or invalid — drop it so the UI prompts a re-login.
-        clearAuth();
-        if (!cancelled) {
-          setMe(null);
-          setHasToken(false);
+      .catch((err: unknown) => {
+        // Only clear the token on a definite 401 — that's the one error
+        // that proves the token is no longer accepted. Network blips,
+        // CORS preflights, transient 5xx etc. must NOT log the user out
+        // (the previous behaviour wiped the token on every failure).
+        if (err instanceof ApiError && err.status === 401) {
+          clearAuth();
+          if (!cancelled) {
+            setMe(null);
+            setHasToken(false);
+          }
         }
       });
     return () => {
@@ -73,6 +82,13 @@ export function AuthBar(): JSX.Element {
     setMe(null);
     setHasToken(false);
     router.push('/login');
+  }
+
+  // Until we've read localStorage on the client we don't know whether a
+  // token exists — render a placeholder rather than flashing the
+  // "not signed in" CTA between the SSR HTML and the mount effect.
+  if (!hydrated) {
+    return <div className="h-9 rounded-md border border-surface-border bg-surface-card" />;
   }
 
   if (!hasToken) {
