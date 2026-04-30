@@ -10,6 +10,7 @@
  */
 
 const ACCESS_TOKEN_KEY = 'crm.accessToken';
+const REFRESH_TOKEN_KEY = 'crm.refreshToken';
 const TENANT_CODE_KEY = 'crm.tenantCode';
 const ME_CACHE_KEY = 'crm.me';
 
@@ -36,6 +37,17 @@ export function setAccessToken(token: string | null): void {
   if (!isBrowser()) return;
   if (token) window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
   else window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+export function getRefreshToken(): string | null {
+  if (!isBrowser()) return null;
+  return window.localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+export function setRefreshToken(token: string | null): void {
+  if (!isBrowser()) return;
+  if (token) window.localStorage.setItem(REFRESH_TOKEN_KEY, token);
+  else window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
 export function getTenantCode(): string | null {
@@ -68,6 +80,7 @@ export function setCachedMe(me: MeCache | null): void {
 
 export function clearAuth(): void {
   setAccessToken(null);
+  setRefreshToken(null);
   setTenantCode(null);
   setCachedMe(null);
 }
