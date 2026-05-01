@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Plus, UserPlus } from 'lucide-react';
+import { Plus, Upload, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -46,6 +46,44 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'breached') return 'breach';
   if (s === 'paused') return 'inactive';
   return 'healthy';
+}
+
+/**
+ * Quote-aware splitter for a single CSV header line. Mirrors enough of
+ * the server-side parser to give the user a useful column dropdown
+ * before they submit the import. Strips a UTF-8 BOM if present.
+ */
+function parseHeaderLine(line: string): string[] {
+  const raw = line.charCodeAt(0) === 0xfeff ? line.slice(1) : line;
+  const cells: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (inQuotes) {
+      if (ch === '"' && raw[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+    if (ch === '"' && cell.length === 0) {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ',') {
+      cells.push(cell.trim());
+      cell = '';
+      continue;
+    }
+    cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells.filter((c) => c.length > 0);
 }
 
 export default function LeadsPage(): JSX.Element {
@@ -143,6 +181,109 @@ export default function LeadsPage(): JSX.Element {
     }
   }
 
+  // P2-06 — CSV import dialog state.
+  const [importing, setImporting] = useState<boolean>(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importCsvText, setImportCsvText] = useState<string>('');
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [importMap, setImportMap] = useState<{ name: string; phone: string; email: string }>({
+    name: '',
+    phone: '',
+    email: '',
+  });
+  const [importSource, setImportSource] = useState<LeadSource>('import');
+  const [importAutoAssign, setImportAutoAssign] = useState<boolean>(true);
+  const [importLoading, setImportLoading] = useState<boolean>(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{
+    total: number;
+    created: number;
+    duplicates: number;
+    errors: { row: number; reason: string }[];
+  } | null>(null);
+  const tImport = useTranslations('admin.leads.import');
+
+  function openImport(): void {
+    setImportFile(null);
+    setImportCsvText('');
+    setImportHeaders([]);
+    setImportMap({ name: '', phone: '', email: '' });
+    setImportSource('import');
+    setImportAutoAssign(true);
+    setImportError(null);
+    setImportResult(null);
+    setImporting(true);
+  }
+
+  function closeImport(): void {
+    setImporting(false);
+  }
+
+  async function onPickCsvFile(file: File | null): Promise<void> {
+    setImportError(null);
+    setImportResult(null);
+    setImportFile(file);
+    setImportHeaders([]);
+    setImportMap({ name: '', phone: '', email: '' });
+    if (!file) {
+      setImportCsvText('');
+      return;
+    }
+    try {
+      const text = await file.text();
+      setImportCsvText(text);
+      // Read just the first non-blank line for header preview. We don't
+      // re-parse the body here — that's the server's job at submit time.
+      const firstLine = text.split(/\r\n|\n|\r/).find((l) => l.trim().length > 0) ?? '';
+      const headers = parseHeaderLine(firstLine);
+      setImportHeaders(headers);
+      // Best-effort auto-mapping by lowercase header containment.
+      const lower = (h: string): string => h.toLowerCase();
+      const findHeader = (...needles: string[]): string =>
+        headers.find((h) => needles.some((n) => lower(h).includes(n))) ?? '';
+      setImportMap({
+        name: findHeader('name', 'الاسم'),
+        phone: findHeader('phone', 'mobile', 'رقم', 'هاتف'),
+        email: findHeader('email', 'بريد'),
+      });
+    } catch (err) {
+      setImportError(String(err));
+    }
+  }
+
+  async function onSubmitImport(e: FormEvent<HTMLFormElement>): Promise<void> {
+    e.preventDefault();
+    setImportError(null);
+    setImportResult(null);
+    if (importCsvText.length === 0) {
+      setImportError(tImport('needFile'));
+      return;
+    }
+    if (importHeaders.length === 0 || !importMap.name || !importMap.phone) {
+      setImportError(tImport('needHeaders'));
+      return;
+    }
+    setImportLoading(true);
+    try {
+      const result = await leadsApi.importCsv({
+        csv: importCsvText,
+        mapping: {
+          name: importMap.name,
+          phone: importMap.phone,
+          ...(importMap.email && { email: importMap.email }),
+        },
+        defaultSource: importSource,
+        autoAssign: importAutoAssign,
+      });
+      setImportResult(result);
+      await reload();
+    } catch (err) {
+      setImportError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
   // C39 — round-robin auto-assign for one lead.
   const [autoAssigning, setAutoAssigning] = useState<Set<string>>(new Set());
   async function onAutoAssign(row: Lead): Promise<void> {
@@ -233,10 +374,16 @@ export default function LeadsPage(): JSX.Element {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button onClick={openNew}>
-            <Plus className="h-4 w-4" />
-            {t('newButton')}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={openImport}>
+              <Upload className="h-4 w-4" />
+              {t('importButton')}
+            </Button>
+            <Button onClick={openNew}>
+              <Plus className="h-4 w-4" />
+              {t('newButton')}
+            </Button>
+          </div>
         }
       />
 
@@ -319,6 +466,125 @@ export default function LeadsPage(): JSX.Element {
           )}
         />
       )}
+
+      <Modal
+        open={importing}
+        title={tImport('title')}
+        onClose={closeImport}
+        footer={
+          <>
+            <Button variant="ghost" onClick={closeImport}>
+              {tCommon('cancel')}
+            </Button>
+            <Button
+              type="submit"
+              form="leadImportForm"
+              loading={importLoading}
+              disabled={importLoading || importCsvText.length === 0}
+            >
+              {tImport('submit')}
+            </Button>
+          </>
+        }
+      >
+        <form id="leadImportForm" className="flex flex-col gap-3" onSubmit={onSubmitImport}>
+          {importError ? <Notice tone="error">{importError}</Notice> : null}
+          {importResult ? (
+            <Notice tone={importResult.errors.length > 0 ? 'info' : 'success'}>
+              {tImport('result', {
+                created: importResult.created,
+                total: importResult.total,
+                duplicates: importResult.duplicates,
+                errors: importResult.errors.length,
+              })}
+              {importResult.errors.length > 0 ? (
+                <ul className="mt-2 list-disc ps-5 text-xs text-ink-secondary">
+                  {importResult.errors.slice(0, 20).map((e) => (
+                    <li key={`${e.row}-${e.reason}`}>
+                      {tImport('errorRow', { row: e.row, reason: e.reason })}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </Notice>
+          ) : null}
+          <Field label={tImport('fileLabel')} hint={tImport('fileHint')} required>
+            <Input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => void onPickCsvFile(e.target.files?.[0] ?? null)}
+            />
+          </Field>
+          {importFile && importHeaders.length === 0 ? (
+            <p className="text-xs text-ink-tertiary">{tImport('loadingHeaders')}</p>
+          ) : null}
+          {importHeaders.length > 0 ? (
+            <>
+              <Field label={tImport('mapName')} required>
+                <Select
+                  value={importMap.name}
+                  onChange={(e) => setImportMap((m) => ({ ...m, name: e.target.value }))}
+                  required
+                >
+                  <option value="">—</option>
+                  {importHeaders.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={tImport('mapPhone')} required>
+                <Select
+                  value={importMap.phone}
+                  onChange={(e) => setImportMap((m) => ({ ...m, phone: e.target.value }))}
+                  required
+                >
+                  <option value="">—</option>
+                  {importHeaders.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={tImport('mapEmail')}>
+                <Select
+                  value={importMap.email}
+                  onChange={(e) => setImportMap((m) => ({ ...m, email: e.target.value }))}
+                >
+                  <option value="">—</option>
+                  {importHeaders.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={tImport('defaultSource')}>
+                <Select
+                  value={importSource}
+                  onChange={(e) => setImportSource(e.target.value as LeadSource)}
+                >
+                  {SOURCES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-ink-primary">
+                <input
+                  type="checkbox"
+                  checked={importAutoAssign}
+                  onChange={(e) => setImportAutoAssign(e.target.checked)}
+                />
+                {tImport('autoAssign')}
+              </label>
+            </>
+          ) : null}
+        </form>
+      </Modal>
 
       <Modal
         open={creating}

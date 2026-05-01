@@ -19,6 +19,8 @@ import { CompetitionsModule } from './competitions/competitions.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { IngestionModule } from './ingestion/ingestion.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -54,6 +56,8 @@ import { buildLoggerConfig } from './common/logger';
     FollowUpsModule,
     ReportsModule,
     AuditModule,
+    NotificationsModule,
+    IngestionModule,
     HealthModule,
   ],
   providers: [

@@ -17,6 +17,8 @@ import { createZodDto } from 'nestjs-zod';
 import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
+import { CapabilityGuard } from '../rbac/capability.guard';
+import { RequireCapability } from '../rbac/require-capability.decorator';
 
 import { CompetitionsService } from './competitions.service';
 import {
@@ -31,29 +33,33 @@ class SetCompetitionStatusDto extends createZodDto(SetCompetitionStatusSchema) {
 
 @ApiTags('competitions')
 @Controller('competitions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
 export class CompetitionsController {
   constructor(private readonly competitions: CompetitionsService) {}
 
   @Get()
+  @RequireCapability('competition.read')
   @ApiOperation({ summary: 'List competitions in the active tenant' })
   list() {
     return this.competitions.list();
   }
 
   @Get(':id')
+  @RequireCapability('competition.read')
   @ApiOperation({ summary: 'Get one competition' })
   get(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.competitions.findByIdOrThrow(id);
   }
 
   @Post()
+  @RequireCapability('competition.write')
   @ApiOperation({ summary: 'Create a competition' })
   create(@Body() body: CreateCompetitionDto, @CurrentUser() user: AccessTokenClaims) {
     return this.competitions.create(body, user.sub);
   }
 
   @Patch(':id')
+  @RequireCapability('competition.write')
   @ApiOperation({ summary: 'Update a competition' })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -64,6 +70,7 @@ export class CompetitionsController {
   }
 
   @Post(':id/status')
+  @RequireCapability('competition.write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set competition status (draft / active / closed)' })
   setStatus(
@@ -75,12 +82,14 @@ export class CompetitionsController {
   }
 
   @Get(':id/leaderboard')
+  @RequireCapability('competition.read')
   @ApiOperation({ summary: 'Best-effort leaderboard for the competition window' })
   leaderboard(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.competitions.leaderboard(id);
   }
 
   @Delete(':id')
+  @RequireCapability('competition.write')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a competition' })
   remove(

@@ -1,10 +1,9 @@
 import { ALL_CAPABILITY_CODES, type CapabilityCode } from './capabilities.registry';
 
 /**
- * The 11 Sprint 1 roles and their capability sets.
+ * The 11 roles and their capability sets.
  *
- * Source of truth: PRD Master v2.0 §4 (User Roles & Permissions) and
- * Sprint 1 Technical Backlog §4.3.
+ * Source of truth: PRD Master v2.0 §4 (User Roles & Permissions).
  *
  * `level` is a sortable rank used by future scope guards for hierarchy
  * checks (e.g. "is this user at least a Team Leader?").
@@ -30,6 +29,39 @@ const READ_ORG: readonly CapabilityCode[] = [
   'org.team.read',
 ];
 
+// Read-everything bundle — every role that touches the CRM at all
+// reads the catalogue surfaces (pipeline stages, captains list,
+// reports). Only `viewer` gets just this; others extend it.
+const READ_CRM: readonly CapabilityCode[] = [
+  'lead.read',
+  'pipeline.read',
+  'captain.read',
+  'followup.read',
+  'whatsapp.account.read',
+  'whatsapp.conversation.read',
+  'bonus.read',
+  'competition.read',
+  'report.read',
+  'meta.leadsource.read',
+];
+
+const AGENT_ACTIONS: readonly CapabilityCode[] = [
+  'lead.activity.write',
+  'lead.stage.move',
+  'lead.assign',
+  'followup.write',
+  'followup.complete',
+  'whatsapp.message.send',
+  'whatsapp.link.lead',
+];
+
+const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
+  'lead.write',
+  'lead.convert',
+  'lead.import',
+  'whatsapp.handover',
+];
+
 export const ROLE_DEFINITIONS = [
   {
     code: 'super_admin',
@@ -44,17 +76,31 @@ export const ROLE_DEFINITIONS = [
     nameEn: 'Operations Manager',
     level: 90,
     capabilities: [
-      'org.company.read',
+      ...READ_ORG,
       'org.company.write',
-      'org.country.read',
       'org.country.write',
       'org.country.holidays.write',
-      'org.team.read',
       'org.team.write',
       'users.read',
       'users.write',
       'users.disable',
       'users.reset',
+      ...READ_CRM,
+      'lead.write',
+      'lead.assign',
+      'lead.stage.move',
+      'lead.activity.write',
+      'lead.convert',
+      'lead.import',
+      'meta.leadsource.write',
+      'followup.write',
+      'followup.complete',
+      'whatsapp.account.write',
+      'whatsapp.message.send',
+      'whatsapp.handover',
+      'whatsapp.link.lead',
+      'bonus.write',
+      'competition.write',
       'audit.read',
       'roles.read',
       'capabilities.read',
@@ -72,6 +118,22 @@ export const ROLE_DEFINITIONS = [
       'users.write',
       'users.disable',
       'users.reset',
+      ...READ_CRM,
+      'lead.write',
+      'lead.assign',
+      'lead.stage.move',
+      'lead.activity.write',
+      'lead.convert',
+      'lead.import',
+      'meta.leadsource.write',
+      'followup.write',
+      'followup.complete',
+      'whatsapp.message.send',
+      'whatsapp.handover',
+      'whatsapp.link.lead',
+      'bonus.write',
+      'competition.write',
+      'audit.read',
       'roles.read',
       'capabilities.read',
     ],
@@ -81,56 +143,81 @@ export const ROLE_DEFINITIONS = [
     nameAr: 'قائد فريق المبيعات',
     nameEn: 'Team Leader — Sales',
     level: 60,
-    capabilities: ['org.team.read', 'users.read', 'users.write', 'users.reset'],
+    capabilities: [
+      ...READ_ORG,
+      'users.read',
+      'users.write',
+      'users.reset',
+      ...READ_CRM,
+      ...AGENT_ACTIONS,
+      ...TEAM_LEAD_EXTRAS,
+    ],
   },
   {
     code: 'tl_activation',
     nameAr: 'قائد فريق التنشيط',
     nameEn: 'Team Leader — Activation',
     level: 60,
-    capabilities: ['org.team.read', 'users.read', 'users.write', 'users.reset'],
+    capabilities: [
+      ...READ_ORG,
+      'users.read',
+      'users.write',
+      'users.reset',
+      ...READ_CRM,
+      ...AGENT_ACTIONS,
+      ...TEAM_LEAD_EXTRAS,
+    ],
   },
   {
     code: 'tl_driving',
     nameAr: 'قائد فريق القيادة',
     nameEn: 'Team Leader — Driving',
     level: 60,
-    capabilities: ['org.team.read', 'users.read', 'users.write', 'users.reset'],
+    capabilities: [
+      ...READ_ORG,
+      'users.read',
+      'users.write',
+      'users.reset',
+      ...READ_CRM,
+      ...AGENT_ACTIONS,
+      ...TEAM_LEAD_EXTRAS,
+    ],
   },
   {
     code: 'qa_specialist',
     nameAr: 'أخصائي الجودة',
     nameEn: 'QA Specialist',
     level: 50,
-    capabilities: [],
+    // Read-only across the CRM; QA scoring lands later.
+    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read'],
   },
   {
     code: 'sales_agent',
     nameAr: 'وكيل مبيعات',
     nameEn: 'Sales Agent',
     level: 30,
-    capabilities: [],
+    capabilities: [...READ_ORG, ...READ_CRM, ...AGENT_ACTIONS],
   },
   {
     code: 'activation_agent',
     nameAr: 'وكيل تنشيط',
     nameEn: 'Activation Agent',
     level: 30,
-    capabilities: [],
+    capabilities: [...READ_ORG, ...READ_CRM, ...AGENT_ACTIONS],
   },
   {
     code: 'driving_agent',
     nameAr: 'وكيل قيادة',
     nameEn: 'Driving Agent',
     level: 30,
-    capabilities: [],
+    capabilities: [...READ_ORG, ...READ_CRM, ...AGENT_ACTIONS],
   },
   {
     code: 'viewer',
     nameAr: 'مشاهد فقط',
     nameEn: 'Viewer',
     level: 20,
-    capabilities: [...READ_ORG, 'users.read', 'roles.read', 'capabilities.read'],
+    capabilities: [...READ_ORG, ...READ_CRM, 'users.read', 'roles.read', 'capabilities.read'],
   },
 ] as const satisfies readonly RoleDef[];
 

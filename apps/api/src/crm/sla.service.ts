@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { AssignmentService } from './assignment.service';
@@ -42,6 +43,7 @@ export class SlaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly assignment: AssignmentService,
+    private readonly notifications?: NotificationsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -212,6 +214,24 @@ export class SlaService {
               slaDueAt: this.computeDueAt(now),
             },
           });
+          // P2-02 — bell the new owner so they pick it up immediately,
+          // and the prior owner so they know they lost it.
+          if (this.notifications) {
+            await this.notifications.createInTx(tx, tenantId, {
+              recipientUserId: pickedId,
+              kind: 'sla.breach',
+              title: 'Lead reassigned to you (SLA breach)',
+              body: `You picked up a breached lead from another agent.`,
+              payload: { leadId: fresh.id, fromUserId, mode: 'reassigned' },
+            });
+            await this.notifications.createInTx(tx, tenantId, {
+              recipientUserId: fromUserId,
+              kind: 'sla.breach',
+              title: 'Your lead was reassigned (SLA breach)',
+              body: `It was past its response window.`,
+              payload: { leadId: fresh.id, toUserId: pickedId, mode: 'reassigned' },
+            });
+          }
           return {
             leadId: fresh.id,
             outcome: 'reassigned' as const,
@@ -220,6 +240,17 @@ export class SlaService {
           };
         }
 
+        // No eligible reassignee — bell the existing owner so they
+        // see they're now responsible for an overdue lead.
+        if (this.notifications) {
+          await this.notifications.createInTx(tx, tenantId, {
+            recipientUserId: fromUserId,
+            kind: 'sla.breach',
+            title: 'Your lead breached SLA',
+            body: `No reassignee available — please respond.`,
+            payload: { leadId: fresh.id, mode: 'no_eligible_agent' },
+          });
+        }
         return {
           leadId: fresh.id,
           outcome: 'no_eligible_agent' as const,

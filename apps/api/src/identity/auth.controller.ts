@@ -65,16 +65,22 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({ summary: 'Revoke the presented refresh-token session' })
-  async logout(@Body() body: LogoutRequestDto): Promise<void> {
-    await this.auth.logout(body.refreshToken);
+  async logout(@Body() body: LogoutRequestDto, @Req() req: Request): Promise<void> {
+    await this.auth.logout(body.refreshToken, {
+      userAgent: req.header('user-agent'),
+      ip: req.ip,
+    });
   }
 
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Revoke every active session for the calling user' })
-  async logoutAll(@CurrentUser() user: AccessTokenClaims): Promise<void> {
-    await this.auth.logoutAll(user.tid, user.sub);
+  async logoutAll(@CurrentUser() user: AccessTokenClaims, @Req() req: Request): Promise<void> {
+    await this.auth.logoutAll(user.tid, user.sub, {
+      userAgent: req.header('user-agent'),
+      ip: req.ip,
+    });
   }
 
   @Get('me')

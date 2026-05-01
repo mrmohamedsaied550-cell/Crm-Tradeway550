@@ -224,6 +224,27 @@ export interface BonusRule {
   updatedAt: string;
 }
 
+// ───── Bonus accruals (P2-03) ─────
+
+export type BonusAccrualStatus = 'pending' | 'paid' | 'void';
+
+export interface BonusAccrual {
+  id: string;
+  tenantId: string;
+  bonusRuleId: string;
+  recipientUserId: string;
+  captainId: string | null;
+  triggerKind: string;
+  amount: string; // Decimal-as-string
+  status: BonusAccrualStatus;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  bonusRule?: { id: string; bonusType: string; trigger: string; amount: string };
+  recipient?: { id: string; name: string; email: string };
+  captain?: { id: string; name: string; phone: string } | null;
+}
+
 // ───── Competitions (C33) ─────
 
 export type CompetitionMetric = 'leads_created' | 'activations' | 'first_trips' | 'conversion_rate';
@@ -283,6 +304,27 @@ export interface WhatsAppAccount {
   provider: string;
   verifyToken: string;
   hasAppSecret: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Meta lead-ad sources (P2-06) ─────
+
+/**
+ * Routing config for a Facebook Page (or Page+Form) the tenant runs
+ * lead ads on. `appSecret` is intentionally never returned to the
+ * client — the API exposes only the public-facing fields.
+ */
+export interface MetaLeadSource {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  pageId: string;
+  formId: string | null;
+  verifyToken: string;
+  defaultSource: LeadSource;
+  fieldMapping: Record<string, string>;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

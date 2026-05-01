@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "notifications_tenant_id_recipient_user_id_read_at_created_at_id" RENAME TO "notifications_tenant_id_recipient_user_id_read_at_created_a_idx";

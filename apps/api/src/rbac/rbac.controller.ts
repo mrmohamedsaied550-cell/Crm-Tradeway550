@@ -1,6 +1,8 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import { CapabilityGuard } from './capability.guard';
+import { RequireCapability } from './require-capability.decorator';
 import { RbacService, type RoleSummary } from './rbac.service';
 
 /**
@@ -16,11 +18,12 @@ import { RbacService, type RoleSummary } from './rbac.service';
  */
 @ApiTags('rbac')
 @Controller('rbac')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
 export class RbacController {
   constructor(private readonly rbac: RbacService) {}
 
   @Get('roles')
+  @RequireCapability('roles.read')
   @ApiOperation({
     summary: 'List active roles in the active tenant (id, code, names, capability count)',
   })

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { NotificationBell } from '@/components/admin/notification-bell';
 import { ApiError, authApi } from '@/lib/api';
 import {
   clearAuth,
@@ -55,6 +56,7 @@ export function AuthBar(): JSX.Element {
           roleCode: u.role.code,
           roleNameEn: u.role.nameEn,
           roleNameAr: u.role.nameAr,
+          capabilities: u.capabilities,
         };
         setCachedMe(next);
         setMe(next);
@@ -114,10 +116,13 @@ export function AuthBar(): JSX.Element {
           {me?.tenantCode ? ` · ${me.tenantCode}` : ''}
         </span>
       </div>
-      <Button variant="secondary" size="sm" onClick={onSignOut}>
-        <LogOut className="h-3.5 w-3.5" />
-        {t('signOut')}
-      </Button>
+      <div className="flex items-center gap-2">
+        <NotificationBell />
+        <Button variant="secondary" size="sm" onClick={onSignOut}>
+          <LogOut className="h-3.5 w-3.5" />
+          {t('signOut')}
+        </Button>
+      </div>
     </div>
   );
 }

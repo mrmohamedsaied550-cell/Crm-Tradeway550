@@ -1,0 +1,29 @@
+-- P2-05 — encrypt-at-rest for WhatsApp `access_token`.
+--
+-- This migration is intentionally schema-only / no-op. The token
+-- column type stays TEXT because the new wire format is also a
+-- string — the encrypted value carries its own version prefix
+-- (`v1:`), random IV, and AES-GCM auth tag inside that string.
+--
+-- The actual data rotation (re-encrypting any plaintext rows that
+-- predate the P2-05 deploy) is performed by the companion script:
+--
+--     pnpm tsx apps/api/scripts/encrypt-whatsapp-tokens.ts
+--
+-- The script is idempotent — every row whose `access_token` already
+-- starts with `v1:` is skipped, and every plaintext row is wrapped
+-- in `encryptSecret()` and updated. It's intended to run once at
+-- deploy time, immediately after `prisma migrate deploy` and before
+-- the new app pods take traffic.
+--
+-- The application's read path is also tolerant of legacy plaintext:
+-- `decryptSecret()` returns the value verbatim when the `v1:`
+-- prefix is missing. That means a deploy that forgets to run the
+-- script does not break sends — but the rotation should still be
+-- run promptly so a future DB dump never carries plaintext tokens.
+--
+-- This file exists so Prisma's migration ledger has a marker for
+-- the cutover; the SQL itself is a comment block.
+
+-- (intentionally no DDL)
+SELECT 1;

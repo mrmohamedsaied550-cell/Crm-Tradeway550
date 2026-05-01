@@ -21,6 +21,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
+import { decryptSecret, isFieldEncrypted } from '../common/crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetaCloudProvider, type FetchFn } from './meta-cloud.provider';
 import { WhatsAppService } from './whatsapp.service';
@@ -124,7 +125,12 @@ describe('whatsapp — accounts admin (C24A)', () => {
         select: { accessToken: true, appSecret: true },
       });
     });
-    assert.equal(raw?.accessToken, 'super-secret-token');
+    // P2-05 — `access_token` is encrypted at rest (v1: prefix +
+    // AES-256-GCM); decrypt to verify the plaintext round-trip.
+    // `app_secret` stays plaintext: the public webhook reads it
+    // cross-tenant via the routes mirror.
+    assert.equal(isFieldEncrypted(raw?.accessToken ?? null), true);
+    assert.equal(decryptSecret(raw!.accessToken), 'super-secret-token');
     assert.equal(raw?.appSecret, 'super-secret-app-secret');
   });
 
@@ -191,7 +197,7 @@ describe('whatsapp — accounts admin (C24A)', () => {
         select: { accessToken: true, appSecret: true, displayName: true },
       });
     });
-    assert.equal(raw1?.accessToken, 'token-v1');
+    assert.equal(decryptSecret(raw1!.accessToken), 'token-v1');
     assert.equal(raw1?.appSecret, 'secret-v1');
     assert.equal(raw1?.displayName, 'Renamed');
 
@@ -209,7 +215,7 @@ describe('whatsapp — accounts admin (C24A)', () => {
         select: { accessToken: true, appSecret: true },
       });
     });
-    assert.equal(raw2?.accessToken, 'token-v2');
+    assert.equal(decryptSecret(raw2!.accessToken), 'token-v2');
     assert.equal(raw2?.appSecret, 'secret-v2');
 
     // Clear app secret with explicit null.

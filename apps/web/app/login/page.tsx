@@ -60,6 +60,7 @@ export default function LoginPage() {
         roleCode: result.user.role.code,
         roleNameEn: result.user.role.nameEn,
         roleNameAr: result.user.role.nameAr,
+        capabilities: result.user.capabilities,
       });
       router.push(next);
     } catch (err) {
