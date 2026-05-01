@@ -55,7 +55,7 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/competitions', labelKey: 'competitions', icon: Flag },
   { href: '/admin/whatsapp', labelKey: 'whatsapp', icon: MessagesSquare },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3 },
-  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, pending: true },
+  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText },
 ];
 
 /**

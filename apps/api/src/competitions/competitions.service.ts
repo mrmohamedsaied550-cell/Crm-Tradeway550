@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import type {
@@ -25,7 +27,10 @@ export interface LeaderboardEntry {
  */
 @Injectable()
 export class CompetitionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   list() {
     const tenantId = requireTenantId();
@@ -50,10 +55,10 @@ export class CompetitionsService {
     return row;
   }
 
-  async create(dto: CreateCompetitionDto) {
+  async create(dto: CreateCompetitionDto, actorUserId: string | null = null) {
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.competition.create({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.competition.create({
         data: {
           tenantId,
           name: dto.name,
@@ -66,15 +71,23 @@ export class CompetitionsService {
           reward: dto.reward,
           status: dto.status ?? 'draft',
         },
-      }),
-    );
+      });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'competition.create',
+        entityType: 'competition',
+        entityId: row.id,
+        actorUserId,
+        payload: { name: row.name, metric: row.metric, status: row.status },
+      });
+      return row;
+    });
   }
 
-  async update(id: string, dto: UpdateCompetitionDto) {
+  async update(id: string, dto: UpdateCompetitionDto, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id);
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.competition.update({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.competition.update({
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
@@ -87,22 +100,46 @@ export class CompetitionsService {
           ...(dto.reward !== undefined && { reward: dto.reward }),
           ...(dto.status !== undefined && { status: dto.status }),
         },
-      }),
-    );
+      });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'competition.update',
+        entityType: 'competition',
+        entityId: id,
+        actorUserId,
+        payload: dto as unknown as Prisma.InputJsonValue,
+      });
+      return row;
+    });
   }
 
-  async setStatus(id: string, status: CompetitionStatus) {
+  async setStatus(id: string, status: CompetitionStatus, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id);
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.competition.update({ where: { id }, data: { status } }),
-    );
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.competition.update({ where: { id }, data: { status } });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'competition.status_change',
+        entityType: 'competition',
+        entityId: id,
+        actorUserId,
+        payload: { status },
+      });
+      return row;
+    });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id);
     const tenantId = requireTenantId();
-    await this.prisma.withTenant(tenantId, (tx) => tx.competition.delete({ where: { id } }));
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.competition.delete({ where: { id } });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'competition.delete',
+        entityType: 'competition',
+        entityId: id,
+        actorUserId,
+      });
+    });
   }
 
   /**

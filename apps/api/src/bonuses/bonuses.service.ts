@@ -1,16 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import type { CreateBonusRuleDto, UpdateBonusRuleDto } from './bonus.dto';
 
 /**
  * C32 — BonusRules CRUD. Pure tenant-scoped storage, no payout engine.
+ * C40 — every mutation appends a row to audit_events via AuditService.
  */
 @Injectable()
 export class BonusesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   list() {
     const tenantId = requireTenantId();
@@ -35,10 +40,10 @@ export class BonusesService {
     return row;
   }
 
-  async create(dto: CreateBonusRuleDto) {
+  async create(dto: CreateBonusRuleDto, actorUserId: string | null = null) {
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.bonusRule.create({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.bonusRule.create({
         data: {
           tenantId,
           companyId: dto.companyId,
@@ -50,15 +55,23 @@ export class BonusesService {
           amount: new Prisma.Decimal(dto.amount),
           isActive: dto.isActive ?? true,
         },
-      }),
-    );
+      });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'bonus.create',
+        entityType: 'bonus_rule',
+        entityId: row.id,
+        actorUserId,
+        payload: { bonusType: row.bonusType, amount: row.amount.toString() },
+      });
+      return row;
+    });
   }
 
-  async update(id: string, dto: UpdateBonusRuleDto) {
+  async update(id: string, dto: UpdateBonusRuleDto, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id); // 404 cross-tenant
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.bonusRule.update({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.bonusRule.update({
         where: { id },
         data: {
           ...(dto.companyId !== undefined && { companyId: dto.companyId }),
@@ -70,21 +83,44 @@ export class BonusesService {
           ...(dto.amount !== undefined && { amount: new Prisma.Decimal(dto.amount) }),
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         },
-      }),
-    );
+      });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'bonus.update',
+        entityType: 'bonus_rule',
+        entityId: id,
+        actorUserId,
+        payload: dto as unknown as Prisma.InputJsonValue,
+      });
+      return row;
+    });
   }
 
-  async setActive(id: string, isActive: boolean) {
+  async setActive(id: string, isActive: boolean, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id);
     const tenantId = requireTenantId();
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.bonusRule.update({ where: { id }, data: { isActive } }),
-    );
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const row = await tx.bonusRule.update({ where: { id }, data: { isActive } });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: isActive ? 'bonus.enable' : 'bonus.disable',
+        entityType: 'bonus_rule',
+        entityId: id,
+        actorUserId,
+      });
+      return row;
+    });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null = null) {
     await this.findByIdOrThrow(id);
     const tenantId = requireTenantId();
-    await this.prisma.withTenant(tenantId, (tx) => tx.bonusRule.delete({ where: { id } }));
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.bonusRule.delete({ where: { id } });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'bonus.delete',
+        entityType: 'bonus_rule',
+        entityId: id,
+        actorUserId,
+      });
+    });
   }
 }

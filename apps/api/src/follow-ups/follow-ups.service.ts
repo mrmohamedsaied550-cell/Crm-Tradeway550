@@ -1,13 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import type { CreateFollowUpDto, ListMyFollowUpsQueryDto } from './follow-up.dto';
 
 @Injectable()
 export class FollowUpsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * C37 — recompute the lead's `nextActionDueAt` denormalised column
@@ -99,11 +103,18 @@ export class FollowUpsService {
         },
       });
       await this.recomputeNextActionDueAt(tx, leadId);
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'followup.create',
+        entityType: 'lead_followup',
+        entityId: created.id,
+        actorUserId,
+        payload: { leadId, actionType: created.actionType, dueAt: created.dueAt.toISOString() },
+      });
       return created;
     });
   }
 
-  async complete(id: string) {
+  async complete(id: string, actorUserId: string | null = null) {
     const tenantId = requireTenantId();
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.leadFollowUp.findUnique({
@@ -121,11 +132,18 @@ export class FollowUpsService {
         data: { completedAt: new Date() },
       });
       await this.recomputeNextActionDueAt(tx, row.leadId);
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'followup.complete',
+        entityType: 'lead_followup',
+        entityId: id,
+        actorUserId,
+        payload: { leadId: row.leadId },
+      });
       return updated;
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId: string | null = null) {
     const tenantId = requireTenantId();
     await this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.leadFollowUp
@@ -134,6 +152,13 @@ export class FollowUpsService {
       await tx.leadFollowUp.delete({ where: { id } }).catch(() => {});
       if (row?.leadId) {
         await this.recomputeNextActionDueAt(tx, row.leadId);
+        await this.audit.writeInTx(tx, tenantId, {
+          action: 'followup.delete',
+          entityType: 'lead_followup',
+          entityId: id,
+          actorUserId,
+          payload: { leadId: row.leadId },
+        });
       }
     });
   }

@@ -14,7 +14,9 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
 
+import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import type { AccessTokenClaims } from '../identity/jwt.types';
 
 import { CompetitionsService } from './competitions.service';
 import {
@@ -47,21 +49,29 @@ export class CompetitionsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a competition' })
-  create(@Body() body: CreateCompetitionDto) {
-    return this.competitions.create(body);
+  create(@Body() body: CreateCompetitionDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.competitions.create(body, user.sub);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a competition' })
-  update(@Param('id', new ParseUUIDPipe()) id: string, @Body() body: UpdateCompetitionDto) {
-    return this.competitions.update(id, body);
+  update(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: UpdateCompetitionDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.competitions.update(id, body, user.sub);
   }
 
   @Post(':id/status')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set competition status (draft / active / closed)' })
-  setStatus(@Param('id', new ParseUUIDPipe()) id: string, @Body() body: SetCompetitionStatusDto) {
-    return this.competitions.setStatus(id, body.status);
+  setStatus(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SetCompetitionStatusDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.competitions.setStatus(id, body.status, user.sub);
   }
 
   @Get(':id/leaderboard')
@@ -73,7 +83,10 @@ export class CompetitionsController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a competition' })
-  remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
-    return this.competitions.remove(id);
+  remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<void> {
+    return this.competitions.remove(id, user.sub);
   }
 }

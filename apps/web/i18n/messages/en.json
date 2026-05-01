@@ -392,6 +392,13 @@
         "leaderboard": "Leaderboard"
       }
     },
+    "audit": {
+      "title": "Audit log",
+      "subtitle": "Recent admin actions across leads, follow-ups, bonuses, competitions, and WhatsApp handovers.",
+      "emptyTitle": "No audit events yet",
+      "emptyBody": "Mutations to leads, follow-ups, bonuses, competitions, and WhatsApp handovers will appear here.",
+      "actorSystem": "system"
+    },
     "reports": {
       "title": "Reports",
       "subtitle": "Tenant-level snapshot of leads, follow-ups, and conversion.",

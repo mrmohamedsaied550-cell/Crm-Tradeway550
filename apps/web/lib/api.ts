@@ -471,6 +471,26 @@ export interface LeaderboardEntry {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// Audit (C40)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface AuditRow {
+  source: 'audit_event' | 'lead_activity';
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  actorUserId: string | null;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export const auditApi = {
+  list: (query: { limit?: number; before?: string } = {}): Promise<AuditRow[]> =>
+    apiFetch<AuditRow[]>('/audit', { query }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Reports (C38)
 // ───────────────────────────────────────────────────────────────────────
 

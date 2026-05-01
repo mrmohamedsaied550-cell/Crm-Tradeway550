@@ -56,6 +56,7 @@ model Tenant {
   bonusRules            BonusRule[]
   competitions          Competition[]
   leadFollowUps         LeadFollowUp[]
+  auditEvents           AuditEvent[]
 
   @@map("tenants")
 }
@@ -176,6 +177,8 @@ model User {
   /// (may be the same).
   assignedFollowUps  LeadFollowUp[] @relation("LeadFollowUpAssignee")
   createdFollowUps   LeadFollowUp[] @relation("LeadFollowUpCreator")
+  /// C40 — audit-event rows authored by this user.
+  auditEvents        AuditEvent[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -661,6 +664,34 @@ model BonusRule {
   @@index([tenantId, isActive])
   @@index([tenantId, companyId, countryId])
   @@map("bonus_rules")
+}
+
+/// AuditEvent (C40) — non-lead-scoped admin actions.
+///
+/// Lead-scoped events (note, stage_change, assignment, sla_breach,
+/// whatsapp_handover) live on `lead_activities` already. This table
+/// captures the rest: bonus rule changes, competition changes,
+/// follow-up create / complete, etc. The unified /audit endpoint
+/// streams both tables in a single normalized view sorted desc by
+/// timestamp.
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Stable action verb, e.g. "bonus.create", "competition.status_change".
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  payload     Json?
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action, createdAt])
+  @@map("audit_events")
 }
 
 /// LeadFollowUp (C36) — a scheduled future action on a lead.

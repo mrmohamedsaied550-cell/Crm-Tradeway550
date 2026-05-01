@@ -65,14 +65,17 @@ export class FollowUpsController {
   @Post('follow-ups/:id/complete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a follow-up as completed (now)' })
-  complete(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.followUps.complete(id);
+  complete(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.followUps.complete(id, user.sub);
   }
 
   @Delete('follow-ups/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a follow-up' })
-  remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
-    return this.followUps.remove(id);
+  remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<void> {
+    return this.followUps.remove(id, user.sub);
   }
 }
