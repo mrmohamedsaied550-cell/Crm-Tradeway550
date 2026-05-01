@@ -57,6 +57,7 @@ model Tenant {
   competitions          Competition[]
   leadFollowUps         LeadFollowUp[]
   auditEvents           AuditEvent[]
+  notifications         Notification[]
 
   @@map("tenants")
 }
@@ -179,6 +180,8 @@ model User {
   createdFollowUps   LeadFollowUp[] @relation("LeadFollowUpCreator")
   /// C40 — audit-event rows authored by this user.
   auditEvents        AuditEvent[]
+  /// P2-02 — in-app notifications addressed to this user.
+  notifications      Notification[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -664,6 +667,37 @@ model BonusRule {
   @@index([tenantId, isActive])
   @@index([tenantId, companyId, countryId])
   @@map("bonus_rules")
+}
+
+/// Notification (P2-02) — in-app inbox for time-sensitive events.
+///
+/// Kinds (loose enum, kept as string for forward-compat):
+///   - sla.breach            — your assigned lead breached SLA.
+///   - followup.due          — your follow-up just hit dueAt.
+///   - followup.assigned     — a follow-up was scheduled for you.
+///   - whatsapp.handover     — a conversation was handed off to you.
+///
+/// Payload carries the relevant entity ids; the inbox UI deep-links.
+/// `readAt` flips when the recipient marks it read; null = unread.
+model Notification {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  recipientUserId String @map("recipient_user_id") @db.Uuid
+  recipient       User   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  kind        String
+  title       String
+  body        String?
+  payload     Json?
+  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // "My inbox, unread first then newest first" — covering index.
+  @@index([tenantId, recipientUserId, readAt, createdAt])
+  @@map("notifications")
 }
 
 /// AuditEvent (C40) — non-lead-scoped admin actions.

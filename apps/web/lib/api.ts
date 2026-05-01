@@ -471,6 +471,38 @@ export interface LeaderboardEntry {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// Notifications (P2-02)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface NotificationRow {
+  id: string;
+  tenantId: string;
+  recipientUserId: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  payload: Record<string, unknown> | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export const notificationsApi = {
+  list: (query: { unread?: boolean; limit?: number } = {}): Promise<NotificationRow[]> =>
+    apiFetch<NotificationRow[]>('/notifications', {
+      query: {
+        ...(query.unread ? { unread: '1' } : {}),
+        ...(query.limit ? { limit: String(query.limit) } : {}),
+      },
+    }),
+  unreadCount: (): Promise<{ count: number }> =>
+    apiFetch<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string): Promise<NotificationRow> =>
+    apiFetch<NotificationRow>(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllRead: (): Promise<{ count: number }> =>
+    apiFetch<{ count: number }>('/notifications/read-all', { method: 'POST' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Audit (C40)
 // ───────────────────────────────────────────────────────────────────────
 

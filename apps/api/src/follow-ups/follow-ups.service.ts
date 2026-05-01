@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import type { CreateFollowUpDto, ListMyFollowUpsQueryDto } from './follow-up.dto';
@@ -11,6 +12,7 @@ export class FollowUpsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -110,6 +112,17 @@ export class FollowUpsService {
         actorUserId,
         payload: { leadId, actionType: created.actionType, dueAt: created.dueAt.toISOString() },
       });
+      // P2-02 — notify the new owner if they aren't the same person who
+      // scheduled the follow-up. Self-scheduling shouldn't bell.
+      if (assignedToId && assignedToId !== actorUserId) {
+        await this.notifications.createInTx(tx, tenantId, {
+          recipientUserId: assignedToId,
+          kind: 'followup.assigned',
+          title: `New follow-up scheduled (${created.actionType})`,
+          body: `Due ${created.dueAt.toISOString()}`,
+          payload: { leadId, followUpId: created.id, dueAt: created.dueAt.toISOString() },
+        });
+      }
       return created;
     });
   }

@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { normalizeE164 } from '../crm/phone.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
@@ -82,6 +83,7 @@ export class WhatsAppService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly metaCloud: MetaCloudProvider,
+    private readonly notifications?: NotificationsService,
   ) {}
 
   /**
@@ -625,6 +627,26 @@ export class WhatsAppService {
               toUserId: opts.newAssigneeId,
             } as Prisma.InputJsonValue,
             createdById: opts.actorUserId ?? null,
+          },
+        });
+      }
+
+      // P2-02 — notify the new assignee that a conversation just
+      // landed in their lap. Self-handover (testing) doesn't bell.
+      if (this.notifications && opts.newAssigneeId !== opts.actorUserId) {
+        await this.notifications.createInTx(tx, tenantId, {
+          recipientUserId: opts.newAssigneeId,
+          kind: 'whatsapp.handover',
+          title: 'WhatsApp conversation handed to you',
+          body:
+            opts.mode === 'summary' && opts.summary
+              ? opts.summary.slice(0, 200)
+              : `Mode: ${opts.mode}`,
+          payload: {
+            conversationId,
+            leadId: lead.id,
+            mode: opts.mode,
+            fromUserId,
           },
         });
       }
