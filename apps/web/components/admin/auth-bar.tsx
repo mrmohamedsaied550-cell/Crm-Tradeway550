@@ -55,6 +55,7 @@ export function AuthBar(): JSX.Element {
           roleCode: u.role.code,
           roleNameEn: u.role.nameEn,
           roleNameAr: u.role.nameAr,
+          capabilities: u.capabilities,
         };
         setCachedMe(next);
         setMe(next);

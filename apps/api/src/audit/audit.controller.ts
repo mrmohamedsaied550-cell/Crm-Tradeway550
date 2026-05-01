@@ -2,15 +2,18 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import { CapabilityGuard } from '../rbac/capability.guard';
+import { RequireCapability } from '../rbac/require-capability.decorator';
 import { AuditService } from './audit.service';
 
 @ApiTags('audit')
 @Controller('audit')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
   @Get()
+  @RequireCapability('audit.read')
   @ApiOperation({
     summary: 'Unified audit stream (audit_events + lead_activities), newest first',
   })

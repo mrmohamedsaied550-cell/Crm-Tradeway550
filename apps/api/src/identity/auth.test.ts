@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaClient } from '@prisma/client';
 
+import { CAPABILITY_DEFINITIONS } from '../rbac/capabilities.registry';
 import { PrismaService } from '../prisma/prisma.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { AuthService } from './auth.service';
@@ -79,7 +80,8 @@ describe('auth — login + me', () => {
     assert.match(result.refreshToken, /^[\w-]+\.[\w-]+\.[\w-]+$/);
     assert.equal(result.user.email, 'super@tradeway.com');
     assert.equal(result.user.role.code, 'super_admin');
-    assert.equal(result.user.capabilities.length, 14);
+    // super_admin grants every capability — count is the registry size.
+    assert.equal(result.user.capabilities.length, CAPABILITY_DEFINITIONS.length);
     assert.ok(result.user.capabilities.includes('users.read'));
   });
 
@@ -129,7 +131,7 @@ describe('auth — login + me', () => {
     const me = await auth.me(tenant.id, login.user.id);
     assert.equal(me.email, login.user.email);
     assert.equal(me.role.code, 'super_admin');
-    assert.equal(me.capabilities.length, 14);
+    assert.equal(me.capabilities.length, CAPABILITY_DEFINITIONS.length);
   });
 });
 

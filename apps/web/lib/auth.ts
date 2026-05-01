@@ -22,6 +22,19 @@ export interface MeCache {
   readonly roleCode: string;
   readonly roleNameEn: string;
   readonly roleNameAr: string;
+  /** P2-01 — flat list of capability codes granted by the user's role. */
+  readonly capabilities?: readonly string[];
+}
+
+/**
+ * P2-01 — quick capability check against the cached me payload.
+ * Returns false on the server (SSR) so the UI defaults to "hide" until
+ * hydration; the AdminAuthGuard owns the actual access decision.
+ */
+export function hasCapability(cap: string): boolean {
+  if (!isBrowser()) return false;
+  const me = getCachedMe();
+  return Boolean(me?.capabilities?.includes(cap));
 }
 
 function isBrowser(): boolean {

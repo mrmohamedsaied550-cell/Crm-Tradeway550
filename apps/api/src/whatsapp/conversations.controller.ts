@@ -17,6 +17,8 @@ import { createZodDto } from 'nestjs-zod';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
+import { CapabilityGuard } from '../rbac/capability.guard';
+import { RequireCapability } from '../rbac/require-capability.decorator';
 
 import { WhatsAppService } from './whatsapp.service';
 import {
@@ -43,11 +45,12 @@ class HandoverConversationDto extends createZodDto(HandoverConversationSchema) {
  */
 @ApiTags('whatsapp')
 @Controller('conversations')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
 export class ConversationsController {
   constructor(private readonly whatsapp: WhatsAppService) {}
 
   @Get()
+  @RequireCapability('whatsapp.conversation.read')
   @ApiOperation({
     summary: 'List WhatsApp conversations in the active tenant (newest activity first)',
   })
@@ -56,6 +59,7 @@ export class ConversationsController {
   }
 
   @Get(':id')
+  @RequireCapability('whatsapp.conversation.read')
   @ApiOperation({ summary: 'Get a conversation by id' })
   async getOne(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -72,6 +76,7 @@ export class ConversationsController {
   }
 
   @Get(':id/messages')
+  @RequireCapability('whatsapp.conversation.read')
   @ApiOperation({ summary: 'List messages in a conversation, oldest first' })
   async messages(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -97,6 +102,7 @@ export class ConversationsController {
    * the lookup.
    */
   @Post(':id/link-lead')
+  @RequireCapability('whatsapp.link.lead')
   @ApiOperation({ summary: 'Link a conversation to a lead (idempotent)' })
   link(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -117,6 +123,7 @@ export class ConversationsController {
    * lands when the wider RBAC policy framework arrives.
    */
   @Post(':id/handover')
+  @RequireCapability('whatsapp.handover')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Hand a conversation off to another agent' })
   handover(
@@ -140,6 +147,7 @@ export class ConversationsController {
    * same conversation and bumps `lastMessageAt + lastMessageText`.
    */
   @Post(':id/messages')
+  @RequireCapability('whatsapp.message.send')
   @ApiOperation({ summary: 'Send a text message in this conversation' })
   async send(
     @Param('id', new ParseUUIDPipe()) id: string,

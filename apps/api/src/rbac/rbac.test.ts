@@ -116,11 +116,34 @@ describe('rbac seed', () => {
         where: {
           code: { in: ['sales_agent', 'activation_agent', 'driving_agent', 'qa_specialist'] },
         },
-        include: { capabilities: true },
+        include: { capabilities: { include: { capability: { select: { code: true } } } } },
       }),
     );
+    // P2-01 — agents now hold read + execute capabilities (lead /
+    // pipeline / followup / whatsapp.*.read), but they MUST NOT hold
+    // any admin / write capability that isn't part of their day job.
+    // QA specialist additionally gets `audit.read` so they can review
+    // actor activity; that's not an "admin" capability.
+    const ADMIN_ONLY: ReadonlySet<string> = new Set([
+      'org.company.write',
+      'org.country.write',
+      'org.country.holidays.write',
+      'org.team.write',
+      'users.write',
+      'users.disable',
+      'users.reset',
+      'whatsapp.account.write',
+      'bonus.write',
+      'competition.write',
+    ]);
     for (const r of rows) {
-      assert.equal(r.capabilities.length, 0, `role ${r.code} should have 0 caps in Sprint 1`);
+      const codes = r.capabilities.map((rc) => rc.capability.code);
+      const violations = codes.filter((c) => ADMIN_ONLY.has(c));
+      assert.deepEqual(
+        violations,
+        [],
+        `role ${r.code} must not hold admin capabilities; saw ${violations.join(',')}`,
+      );
     }
   });
 });

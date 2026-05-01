@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -20,6 +21,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getCachedMe } from '@/lib/auth';
 
 interface NavItem {
   href: string;
@@ -38,24 +40,32 @@ interface NavItem {
     | 'reports'
     | 'audit';
   icon: LucideIcon;
+  /** P2-01 — capability required to see this link. Dashboard / Leads /
+   *  Captains / Pipeline are visible to anyone authenticated. */
+  cap?: string;
   /** When true, the link is rendered but disabled — destination doesn't exist. */
   pending?: boolean;
 }
 
 const ITEMS: readonly NavItem[] = [
   { href: '/admin', labelKey: 'dashboard', icon: LayoutDashboard },
-  { href: '/admin/companies', labelKey: 'companies', icon: Building2 },
-  { href: '/admin/countries', labelKey: 'countries', icon: Globe },
-  { href: '/admin/teams', labelKey: 'teams', icon: Users2 },
-  { href: '/admin/users', labelKey: 'users', icon: UserCog },
-  { href: '/admin/leads', labelKey: 'leads', icon: Contact },
-  { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns },
-  { href: '/admin/captains', labelKey: 'captains', icon: Trophy },
-  { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award },
-  { href: '/admin/competitions', labelKey: 'competitions', icon: Flag },
-  { href: '/admin/whatsapp', labelKey: 'whatsapp', icon: MessagesSquare },
-  { href: '/admin/reports', labelKey: 'reports', icon: BarChart3 },
-  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText },
+  { href: '/admin/companies', labelKey: 'companies', icon: Building2, cap: 'org.company.read' },
+  { href: '/admin/countries', labelKey: 'countries', icon: Globe, cap: 'org.country.read' },
+  { href: '/admin/teams', labelKey: 'teams', icon: Users2, cap: 'org.team.read' },
+  { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
+  { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
+  { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns, cap: 'pipeline.read' },
+  { href: '/admin/captains', labelKey: 'captains', icon: Trophy, cap: 'captain.read' },
+  { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award, cap: 'bonus.read' },
+  { href: '/admin/competitions', labelKey: 'competitions', icon: Flag, cap: 'competition.read' },
+  {
+    href: '/admin/whatsapp',
+    labelKey: 'whatsapp',
+    icon: MessagesSquare,
+    cap: 'whatsapp.conversation.read',
+  },
+  { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
+  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },
 ];
 
 /**
@@ -68,13 +78,29 @@ export function AdminSideNav() {
   const tCommon = useTranslations('common');
   const pathname = usePathname() ?? '';
 
+  // P2-01 — read capabilities from the cached me payload after
+  // hydration. Pre-hydration we render every link; after the effect
+  // we filter to those the user can read. This avoids both an SSR
+  // mismatch and a flash-of-empty-nav while localStorage loads.
+  const [caps, setCaps] = useState<readonly string[] | null>(null);
+  useEffect(() => {
+    const me = getCachedMe();
+    setCaps(me?.capabilities ?? []);
+  }, []);
+
+  const visible = ITEMS.filter((item) => {
+    if (!item.cap) return true;
+    if (caps === null) return true;
+    return caps.includes(item.cap);
+  });
+
   return (
     <nav
       aria-label="Admin"
       className="hidden w-60 shrink-0 border-e border-surface-border bg-surface-card md:block"
     >
       <ul className="flex flex-col gap-0.5 p-3">
-        {ITEMS.map((item) => {
+        {visible.map((item) => {
           const Icon = item.icon;
           const isActive =
             item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);

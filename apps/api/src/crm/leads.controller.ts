@@ -18,6 +18,8 @@ import { createZodDto } from 'nestjs-zod';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
+import { CapabilityGuard } from '../rbac/capability.guard';
+import { RequireCapability } from '../rbac/require-capability.decorator';
 
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
@@ -51,7 +53,7 @@ class ListLeadsQueryDto extends createZodDto(ListLeadsQuerySchema) {}
  */
 @ApiTags('crm')
 @Controller()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
 export class LeadsController {
   constructor(
     private readonly leads: LeadsService,
@@ -60,34 +62,29 @@ export class LeadsController {
     private readonly sla: SlaService,
   ) {}
 
-  // ───────── pipeline catalogue ─────────
-
   @Get('pipeline/stages')
+  @RequireCapability('pipeline.read')
   @ApiOperation({ summary: 'List the pipeline stages for the active tenant' })
   listStages() {
     return this.pipeline.list();
   }
 
-  // ───────── leads CRUD ─────────
-
   @Post('leads')
+  @RequireCapability('lead.write')
   @ApiOperation({ summary: 'Create a lead (phone normalised to E.164)' })
   create(@Body() body: CreateLeadDto, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.create(body, user.sub);
   }
 
   @Get('leads')
+  @RequireCapability('lead.read')
   @ApiOperation({ summary: 'List leads with filters + pagination' })
   list(@Query() query: ListLeadsQueryDto) {
     return this.leads.list(query);
   }
 
-  /**
-   * C37 — leads whose pending follow-up is past its dueAt. Defaults
-   * to the calling user's worklist; pass `assignedToId=…` (or `mine=0`)
-   * to override / broaden.
-   */
   @Get('leads/overdue')
+  @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Overdue leads (pending follow-up dueAt < now)' })
   listOverdue(
     @Query('assignedToId') assignedToId: string | undefined,
@@ -98,11 +95,8 @@ export class LeadsController {
     return this.leads.listOverdue({ assignedToId: filter });
   }
 
-  /**
-   * C37 — leads whose pending follow-up falls within today's window.
-   * Same defaults as /leads/overdue.
-   */
   @Get('leads/due-today')
+  @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Leads with a pending follow-up due today' })
   listDueToday(
     @Query('assignedToId') assignedToId: string | undefined,
@@ -114,12 +108,14 @@ export class LeadsController {
   }
 
   @Get('leads/:id')
+  @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Get a lead by id' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.leads.findByIdOrThrow(id);
   }
 
   @Patch('leads/:id')
+  @RequireCapability('lead.write')
   @ApiOperation({ summary: 'Update lead fields (name / phone / email / source)' })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -130,15 +126,15 @@ export class LeadsController {
   }
 
   @Delete('leads/:id')
+  @RequireCapability('lead.write')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a lead and all its activities' })
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.leads.delete(id);
   }
 
-  // ───────── lead actions ─────────
-
   @Post('leads/:id/assign')
+  @RequireCapability('lead.assign')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign or unassign the lead' })
   assign(
@@ -150,6 +146,7 @@ export class LeadsController {
   }
 
   @Post('leads/:id/auto-assign')
+  @RequireCapability('lead.assign')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Auto-assign the lead via round-robin' })
   autoAssign(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
@@ -157,15 +154,15 @@ export class LeadsController {
   }
 
   @Post('sla/run-breaches')
+  @RequireCapability('lead.assign')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Scan SLA-breached leads and round-robin reassign them',
-  })
+  @ApiOperation({ summary: 'Scan SLA-breached leads and round-robin reassign them' })
   runSlaBreaches(@CurrentUser() user: AccessTokenClaims) {
     return this.sla.runReassignmentForBreaches(user.sub);
   }
 
   @Post('leads/:id/stage')
+  @RequireCapability('lead.stage.move')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Move the lead to a different pipeline stage' })
   moveStage(
@@ -177,12 +174,14 @@ export class LeadsController {
   }
 
   @Get('leads/:id/activities')
+  @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
   activities(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.leads.listActivities(id);
   }
 
   @Post('leads/:id/activities')
+  @RequireCapability('lead.activity.write')
   @ApiOperation({ summary: 'Append a note or call activity' })
   addActivity(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -193,6 +192,7 @@ export class LeadsController {
   }
 
   @Post('leads/:id/convert')
+  @RequireCapability('lead.convert')
   @ApiOperation({ summary: 'Convert the lead to a Captain' })
   convert(
     @Param('id', new ParseUUIDPipe()) id: string,
