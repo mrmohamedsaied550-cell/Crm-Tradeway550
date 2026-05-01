@@ -39,6 +39,11 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'lead.stage.move', description: 'Move a lead between pipeline stages' },
   { code: 'lead.activity.write', description: 'Log notes / calls on a lead' },
   { code: 'lead.convert', description: 'Convert a lead to a captain' },
+  { code: 'lead.import', description: 'Bulk-import leads (CSV / external feed)' },
+
+  // Meta lead-source registration (P2-06)
+  { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },
+  { code: 'meta.leadsource.write', description: 'Create / update / delete Meta lead-ad sources' },
 
   // CRM — pipeline catalogue (P2-01)
   { code: 'pipeline.read', description: 'View pipeline stages' },

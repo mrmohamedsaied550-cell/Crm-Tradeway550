@@ -59,6 +59,7 @@ model Tenant {
   leadFollowUps         LeadFollowUp[]
   auditEvents           AuditEvent[]
   notifications         Notification[]
+  metaLeadSources       MetaLeadSource[]
 
   @@map("tenants")
 }
@@ -836,4 +837,48 @@ model Competition {
 
   @@index([tenantId, status, startDate])
   @@map("competitions")
+}
+
+/// MetaLeadSource (P2-06) — routing config for Meta Lead Ads webhooks.
+///
+/// Each Facebook Page (or Instagram form) the tenant runs ads on
+/// registers one row here. The public `/webhooks/meta/leadgen`
+/// endpoint is cross-tenant: it looks the row up by `pageId`
+/// (POST inbound) or `verifyToken` (GET handshake) and uses the
+/// matching `tenantId` to write the lead. Sensitive verify/secret
+/// values are stored here (NEVER returned to admin clients in full).
+///
+/// `fieldMapping` is a JSON object that maps incoming Meta form
+/// field names → CRM lead fields. Example:
+///   { "full_name": "name", "phone_number": "phone", "email": "email" }
+/// When a payload arrives, the service walks the mapping and applies
+/// the values to a `CreateLeadDto`. A `name` and `phone` are
+/// required to ingest; missing → drop with an audit row.
+model MetaLeadSource {
+  id          String  @id @default(uuid()) @db.Uuid
+  tenantId    String  @map("tenant_id") @db.Uuid
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Friendly label shown in admin (e.g. "Cairo — Uber driver page").
+  displayName String  @map("display_name")
+  /// Meta Page id receiving the webhook delivery.
+  pageId      String  @map("page_id")
+  /// Optional form id (when the same page runs multiple lead forms).
+  formId      String? @map("form_id")
+  /// GET handshake verify token (unique-per-tenant by convention).
+  verifyToken String  @map("verify_token")
+  /// Meta App secret for HMAC signature verification.
+  appSecret   String? @map("app_secret")
+  /// Lead source value written on every ingested lead. Defaults to "meta".
+  defaultSource String @default("meta") @map("default_source")
+  /// Field mapping (Meta form field name → CRM lead field). JSON.
+  fieldMapping Json   @map("field_mapping")
+  isActive    Boolean @default(true) @map("is_active")
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, pageId, formId])
+  @@index([tenantId, isActive])
+  @@map("meta_lead_sources")
 }

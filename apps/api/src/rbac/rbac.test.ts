@@ -135,6 +135,7 @@ describe('rbac seed', () => {
       'whatsapp.account.write',
       'bonus.write',
       'competition.write',
+      'meta.leadsource.write',
     ]);
     for (const r of rows) {
       const codes = r.capabilities.map((rc) => rc.capability.code);

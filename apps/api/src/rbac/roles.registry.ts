@@ -42,6 +42,7 @@ const READ_CRM: readonly CapabilityCode[] = [
   'bonus.read',
   'competition.read',
   'report.read',
+  'meta.leadsource.read',
 ];
 
 const AGENT_ACTIONS: readonly CapabilityCode[] = [
@@ -57,6 +58,7 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
 const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
   'lead.write',
   'lead.convert',
+  'lead.import',
   'whatsapp.handover',
 ];
 
@@ -89,6 +91,8 @@ export const ROLE_DEFINITIONS = [
       'lead.stage.move',
       'lead.activity.write',
       'lead.convert',
+      'lead.import',
+      'meta.leadsource.write',
       'followup.write',
       'followup.complete',
       'whatsapp.account.write',
@@ -120,6 +124,8 @@ export const ROLE_DEFINITIONS = [
       'lead.stage.move',
       'lead.activity.write',
       'lead.convert',
+      'lead.import',
+      'meta.leadsource.write',
       'followup.write',
       'followup.complete',
       'whatsapp.message.send',

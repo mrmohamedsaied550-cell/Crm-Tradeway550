@@ -308,3 +308,24 @@ export interface WhatsAppAccount {
   createdAt: string;
   updatedAt: string;
 }
+
+// ───── Meta lead-ad sources (P2-06) ─────
+
+/**
+ * Routing config for a Facebook Page (or Page+Form) the tenant runs
+ * lead ads on. `appSecret` is intentionally never returned to the
+ * client — the API exposes only the public-facing fields.
+ */
+export interface MetaLeadSource {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  pageId: string;
+  formId: string | null;
+  verifyToken: string;
+  defaultSource: LeadSource;
+  fieldMapping: Record<string, string>;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

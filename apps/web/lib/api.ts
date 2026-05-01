@@ -41,6 +41,7 @@ import type {
   CompetitionStatus,
   FollowUpActionType,
   LeadFollowUp,
+  MetaLeadSource,
   SendConversationMessageResult,
   WhatsAppAccount,
   Team,
@@ -333,6 +334,22 @@ export const leadsApi = {
       method: 'POST',
       body: input,
     }),
+  /** P2-06 — bulk CSV import. `csv` is the full file as text. */
+  importCsv: (input: {
+    csv: string;
+    mapping: { name: string; phone: string; email?: string };
+    defaultSource?: LeadSource;
+    autoAssign?: boolean;
+  }): Promise<{
+    total: number;
+    created: number;
+    duplicates: number;
+    errors: { row: number; reason: string }[];
+  }> =>
+    apiFetch('/leads/import', {
+      method: 'POST',
+      body: input,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -618,4 +635,33 @@ export const competitionsApi = {
     apiFetch<void>(`/competitions/${id}`, { method: 'DELETE' }),
   leaderboard: (id: string): Promise<LeaderboardEntry[]> =>
     apiFetch<LeaderboardEntry[]>(`/competitions/${id}/leaderboard`),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Meta lead-ad sources (P2-06) — admin CRUD for the Meta lead-gen
+// webhook routing rows. The webhook itself is public + tenant-less, so
+// this admin surface only manages the configuration entries.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateMetaLeadSourceInput {
+  displayName: string;
+  pageId: string;
+  formId?: string | null;
+  verifyToken: string;
+  appSecret?: string | null;
+  defaultSource?: LeadSource;
+  fieldMapping: Record<string, string>;
+  isActive?: boolean;
+}
+
+export const metaLeadSourcesApi = {
+  list: (): Promise<MetaLeadSource[]> => apiFetch<MetaLeadSource[]>('/meta-lead-sources'),
+  get: (id: string): Promise<MetaLeadSource> =>
+    apiFetch<MetaLeadSource>(`/meta-lead-sources/${id}`),
+  create: (input: CreateMetaLeadSourceInput): Promise<MetaLeadSource> =>
+    apiFetch<MetaLeadSource>('/meta-lead-sources', { method: 'POST', body: input }),
+  update: (id: string, input: Partial<CreateMetaLeadSourceInput>): Promise<MetaLeadSource> =>
+    apiFetch<MetaLeadSource>(`/meta-lead-sources/${id}`, { method: 'PATCH', body: input }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/meta-lead-sources/${id}`, { method: 'DELETE' }),
 };
