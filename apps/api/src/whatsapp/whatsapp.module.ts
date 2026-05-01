@@ -15,7 +15,14 @@ import { MetaCloudProvider } from './meta-cloud.provider';
  */
 @Module({
   controllers: [WhatsAppController, ConversationsController, WhatsAppAccountsController],
-  providers: [WhatsAppService, WhatsAppAccountsService, MetaCloudProvider],
+  providers: [
+    WhatsAppService,
+    WhatsAppAccountsService,
+    {
+      provide: MetaCloudProvider,
+      useFactory: () => new MetaCloudProvider(),
+    },
+  ],
   exports: [WhatsAppService, WhatsAppAccountsService],
 })
 export class WhatsAppModule {}

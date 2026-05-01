@@ -1,0 +1,139 @@
+# Production stack for Trade Way CRM.
+#
+# Usage (from the repository root on the VPS):
+#   cp deploy/.env.prod.example .env.prod   # generate secrets first; see deploy/README-DEPLOY.md
+#   docker compose --env-file .env.prod -f deploy/docker-compose.prod.yml up -d --build
+#
+# Networking:
+#   - Postgres and Redis are NOT published on the host. They are reachable
+#     only on the internal `crm-net` Docker network.
+#   - Nginx is the only externally reachable service, listening on
+#     ${PUBLIC_HTTP_PORT:-8080} on the host.
+#
+# Data:
+#   - Two named volumes hold all persistent state: `crm_pgdata`, `crm_redisdata`.
+#     They survive `docker compose down`. Use `down -v` to wipe.
+
+name: crm-prod
+
+x-restart: &restart_policy
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: crm-prod-db
+    <<: [*restart_policy, *logging]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - crm_pgdata:/var/lib/postgresql/data
+    networks: [crm-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: crm-prod-redis
+    <<: [*restart_policy, *logging]
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${REDIS_PASSWORD}",
+      ]
+    volumes:
+      - crm_redisdata:/data
+    networks: [crm-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: crm-prod/api:latest
+    container_name: crm-prod-api
+    <<: [*restart_policy, *logging]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public&connection_limit=20&pool_timeout=20
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL: 60m
+      JWT_REFRESH_TTL: 30d
+      BCRYPT_ROUNDS: 12
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      REQUEST_ID_HEADER: x-request-id
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD}
+      LEAD_SLA_MINUTES: 15
+      SLA_SCHEDULER_ENABLED: "true"
+    networks: [crm-net]
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: crm-prod/web:latest
+    container_name: crm-prod-web
+    <<: [*restart_policy, *logging]
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # Empty NEXT_PUBLIC_API_BASE_URL → web falls back to window.location.origin
+      # (see apps/web/lib/api-base.ts), so the browser hits /api/v1/* on the
+      # same Nginx origin → routed to the api container.
+      NEXT_PUBLIC_API_BASE_URL: ""
+      NEXT_PUBLIC_APP_URL: ${PUBLIC_BASE_URL}
+      NEXT_PUBLIC_DEFAULT_LOCALE: ${PUBLIC_DEFAULT_LOCALE:-ar}
+    networks: [crm-net]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: crm-prod-nginx
+    <<: [*restart_policy, *logging]
+    depends_on:
+      - api
+      - web
+    ports:
+      - "${PUBLIC_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/crm.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [crm-net]
+
+volumes:
+  crm_pgdata:
+  crm_redisdata:
+
+networks:
+  crm-net:
+    driver: bridge

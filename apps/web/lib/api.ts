@@ -13,7 +13,7 @@
  * on the code.
  */
 
-import { API_BASE_URL, API_VERSION_PREFIX } from './api-base';
+import { API_VERSION_PREFIX, getApiBaseUrl } from './api-base';
 import { getAccessToken, getTenantCode } from './auth';
 import type {
   AdminUser,
@@ -63,7 +63,7 @@ interface ApiFetchOptions {
 }
 
 function buildUrl(path: string, query: ApiFetchOptions['query']): string {
-  const url = new URL(`${API_BASE_URL}${API_VERSION_PREFIX}${path}`);
+  const url = new URL(`${getApiBaseUrl()}${API_VERSION_PREFIX}${path}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
