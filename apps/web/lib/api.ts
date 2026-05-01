@@ -14,7 +14,14 @@
  */
 
 import { API_BASE_URL, API_VERSION_PREFIX } from './api-base';
-import { getAccessToken, getTenantCode } from './auth';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  getTenantCode,
+  setAccessToken,
+  setRefreshToken,
+} from './auth';
 import type {
   AdminUser,
   Captain,
@@ -34,6 +41,7 @@ import type {
   PaginatedResult,
   PipelineStage,
   RecordTripResult,
+  RefreshResponse,
   RoleSummary,
   BonusAccrual,
   BonusAccrualStatus,
@@ -76,6 +84,13 @@ interface ApiFetchOptions {
   bearerToken?: string | null;
   /** Send the tenant code as `X-Tenant`. Defaults to whatever auth.ts has. */
   tenantCode?: string | null;
+  /**
+   * P2-10 — internal flag. When `true`, the 401-refresh interceptor
+   * skips its retry path and just throws so we don't recurse forever
+   * (a refreshed token still hitting 401 means the underlying
+   * authorisation is broken, not the token).
+   */
+  _isRetry?: boolean;
 }
 
 function buildUrl(path: string, query: ApiFetchOptions['query']): string {
@@ -86,6 +101,89 @@ function buildUrl(path: string, query: ApiFetchOptions['query']): string {
     }
   }
   return url.toString();
+}
+
+/**
+ * P2-10 — single-flight refresh promise.
+ *
+ * Multiple in-flight 401s share the same refresh round-trip so we
+ * don't run N parallel `/auth/refresh` calls and burn N refresh
+ * tokens (the server's reuse-detection would then revoke the entire
+ * session chain on the second call). Cleared once the refresh
+ * settles, regardless of outcome.
+ */
+let inFlightRefresh: Promise<string | null> | null = null;
+
+/**
+ * Try once to rotate the refresh token. Returns the new access
+ * token on success, or null on failure (in which case
+ * `clearAuth()` has already been called by `apiFetch`'s caller).
+ *
+ * The fetch here is intentionally low-level (raw `fetch`, no
+ * `apiFetch` recursion): a refresh-token call going through
+ * apiFetch would pass through the same 401-retry logic and could
+ * loop forever.
+ */
+async function refreshTokensOnce(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  let res: Response;
+  try {
+    res = await fetch(buildUrl('/auth/refresh', undefined), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken }),
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const parsed = (await res.json().catch(() => null)) as RefreshResponse | null;
+  if (
+    !parsed ||
+    typeof parsed.accessToken !== 'string' ||
+    typeof parsed.refreshToken !== 'string'
+  ) {
+    return null;
+  }
+  setAccessToken(parsed.accessToken);
+  setRefreshToken(parsed.refreshToken);
+  return parsed.accessToken;
+}
+
+/**
+ * Coalesces concurrent refresh attempts to a single in-flight
+ * promise. Every caller awaits the same outcome.
+ */
+function refreshTokensSingleFlight(): Promise<string | null> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = refreshTokensOnce().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+/**
+ * P2-10 — when refresh fails (or there's no refresh token), wipe
+ * the cached identity and bounce the operator to /login. We do
+ * this from the API client so a stale tab automatically heals
+ * itself instead of presenting cryptic 401 toasts.
+ */
+function forceLogout(): void {
+  clearAuth();
+  if (typeof window !== 'undefined') {
+    const here = window.location.pathname + window.location.search;
+    // Avoid bouncing infinitely if we're already on /login.
+    if (!window.location.pathname.startsWith('/login')) {
+      const next = encodeURIComponent(here);
+      window.location.assign(`/login?next=${next}`);
+    }
+  }
 }
 
 async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T> {
@@ -134,6 +232,31 @@ async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T>
   }
 
   if (!res.ok) {
+    // P2-10 — auto-refresh on 401 for authenticated requests.
+    //
+    // Conditions that must ALL hold:
+    //   - status is 401,
+    //   - the original call carried a Bearer token (so it WAS
+    //     authenticated; a 401 from a public endpoint isn't a
+    //     token-expiry signal),
+    //   - this isn't already a retry (`_isRetry` guard prevents
+    //     infinite loops),
+    //   - we're not calling /auth/login or /auth/refresh ourselves
+    //     (those use bearerToken: null and bypass anyway, but
+    //     belt-and-braces).
+    //
+    // On success: re-issue the request once with the fresh token.
+    // On failure: clear local auth and redirect to /login so the
+    // user can sign in again.
+    const isAuthEndpoint = path.startsWith('/auth/refresh') || path.startsWith('/auth/login');
+    if (res.status === 401 && token && !opts._isRetry && !isAuthEndpoint) {
+      const newToken = await refreshTokensSingleFlight();
+      if (newToken) {
+        return apiFetch<T>(path, { ...opts, _isRetry: true });
+      }
+      forceLogout();
+    }
+
     const obj = parsed as Record<string, unknown> | null;
     // Nest's exception filter typically wraps error payloads as
     // { statusCode, message: <inner>, error }. The inner message we attach
@@ -167,6 +290,20 @@ export const authApi = {
     return apiFetch<LoginResponse>('/auth/login', {
       method: 'POST',
       body: input,
+      bearerToken: null,
+      tenantCode: null,
+    });
+  },
+  /**
+   * P2-10 — explicit rotate-the-tokens endpoint. The transparent
+   * 401-retry path inside `apiFetch` is what most callers rely on;
+   * this is exposed for tests and for any future "refresh before
+   * the access token expires" pre-emptive flow.
+   */
+  refresh(refreshToken: string): Promise<RefreshResponse> {
+    return apiFetch<RefreshResponse>('/auth/refresh', {
+      method: 'POST',
+      body: { refreshToken },
       bearerToken: null,
       tenantCode: null,
     });

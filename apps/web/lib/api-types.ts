@@ -209,6 +209,9 @@ export interface LoginResponse {
   user: MeUser;
 }
 
+/** P2-10 — `/auth/refresh` shape. Matches LoginResponse on the wire. */
+export type RefreshResponse = LoginResponse;
+
 // ───── WhatsApp (C21 / C22 / C23) ─────
 
 export type ConversationStatus = 'open' | 'closed';
