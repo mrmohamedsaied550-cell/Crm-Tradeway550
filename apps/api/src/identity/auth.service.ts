@@ -1,5 +1,8 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
+
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TenantsService } from '../tenants/tenants.service';
 import { type RoleWithCapabilities } from '../rbac/rbac.service';
@@ -49,7 +52,56 @@ export class AuthService {
     private readonly sessions: SessionsService,
     private readonly tokens: TokensService,
     private readonly lockout: LockoutService,
+    // Optional so the existing hand-instantiated test harnesses keep
+    // compiling. Production wiring always supplies AuditService via
+    // the global AuditModule.
+    @Optional() private readonly audit?: AuditService,
   ) {}
+
+  /**
+   * P2-04 — audit write for an authentication flow.
+   *
+   * Awaited so the row is on disk before the auth method returns
+   * (and before a test or a subsequent request reads from the
+   * audit table). The underlying `AuditService.writeForTenant`
+   * already swallows its own errors, so an audit-table outage
+   * never breaks authentication.
+   */
+  private async auditAuth(
+    tenantId: string,
+    action: string,
+    actorUserId: string | null,
+    payload: Prisma.InputJsonValue,
+  ): Promise<void> {
+    if (!this.audit) return;
+    await this.audit.writeForTenant(tenantId, {
+      action,
+      entityType: 'user',
+      entityId: actorUserId,
+      actorUserId,
+      payload,
+    });
+  }
+
+  /**
+   * P2-04 — uniform shape for the `payload` JSON of every
+   * `auth.*` audit row: `{ ip, userAgent, email?, reason? }`.
+   * Empty values are dropped so the JSONB column stays compact.
+   */
+  private authPayload(input: {
+    ip?: string | undefined;
+    userAgent?: string | undefined;
+    email?: string | undefined;
+    reason?: string | undefined;
+    extra?: Record<string, unknown>;
+  }): Prisma.InputJsonValue {
+    const out: Record<string, unknown> = { ...(input.extra ?? {}) };
+    if (input.ip) out.ip = input.ip;
+    if (input.userAgent) out.userAgent = input.userAgent;
+    if (input.email) out.email = input.email;
+    if (input.reason) out.reason = input.reason;
+    return out as Prisma.InputJsonValue;
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // login
@@ -58,11 +110,14 @@ export class AuthService {
   async login(input: LoginInput): Promise<AuthResult> {
     const tenant = await this.tenants.findByCode(input.tenantCode);
     if (!tenant || !tenant.isActive) {
+      // No tenantId → can't write to audit_events. Pino already
+      // logs login attempts at the http-access layer, so this is
+      // intentionally silent at the audit layer.
       throw this.invalidCredentials();
     }
     const tenantId = tenant.id;
-
     const email = input.email.trim().toLowerCase();
+
     const userRow = await this.prisma.withTenant(tenantId, (tx) =>
       tx.user.findUnique({
         where: { tenantId_email: { tenantId, email } },
@@ -86,14 +141,82 @@ export class AuthService {
       }),
     );
 
-    if (!userRow) throw this.invalidCredentials();
-    if (userRow.status === 'disabled') throw this.disabled();
-    if (this.lockout.isLocked(userRow)) throw this.lockedOut(userRow.lockedUntil);
+    if (!userRow) {
+      await this.auditAuth(
+        tenantId,
+        'auth.login.failed',
+        null,
+        this.authPayload({
+          ip: input.ip,
+          userAgent: input.userAgent,
+          email,
+          reason: 'user_not_found',
+        }),
+      );
+      throw this.invalidCredentials();
+    }
+    if (userRow.status === 'disabled') {
+      await this.auditAuth(
+        tenantId,
+        'auth.login.failed',
+        userRow.id,
+        this.authPayload({
+          ip: input.ip,
+          userAgent: input.userAgent,
+          email,
+          reason: 'disabled',
+        }),
+      );
+      throw this.disabled();
+    }
+    if (this.lockout.isLocked(userRow)) {
+      await this.auditAuth(
+        tenantId,
+        'auth.login.failed',
+        userRow.id,
+        this.authPayload({
+          ip: input.ip,
+          userAgent: input.userAgent,
+          email,
+          reason: 'locked',
+          extra: { lockedUntil: userRow.lockedUntil?.toISOString() ?? null },
+        }),
+      );
+      throw this.lockedOut(userRow.lockedUntil);
+    }
 
     const ok = await verifyPassword(input.password, userRow.passwordHash);
     if (!ok) {
       const after = await this.lockout.recordFailure(tenantId, userRow.id);
+      await this.auditAuth(
+        tenantId,
+        'auth.login.failed',
+        userRow.id,
+        this.authPayload({
+          ip: input.ip,
+          userAgent: input.userAgent,
+          email,
+          reason: 'wrong_password',
+        }),
+      );
       if (after.lockedUntil && this.lockout.isLocked(after)) {
+        // The latest failure tipped the user into a locked state.
+        // Emit a separate audit row so the lockout is searchable
+        // even if the operator filters on `auth.lockout`.
+        await this.auditAuth(
+          tenantId,
+          'auth.lockout',
+          userRow.id,
+          this.authPayload({
+            ip: input.ip,
+            userAgent: input.userAgent,
+            email,
+            extra: {
+              lockedUntil: after.lockedUntil.toISOString(),
+              lockMinutes: LockoutService.LOCK_MINUTES,
+            },
+          }),
+        );
         throw this.lockedOut(after.lockedUntil);
       }
       throw this.invalidCredentials();
@@ -121,6 +244,18 @@ export class AuthService {
       userAgent: input.userAgent,
       ip: input.ip,
     });
+
+    await this.auditAuth(
+      tenantId,
+      'auth.login.success',
+      userRow.id,
+      this.authPayload({
+        ip: input.ip,
+        userAgent: input.userAgent,
+        email,
+        extra: { sessionId },
+      }),
+    );
 
     return {
       accessToken: this.tokens.signAccess({
@@ -154,6 +289,16 @@ export class AuthService {
     if (!session) {
       // Token verifies but no session row matches — possible hash drift;
       // safest to reject without disclosing which fact is wrong.
+      await this.auditAuth(
+        claims.tid,
+        'auth.token.refresh.failed',
+        claims.sub,
+        this.authPayload({
+          ip: opts.ip,
+          userAgent: opts.userAgent,
+          reason: 'session_not_found',
+        }),
+      );
       throw this.invalidCredentials();
     }
 
@@ -162,10 +307,31 @@ export class AuthService {
       // session is already revoked; this revokes the rotated children too.
       this.logger.warn(`refresh reuse detected: session=${session.id}`);
       await this.sessions.revokeChainFrom(claims.tid, session.id);
+      await this.auditAuth(
+        claims.tid,
+        'auth.token.refresh.reuse_detected',
+        claims.sub,
+        this.authPayload({
+          ip: opts.ip,
+          userAgent: opts.userAgent,
+          extra: { sessionId: session.id },
+        }),
+      );
       throw this.invalidCredentials();
     }
 
     if (session.expiresAt.getTime() <= Date.now()) {
+      await this.auditAuth(
+        claims.tid,
+        'auth.token.refresh.failed',
+        claims.sub,
+        this.authPayload({
+          ip: opts.ip,
+          userAgent: opts.userAgent,
+          reason: 'expired',
+          extra: { sessionId: session.id },
+        }),
+      );
       throw this.invalidCredentials();
     }
 
@@ -210,10 +376,31 @@ export class AuthService {
     if (userRow.status === 'disabled') {
       // The user was disabled mid-session — revoke everything.
       await this.sessions.revokeAllForUser(claims.tid, userRow.id);
+      await this.auditAuth(
+        claims.tid,
+        'auth.token.refresh.failed',
+        userRow.id,
+        this.authPayload({
+          ip: opts.ip,
+          userAgent: opts.userAgent,
+          reason: 'disabled',
+        }),
+      );
       throw this.disabled();
     }
 
     const role = await this.resolveRoleOrThrow(claims.tid, userRow.roleId);
+
+    await this.auditAuth(
+      claims.tid,
+      'auth.token.refresh',
+      userRow.id,
+      this.authPayload({
+        ip: opts.ip,
+        userAgent: opts.userAgent,
+        extra: { oldSessionId: session.id, newSessionId },
+      }),
+    );
 
     return {
       accessToken: this.tokens.signAccess({
@@ -230,17 +417,40 @@ export class AuthService {
   // logout
   // ───────────────────────────────────────────────────────────────────────
 
-  async logout(rawRefreshToken: string): Promise<void> {
+  async logout(
+    rawRefreshToken: string,
+    opts: { ip?: string | undefined; userAgent?: string | undefined } = {},
+  ): Promise<void> {
     const claims = this.tryVerifyRefresh(rawRefreshToken);
     if (!claims) return; // silent no-op for tokens we can't verify
     const session = await this.sessions.findByHash(claims.tid, this.tokens.hash(rawRefreshToken));
     if (session && session.revokedAt === null) {
       await this.sessions.revoke(claims.tid, session.id);
+      await this.auditAuth(
+        claims.tid,
+        'auth.logout',
+        claims.sub,
+        this.authPayload({
+          ip: opts.ip,
+          userAgent: opts.userAgent,
+          extra: { sessionId: session.id },
+        }),
+      );
     }
   }
 
-  async logoutAll(tenantId: string, userId: string): Promise<void> {
+  async logoutAll(
+    tenantId: string,
+    userId: string,
+    opts: { ip?: string | undefined; userAgent?: string | undefined } = {},
+  ): Promise<void> {
     await this.sessions.revokeAllForUser(tenantId, userId);
+    await this.auditAuth(
+      tenantId,
+      'auth.logout.all',
+      userId,
+      this.authPayload({ ip: opts.ip, userAgent: opts.userAgent }),
+    );
   }
 
   // ───────────────────────────────────────────────────────────────────────
