@@ -242,6 +242,26 @@ export interface Competition {
   updatedAt: string;
 }
 
+// ───── Follow-ups (C36) ─────
+
+export type FollowUpActionType = 'call' | 'whatsapp' | 'visit' | 'other';
+
+export interface LeadFollowUp {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  actionType: FollowUpActionType;
+  dueAt: string;
+  note: string | null;
+  completedAt: string | null;
+  assignedToId: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Present on /follow-ups/mine. */
+  lead?: { id: string; name: string; phone: string };
+}
+
 // ───── WhatsApp accounts (C24A) — read-only client view ─────
 
 /**

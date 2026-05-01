@@ -435,18 +435,22 @@
     },
     "workspace": {
       "title": "My Leads",
-      "subtitle": "Leads currently assigned to you. Add a note or move the stage inline.",
+      "subtitle": "Leads currently assigned to you. Update stage, log a note, schedule the next action.",
       "open": "Open my leads",
       "noUser": "Sign in to see your assigned leads.",
       "emptyTitle": "No leads assigned to you yet",
       "emptyBody": "When a manager assigns leads to you, they'll appear here.",
-      "noteAdded": "Note added.",
-      "stageMoved": "Stage updated.",
-      "noteModalTitle": "Add a note",
-      "noteLabel": "Note",
-      "stageModalTitle": "Move stage",
-      "stageLabel": "Pipeline stage",
+      "updateDone": "Lead updated.",
+      "updateModalTitle": "Update lead",
+      "updateStageLabel": "Stage",
+      "updateNoteLabel": "Note (optional)",
+      "updateNotePlaceholder": "What happened on this lead?",
+      "updateScheduleToggle": "Schedule the next action",
       "stagePickerPlaceholder": "Pick a stage…",
+      "nextActionType": "Type",
+      "nextActionDate": "Date",
+      "nextActionTime": "Time",
+      "overdueIndicator": "Has an overdue follow-up",
       "cols": {
         "name": "Lead",
         "source": "Source",
@@ -455,9 +459,22 @@
         "actions": "Actions"
       },
       "actions": {
-        "addNote": "Note",
-        "moveStage": "Stage",
+        "update": "Update",
         "openDetail": "Open"
+      },
+      "followUps": {
+        "title": "My Follow-ups",
+        "empty": "—",
+        "emptyHint": "No pending follow-ups. Schedule one when you update a lead.",
+        "pending": "pending",
+        "overdue": "overdue",
+        "complete": "Done",
+        "types": {
+          "call": "Call",
+          "whatsapp": "WhatsApp",
+          "visit": "Visit",
+          "other": "Other"
+        }
       }
     },
     "inbox": {

@@ -37,6 +37,8 @@ import type {
   Competition,
   CompetitionMetric,
   CompetitionStatus,
+  FollowUpActionType,
+  LeadFollowUp,
   SendConversationMessageResult,
   WhatsAppAccount,
   Team,
@@ -460,6 +462,30 @@ export interface LeaderboardEntry {
   email: string | null;
   score: number;
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// Follow-ups (C36)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateFollowUpInput {
+  actionType: FollowUpActionType;
+  dueAt: string;
+  note?: string;
+  assignedToId?: string | null;
+}
+
+export const followUpsApi = {
+  mine: (
+    query: { status?: 'pending' | 'overdue' | 'done' | 'all'; limit?: number } = {},
+  ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/mine', { query }),
+  listForLead: (leadId: string): Promise<LeadFollowUp[]> =>
+    apiFetch<LeadFollowUp[]>(`/leads/${leadId}/follow-ups`),
+  create: (leadId: string, input: CreateFollowUpInput): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  complete: (id: string): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/follow-ups/${id}/complete`, { method: 'POST' }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/follow-ups/${id}`, { method: 'DELETE' }),
+};
 
 export const competitionsApi = {
   list: (): Promise<Competition[]> => apiFetch<Competition[]>('/competitions'),

@@ -16,6 +16,7 @@ import { OrgModule } from './org/org.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { BonusesModule } from './bonuses/bonuses.module';
 import { CompetitionsModule } from './competitions/competitions.module';
+import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -48,6 +49,7 @@ import { buildLoggerConfig } from './common/logger';
     WhatsAppModule,
     BonusesModule,
     CompetitionsModule,
+    FollowUpsModule,
     HealthModule,
   ],
   providers: [

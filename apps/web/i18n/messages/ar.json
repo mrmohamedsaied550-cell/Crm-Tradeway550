@@ -435,18 +435,22 @@
     },
     "workspace": {
       "title": "العملاء المسنَدون لي",
-      "subtitle": "العملاء المسنَدون إليك حالياً. أضف ملاحظة أو حرّك المرحلة من هنا.",
+      "subtitle": "العملاء المسنَدون إليك حالياً. حدّث المرحلة وسجّل ملاحظة وحدّد الإجراء التالي.",
       "open": "فتح عملائي",
       "noUser": "سجّل الدخول لعرض العملاء المسنَدين إليك.",
       "emptyTitle": "لا يوجد عملاء مسنَدون إليك بعد",
       "emptyBody": "عند إسناد عملاء إليك من قِبَل المدير سيظهرون هنا.",
-      "noteAdded": "تمت إضافة الملاحظة.",
-      "stageMoved": "تم تحديث المرحلة.",
-      "noteModalTitle": "إضافة ملاحظة",
-      "noteLabel": "الملاحظة",
-      "stageModalTitle": "نقل المرحلة",
-      "stageLabel": "مرحلة الفنّل",
+      "updateDone": "تم تحديث العميل.",
+      "updateModalTitle": "تحديث العميل",
+      "updateStageLabel": "المرحلة",
+      "updateNoteLabel": "ملاحظة (اختيارية)",
+      "updateNotePlaceholder": "ما الذي حدث مع هذا العميل؟",
+      "updateScheduleToggle": "جدولة الإجراء التالي",
       "stagePickerPlaceholder": "اختر مرحلة…",
+      "nextActionType": "النوع",
+      "nextActionDate": "التاريخ",
+      "nextActionTime": "الوقت",
+      "overdueIndicator": "لديه متابعة متأخرة",
       "cols": {
         "name": "العميل",
         "source": "المصدر",
@@ -455,9 +459,22 @@
         "actions": "إجراءات"
       },
       "actions": {
-        "addNote": "ملاحظة",
-        "moveStage": "مرحلة",
+        "update": "تحديث",
         "openDetail": "فتح"
+      },
+      "followUps": {
+        "title": "متابعاتي",
+        "empty": "—",
+        "emptyHint": "لا توجد متابعات معلّقة. جدول واحدة عند تحديث عميل.",
+        "pending": "معلّقة",
+        "overdue": "متأخرة",
+        "complete": "تمت",
+        "types": {
+          "call": "اتصال",
+          "whatsapp": "واتساب",
+          "visit": "زيارة",
+          "other": "أخرى"
+        }
       }
     },
     "inbox": {

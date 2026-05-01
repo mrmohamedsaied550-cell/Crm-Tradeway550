@@ -55,6 +55,7 @@ model Tenant {
   whatsAppConversations WhatsAppConversation[]
   bonusRules            BonusRule[]
   competitions          Competition[]
+  leadFollowUps         LeadFollowUp[]
 
   @@map("tenants")
 }
@@ -170,6 +171,11 @@ model User {
   createdLeads   Lead[]         @relation("LeadCreator")
   assignedLeads  Lead[]         @relation("LeadAssignee")
   authoredActivities LeadActivity[]
+  /// C36 — follow-ups the user is responsible for. The owner of a
+  /// follow-up is `assignedToId`; `createdById` is who scheduled it
+  /// (may be the same).
+  assignedFollowUps  LeadFollowUp[] @relation("LeadFollowUpAssignee")
+  createdFollowUps   LeadFollowUp[] @relation("LeadFollowUpCreator")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -274,6 +280,7 @@ model Lead {
   captain    Captain?
   activities LeadActivity[]
   whatsappConversations WhatsAppConversation[]
+  followUps  LeadFollowUp[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
@@ -640,6 +647,39 @@ model BonusRule {
   @@index([tenantId, isActive])
   @@index([tenantId, companyId, countryId])
   @@map("bonus_rules")
+}
+
+/// LeadFollowUp (C36) — a scheduled future action on a lead.
+///
+/// Type is one of: call / whatsapp / visit / other. `dueAt` is when
+/// it should happen. `assignedToId` is the agent who owns the
+/// follow-up (defaults to the lead's current assignee, but can be
+/// overridden at create time). `completedAt` flips when the agent
+/// marks it done — overdue = !completed && dueAt < now.
+model LeadFollowUp {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId      String   @map("lead_id") @db.Uuid
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  actionType  String   @map("action_type")
+  dueAt       DateTime @map("due_at") @db.Timestamptz(6)
+  note        String?
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  assignedToId String? @map("assigned_to_id") @db.Uuid
+  assignedTo   User?   @relation("LeadFollowUpAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdById  String? @map("created_by_id") @db.Uuid
+  createdBy    User?   @relation("LeadFollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId, dueAt])
+  // Hot path: "my open follow-ups, soonest first" + the overdue scan.
+  @@index([tenantId, assignedToId, completedAt, dueAt])
+  @@map("lead_followups")
 }
 
 /// Competition (C33) — admin-managed agent / team contest definition.

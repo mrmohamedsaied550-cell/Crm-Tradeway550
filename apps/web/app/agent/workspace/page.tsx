@@ -3,27 +3,45 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { ClipboardList, Loader2, MessageSquare, Phone, Plus } from 'lucide-react';
+import {
+  AlertTriangle,
+  Calendar,
+  CheckCircle2,
+  ClipboardList,
+  Loader2,
+  Phone,
+  Wrench,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select, Textarea } from '@/components/ui/input';
+import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, leadsApi, pipelineApi } from '@/lib/api';
-import type { Lead, LeadStageCode, PipelineStage, SlaStatus } from '@/lib/api-types';
+import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
+import type {
+  FollowUpActionType,
+  Lead,
+  LeadFollowUp,
+  LeadStageCode,
+  PipelineStage,
+  SlaStatus,
+} from '@/lib/api-types';
 import { getCachedMe } from '@/lib/auth';
+import { cn } from '@/lib/utils';
 
 /**
- * /agent/workspace (C31) — sales-agent "My Day" worklist.
+ * /agent/workspace (C31 + C36) — sales-agent "My Day" worklist.
  *
- * MVP columns: name / phone / stage / SLA. Agents can add a note or
- * move the stage inline without leaving the page. Reuses
- * `leadsApi.list({ assignedToId })`, `leadsApi.addActivity`, and
- * `leadsApi.moveStage` — no new backend.
+ * MVP columns: name / phone / stage / SLA. Agents update a lead via
+ * the unified "Update" modal that combines (a) stage move,
+ * (b) optional note, and (c) optional next-action follow-up. Above
+ * the table sits "My Follow-ups" — pending + overdue first.
  */
+
+const ACTION_TYPES: readonly FollowUpActionType[] = ['call', 'whatsapp', 'visit', 'other'];
 
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'breached') return 'breach';
@@ -31,20 +49,38 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   return 'healthy';
 }
 
-interface NoteFormState {
-  body: string;
-  submitting: boolean;
-  error: string | null;
-}
-
-interface StageFormState {
+interface UpdateFormState {
   stageCode: LeadStageCode | '';
-  submitting: boolean;
-  error: string | null;
+  note: string;
+  scheduleNext: boolean;
+  actionType: FollowUpActionType;
+  /** yyyy-mm-dd from <input type="date"> */
+  date: string;
+  /** HH:mm from <input type="time"> */
+  time: string;
 }
 
-const EMPTY_NOTE: NoteFormState = { body: '', submitting: false, error: null };
-const EMPTY_STAGE: StageFormState = { stageCode: '', submitting: false, error: null };
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function defaultTime(): string {
+  // Snap to "in 1 hour" rounded to the nearest 15 minutes.
+  const d = new Date(Date.now() + 60 * 60 * 1000);
+  d.setMinutes(Math.round(d.getMinutes() / 15) * 15, 0, 0);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+const EMPTY_UPDATE_FORM: UpdateFormState = {
+  stageCode: '',
+  note: '',
+  scheduleNext: false,
+  actionType: 'call',
+  date: todayIso(),
+  time: defaultTime(),
+};
 
 export default function AgentWorkspacePage(): JSX.Element {
   const t = useTranslations('agent.workspace');
@@ -53,15 +89,16 @@ export default function AgentWorkspacePage(): JSX.Element {
   const [meId, setMeId] = useState<string | null>(null);
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
+  const [followUps, setFollowUps] = useState<LeadFollowUp[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Inline action state — keyed by lead id we're acting on.
-  const [openNoteFor, setOpenNoteFor] = useState<Lead | null>(null);
-  const [noteForm, setNoteForm] = useState<NoteFormState>(EMPTY_NOTE);
-  const [openStageFor, setOpenStageFor] = useState<Lead | null>(null);
-  const [stageForm, setStageForm] = useState<StageFormState>(EMPTY_STAGE);
+  // Update modal state — keyed by the lead being acted on.
+  const [openFor, setOpenFor] = useState<Lead | null>(null);
+  const [form, setForm] = useState<UpdateFormState>(EMPTY_UPDATE_FORM);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     const me = getCachedMe();
@@ -73,12 +110,14 @@ export default function AgentWorkspacePage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [page, st] = await Promise.all([
+      const [page, st, mine] = await Promise.all([
         leadsApi.list({ assignedToId: meId, limit: 200 }),
         pipelineApi.listStages(),
+        followUpsApi.mine({ status: 'pending', limit: 100 }),
       ]);
       setRows(page.items);
       setStages(st);
+      setFollowUps(mine);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -90,40 +129,74 @@ export default function AgentWorkspacePage(): JSX.Element {
     void reload();
   }, [reload]);
 
-  const stageOptions = useMemo(
-    () => stages.filter((s) => !s.isTerminal || s.code === 'converted' || s.code === 'lost'),
-    [stages],
-  );
+  const stageOptions = useMemo(() => stages, [stages]);
 
-  async function onSubmitNote(e: FormEvent<HTMLFormElement>): Promise<void> {
+  // Lead ids that have a pending overdue follow-up — used to highlight
+  // them in the worklist independent of slaStatus.
+  const overdueLeadIds = useMemo(() => {
+    const now = Date.now();
+    const ids = new Set<string>();
+    for (const f of followUps) {
+      if (!f.completedAt && Date.parse(f.dueAt) < now) ids.add(f.leadId);
+    }
+    return ids;
+  }, [followUps]);
+
+  function openUpdate(l: Lead): void {
+    setForm({
+      ...EMPTY_UPDATE_FORM,
+      stageCode: l.stage.code,
+      note: '',
+      scheduleNext: false,
+      date: todayIso(),
+      time: defaultTime(),
+    });
+    setFormError(null);
+    setOpenFor(l);
+  }
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
-    if (!openNoteFor || !noteForm.body.trim()) return;
-    setNoteForm({ ...noteForm, submitting: true, error: null });
+    if (!openFor) return;
+    setSubmitting(true);
+    setFormError(null);
+    const lead = openFor;
     try {
-      await leadsApi.addActivity(openNoteFor.id, { type: 'note', body: noteForm.body.trim() });
-      setNotice(t('noteAdded'));
-      setOpenNoteFor(null);
-      setNoteForm(EMPTY_NOTE);
+      // 1) Stage change if it actually moved.
+      if (form.stageCode && form.stageCode !== lead.stage.code) {
+        await leadsApi.moveStage(lead.id, form.stageCode as LeadStageCode);
+      }
+      // 2) Note if non-empty.
+      if (form.note.trim().length > 0) {
+        await leadsApi.addActivity(lead.id, { type: 'note', body: form.note.trim() });
+      }
+      // 3) Follow-up if scheduled.
+      if (form.scheduleNext) {
+        const dueAt = new Date(`${form.date}T${form.time}:00`).toISOString();
+        await followUpsApi.create(lead.id, {
+          actionType: form.actionType,
+          dueAt,
+          ...(form.note.trim().length > 0 ? { note: form.note.trim() } : {}),
+        });
+      }
+      setNotice(t('updateDone'));
+      setOpenFor(null);
       await reload();
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setNoteForm({ ...noteForm, submitting: false, error: message });
+      setFormError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
     }
   }
 
-  async function onSubmitStage(e: FormEvent<HTMLFormElement>): Promise<void> {
-    e.preventDefault();
-    if (!openStageFor || !stageForm.stageCode) return;
-    setStageForm({ ...stageForm, submitting: true, error: null });
+  async function completeFollowUp(id: string): Promise<void> {
+    setNotice(null);
+    setError(null);
     try {
-      await leadsApi.moveStage(openStageFor.id, stageForm.stageCode as LeadStageCode);
-      setNotice(t('stageMoved'));
-      setOpenStageFor(null);
-      setStageForm(EMPTY_STAGE);
+      await followUpsApi.complete(id);
       await reload();
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setStageForm({ ...stageForm, submitting: false, error: message });
+      setError(err instanceof ApiError ? err.message : String(err));
     }
   }
 
@@ -133,7 +206,15 @@ export default function AgentWorkspacePage(): JSX.Element {
       header: t('cols.name'),
       render: (l) => (
         <div className="flex flex-col leading-tight">
-          <span className="font-medium text-ink-primary">{l.name}</span>
+          <span className="flex items-center gap-1.5">
+            {overdueLeadIds.has(l.id) ? (
+              <AlertTriangle
+                className="h-3.5 w-3.5 text-status-breach"
+                aria-label={t('overdueIndicator')}
+              />
+            ) : null}
+            <span className="font-medium text-ink-primary">{l.name}</span>
+          </span>
           <span className="flex items-center gap-1 text-xs text-ink-tertiary">
             <Phone className="h-3 w-3" aria-hidden="true" />
             <code className="font-mono">{l.phone}</code>
@@ -165,27 +246,9 @@ export default function AgentWorkspacePage(): JSX.Element {
       header: t('cols.actions'),
       render: (l) => (
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setOpenNoteFor(l);
-              setNoteForm(EMPTY_NOTE);
-            }}
-          >
-            <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('actions.addNote')}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setOpenStageFor(l);
-              setStageForm({ stageCode: l.stage.code, submitting: false, error: null });
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('actions.moveStage')}
+          <Button variant="secondary" size="sm" onClick={() => openUpdate(l)}>
+            <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('actions.update')}
           </Button>
           <Link
             href={`/admin/leads/${l.id}`}
@@ -213,6 +276,13 @@ export default function AgentWorkspacePage(): JSX.Element {
     );
   }
 
+  const overdueFollowUps = followUps.filter(
+    (f) => !f.completedAt && Date.parse(f.dueAt) < Date.now(),
+  );
+  const upcomingFollowUps = followUps.filter(
+    (f) => !f.completedAt && Date.parse(f.dueAt) >= Date.now(),
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <header>
@@ -235,6 +305,76 @@ export default function AgentWorkspacePage(): JSX.Element {
         </Notice>
       ) : null}
 
+      {/* My Follow-ups (C36) */}
+      <section className="rounded-lg border border-surface-border bg-surface-card shadow-card">
+        <header className="flex items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-ink-primary">
+            <Calendar className="h-4 w-4 text-brand-700" aria-hidden="true" />
+            {t('followUps.title')}
+            {overdueFollowUps.length > 0 ? (
+              <Badge tone="breach">
+                {overdueFollowUps.length} {t('followUps.overdue')}
+              </Badge>
+            ) : null}
+          </h2>
+          <span className="text-xs text-ink-tertiary">
+            {followUps.length === 0
+              ? t('followUps.empty')
+              : `${followUps.length} ${t('followUps.pending')}`}
+          </span>
+        </header>
+        {followUps.length === 0 ? (
+          <p className="p-4 text-sm text-ink-tertiary">{t('followUps.emptyHint')}</p>
+        ) : (
+          <ul className="divide-y divide-surface-border">
+            {[...overdueFollowUps, ...upcomingFollowUps].map((f) => {
+              const overdue = Date.parse(f.dueAt) < Date.now();
+              return (
+                <li
+                  key={f.id}
+                  className={cn(
+                    'flex flex-wrap items-center justify-between gap-2 px-3 py-2',
+                    overdue ? 'bg-status-breach/5' : '',
+                  )}
+                >
+                  <div className="flex flex-col leading-tight">
+                    <span className="flex items-center gap-2 text-sm font-medium text-ink-primary">
+                      {overdue ? (
+                        <AlertTriangle
+                          className="h-3.5 w-3.5 text-status-breach"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {f.lead?.name ?? '—'} ·{' '}
+                      <code className="font-mono text-xs">{f.lead?.phone ?? ''}</code>
+                    </span>
+                    <span className="text-xs text-ink-secondary">
+                      {t(`followUps.types.${f.actionType}`)} · {new Date(f.dueAt).toLocaleString()}
+                      {f.note ? ` · ${f.note}` : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {f.lead ? (
+                      <Link
+                        href={`/admin/leads/${f.lead.id}`}
+                        className="text-xs font-medium text-brand-700 hover:text-brand-800"
+                      >
+                        {t('actions.openDetail')} →
+                      </Link>
+                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => void completeFollowUp(f.id)}>
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('followUps.complete')}
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* My Leads */}
       {loading ? (
         <div className="flex items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-card p-8 text-sm text-ink-secondary">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -251,44 +391,18 @@ export default function AgentWorkspacePage(): JSX.Element {
       )}
 
       <Modal
-        open={openNoteFor !== null}
-        title={t('noteModalTitle')}
-        onClose={() => setOpenNoteFor(null)}
+        open={openFor !== null}
+        title={t('updateModalTitle')}
+        onClose={() => setOpenFor(null)}
+        width="lg"
       >
-        <form onSubmit={onSubmitNote} className="flex flex-col gap-3">
-          {noteForm.error ? <Notice tone="error">{noteForm.error}</Notice> : null}
-          <Field label={t('noteLabel')} required>
-            <Textarea
-              value={noteForm.body}
-              onChange={(e) => setNoteForm({ ...noteForm, body: e.target.value })}
-              rows={4}
-              required
-            />
-          </Field>
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOpenNoteFor(null)} type="button">
-              {tCommon('cancel')}
-            </Button>
-            <Button type="submit" loading={noteForm.submitting} disabled={!noteForm.body.trim()}>
-              {tCommon('save')}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        <form onSubmit={onSubmit} className="flex flex-col gap-3">
+          {formError ? <Notice tone="error">{formError}</Notice> : null}
 
-      <Modal
-        open={openStageFor !== null}
-        title={t('stageModalTitle')}
-        onClose={() => setOpenStageFor(null)}
-      >
-        <form onSubmit={onSubmitStage} className="flex flex-col gap-3">
-          {stageForm.error ? <Notice tone="error">{stageForm.error}</Notice> : null}
-          <Field label={t('stageLabel')} required>
+          <Field label={t('updateStageLabel')} required>
             <Select
-              value={stageForm.stageCode}
-              onChange={(e) =>
-                setStageForm({ ...stageForm, stageCode: e.target.value as LeadStageCode })
-              }
+              value={form.stageCode}
+              onChange={(e) => setForm({ ...form, stageCode: e.target.value as LeadStageCode })}
               required
             >
               <option value="" disabled>
@@ -301,15 +415,66 @@ export default function AgentWorkspacePage(): JSX.Element {
               ))}
             </Select>
           </Field>
+
+          <Field label={t('updateNoteLabel')}>
+            <Textarea
+              value={form.note}
+              onChange={(e) => setForm({ ...form, note: e.target.value })}
+              rows={3}
+              placeholder={t('updateNotePlaceholder')}
+            />
+          </Field>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.scheduleNext}
+              onChange={(e) => setForm({ ...form, scheduleNext: e.target.checked })}
+            />
+            {t('updateScheduleToggle')}
+          </label>
+
+          {form.scheduleNext ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Field label={t('nextActionType')} required>
+                <Select
+                  value={form.actionType}
+                  onChange={(e) =>
+                    setForm({ ...form, actionType: e.target.value as FollowUpActionType })
+                  }
+                  required
+                >
+                  {ACTION_TYPES.map((a) => (
+                    <option key={a} value={a}>
+                      {t(`followUps.types.${a}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={t('nextActionDate')} required>
+                <Input
+                  type="date"
+                  value={form.date}
+                  onChange={(e) => setForm({ ...form, date: e.target.value })}
+                  required
+                />
+              </Field>
+              <Field label={t('nextActionTime')} required>
+                <Input
+                  type="time"
+                  value={form.time}
+                  onChange={(e) => setForm({ ...form, time: e.target.value })}
+                  required
+                />
+              </Field>
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOpenStageFor(null)} type="button">
+            <Button variant="secondary" type="button" onClick={() => setOpenFor(null)}>
               {tCommon('cancel')}
             </Button>
-            <Button
-              type="submit"
-              loading={stageForm.submitting}
-              disabled={!stageForm.stageCode || stageForm.stageCode === openStageFor?.stage.code}
-            >
+            <Button type="submit" loading={submitting}>
               {tCommon('save')}
             </Button>
           </div>
