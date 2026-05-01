@@ -138,6 +138,7 @@ describe('rbac seed', () => {
       'meta.leadsource.write',
       'pipeline.write',
       'tenant.settings.write',
+      'captain.trip.write',
     ]);
     for (const r of rows) {
       const codes = r.capabilities.map((rc) => rc.capability.code);

@@ -192,12 +192,20 @@ export default function CaptainsPage(): JSX.Element {
           keyOf={(r) => r.id}
           loading={loading}
           rowActions={(row) => (
-            <Link
-              href={`/admin/leads/${row.leadId}`}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-            >
-              {t('openLead')}
-            </Link>
+            <>
+              <Link
+                href={`/admin/captains/${row.id}`}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+              >
+                {t('viewCaptain')}
+              </Link>
+              <Link
+                href={`/admin/leads/${row.leadId}`}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+              >
+                {t('openLead')}
+              </Link>
+            </>
           )}
         />
       )}

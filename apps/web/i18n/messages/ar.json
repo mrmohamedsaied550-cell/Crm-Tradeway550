@@ -375,7 +375,54 @@
       "empty": "لا يوجد كباتن بعد",
       "emptyHint": "حوّل عميلاً محتملاً من قائمة العملاء لإنشاء أول كابتن.",
       "emptyFiltered": "لا يوجد كباتن يطابقون الفلاتر",
-      "emptyFilteredHint": "جرّب مسح الفلاتر."
+      "emptyFilteredHint": "جرّب مسح الفلاتر.",
+      "detail": {
+        "title": "تفاصيل الكابتن",
+        "back": "العودة إلى الكباتن",
+        "tabs": {
+          "summary": "ملخّص",
+          "documents": "المستندات",
+          "trips": "الرحلات"
+        },
+        "firstTripAt": "أول رحلة",
+        "tripCount": "إجمالي الرحلات",
+        "noFirstTrip": "لم تُسجّل أي رحلة بعد",
+        "documents": {
+          "uploadButton": "رفع مستند",
+          "uploadTitle": "رفع مستند الكابتن",
+          "kind": "النوع",
+          "storageRef": "مرجع التخزين (رابط أو مسار)",
+          "fileName": "اسم الملف",
+          "mimeType": "نوع MIME",
+          "sizeBytes": "الحجم (بايت)",
+          "expiresAt": "تاريخ الانتهاء (اختياري)",
+          "save": "حفظ",
+          "cancel": "إلغاء",
+          "review": "مراجعة",
+          "approve": "اعتماد",
+          "reject": "رفض",
+          "delete": "حذف",
+          "deleteConfirm": "هل تريد حذف هذا المستند؟",
+          "notesLabel": "ملاحظات (اختياري)",
+          "noDocs": "لا توجد مستندات بعد",
+          "reviewedBy": "تمت المراجعة بواسطة {name}",
+          "kindIdCard": "بطاقة هوية",
+          "kindLicense": "رخصة قيادة",
+          "kindVehicle": "ترخيص المركبة",
+          "kindOther": "أخرى"
+        },
+        "trips": {
+          "recordButton": "تسجيل رحلة",
+          "recordTitle": "تسجيل رحلة كابتن",
+          "tripId": "معرّف الرحلة الخارجي",
+          "occurredAt": "وقت الحدوث",
+          "save": "حفظ",
+          "cancel": "إلغاء",
+          "duplicate": "الرحلة مسجّلة سابقًا — تُحتسب كمكرّرة.",
+          "recorded": "تم تسجيل الرحلة.",
+          "noTrips": "لا توجد رحلات بعد"
+        }
+      }
     },
     "bonuses": {
       "title": "المكافآت",

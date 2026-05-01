@@ -1,9 +1,12 @@
 import { Global, Module } from '@nestjs/common';
 import { LeadsController } from './leads.controller';
 import { CaptainsController } from './captains.controller';
+import { CaptainDocumentsController } from './captain-documents.controller';
 import { PipelinesController } from './pipelines.controller';
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
+import { CaptainDocumentsService } from './captain-documents.service';
+import { CaptainTripsService } from './captain-trips.service';
 import { PipelineService } from './pipeline.service';
 import { PipelinesService } from './pipelines.service';
 import { AssignmentService } from './assignment.service';
@@ -21,10 +24,17 @@ import { SlaSchedulerService } from './sla.scheduler';
  */
 @Global()
 @Module({
-  controllers: [LeadsController, CaptainsController, PipelinesController],
+  controllers: [
+    LeadsController,
+    CaptainsController,
+    CaptainDocumentsController,
+    PipelinesController,
+  ],
   providers: [
     LeadsService,
     CaptainsService,
+    CaptainDocumentsService,
+    CaptainTripsService,
     PipelineService,
     PipelinesService,
     AssignmentService,
@@ -34,6 +44,8 @@ import { SlaSchedulerService } from './sla.scheduler';
   exports: [
     LeadsService,
     CaptainsService,
+    CaptainDocumentsService,
+    CaptainTripsService,
     PipelineService,
     PipelinesService,
     AssignmentService,

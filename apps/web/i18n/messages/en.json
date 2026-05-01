@@ -375,7 +375,54 @@
       "empty": "No captains yet",
       "emptyHint": "Convert a lead from the leads list to create the first captain.",
       "emptyFiltered": "No captains match the filters",
-      "emptyFilteredHint": "Try clearing the filters."
+      "emptyFilteredHint": "Try clearing the filters.",
+      "detail": {
+        "title": "Captain detail",
+        "back": "Back to captains",
+        "tabs": {
+          "summary": "Summary",
+          "documents": "Documents",
+          "trips": "Trips"
+        },
+        "firstTripAt": "First trip",
+        "tripCount": "Total trips",
+        "noFirstTrip": "No trips recorded yet",
+        "documents": {
+          "uploadButton": "Upload document",
+          "uploadTitle": "Upload captain document",
+          "kind": "Kind",
+          "storageRef": "Storage ref (URL or path)",
+          "fileName": "File name",
+          "mimeType": "MIME type",
+          "sizeBytes": "Size (bytes)",
+          "expiresAt": "Expires at (optional)",
+          "save": "Save",
+          "cancel": "Cancel",
+          "review": "Review",
+          "approve": "Approve",
+          "reject": "Reject",
+          "delete": "Delete",
+          "deleteConfirm": "Delete this document?",
+          "notesLabel": "Notes (optional)",
+          "noDocs": "No documents yet",
+          "reviewedBy": "Reviewed by {name}",
+          "kindIdCard": "ID card",
+          "kindLicense": "License",
+          "kindVehicle": "Vehicle registration",
+          "kindOther": "Other"
+        },
+        "trips": {
+          "recordButton": "Record trip",
+          "recordTitle": "Record a captain trip",
+          "tripId": "External trip id",
+          "occurredAt": "Occurred at",
+          "save": "Save",
+          "cancel": "Cancel",
+          "duplicate": "Trip already recorded — counted as duplicate.",
+          "recorded": "Trip recorded.",
+          "noTrips": "No trips yet"
+        }
+      }
     },
     "bonuses": {
       "title": "Bonuses",

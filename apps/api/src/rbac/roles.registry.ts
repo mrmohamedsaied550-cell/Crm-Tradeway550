@@ -54,6 +54,7 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'followup.complete',
   'whatsapp.message.send',
   'whatsapp.link.lead',
+  'captain.document.write',
 ];
 
 const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
@@ -107,6 +108,9 @@ export const ROLE_DEFINITIONS = [
       'roles.read',
       'capabilities.read',
       'tenant.settings.write',
+      'captain.document.write',
+      'captain.document.review',
+      'captain.trip.write',
     ],
   },
   {
@@ -141,6 +145,9 @@ export const ROLE_DEFINITIONS = [
       'roles.read',
       'capabilities.read',
       'tenant.settings.write',
+      'captain.document.write',
+      'captain.document.review',
+      'captain.trip.write',
     ],
   },
   {
@@ -193,8 +200,10 @@ export const ROLE_DEFINITIONS = [
     nameAr: 'أخصائي الجودة',
     nameEn: 'QA Specialist',
     level: 50,
-    // Read-only across the CRM; QA scoring lands later.
-    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read'],
+    // Read-only across the CRM; QA scoring lands later. P2-09 also
+    // grants document review so QA can sign off on captain
+    // onboarding paperwork.
+    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read', 'captain.document.review'],
   },
   {
     code: 'sales_agent',

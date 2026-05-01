@@ -105,8 +105,54 @@ export interface Captain {
   hasLicense: boolean;
   hasVehicleRegistration: boolean;
   activatedAt: string | null;
+  firstTripAt: string | null;
+  tripCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ───── Captain documents + trips (P2-09) ─────
+
+export type CaptainDocumentStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface CaptainDocument {
+  id: string;
+  tenantId: string;
+  captainId: string;
+  kind: string;
+  storageRef: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  status: CaptainDocumentStatus;
+  expiresAt: string | null;
+  reviewerUserId: string | null;
+  reviewer?: { id: string; name: string; email: string } | null;
+  reviewedAt: string | null;
+  reviewNotes: string | null;
+  uploadedById: string | null;
+  uploadedBy?: { id: string; name: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CaptainTripRow {
+  id: string;
+  tenantId: string;
+  captainId: string;
+  tripId: string;
+  occurredAt: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface RecordTripResult {
+  tripId: string;
+  duplicate: boolean;
+  captainId: string;
+  firstTripAt: string | null;
+  tripCount: number;
+  recordId?: string;
 }
 
 export interface Lead {

@@ -18,7 +18,9 @@ import { getAccessToken, getTenantCode } from './auth';
 import type {
   AdminUser,
   Captain,
+  CaptainDocument,
   CaptainStatus,
+  CaptainTripRow,
   Company,
   ConversationStatus,
   Country,
@@ -31,6 +33,7 @@ import type {
   MeUser,
   PaginatedResult,
   PipelineStage,
+  RecordTripResult,
   RoleSummary,
   BonusAccrual,
   BonusAccrualStatus,
@@ -417,6 +420,57 @@ export const captainsApi = {
   ): Promise<PaginatedResult<Captain>> =>
     apiFetch<PaginatedResult<Captain>>('/captains', { query }),
   get: (id: string): Promise<Captain> => apiFetch<Captain>(`/captains/${id}`),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Captain documents + trip telemetry (P2-09)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface UploadCaptainDocumentInput {
+  kind: string;
+  storageRef: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  expiresAt?: string | null;
+}
+
+export interface RecordTripInput {
+  tripId: string;
+  occurredAt: string;
+  payload?: Record<string, unknown>;
+}
+
+export const captainDocumentsApi = {
+  listForCaptain: (captainId: string, status?: string): Promise<CaptainDocument[]> =>
+    apiFetch<CaptainDocument[]>(`/captains/${captainId}/documents`, {
+      query: status ? { status } : undefined,
+    }),
+  upload: (captainId: string, input: UploadCaptainDocumentInput): Promise<CaptainDocument> =>
+    apiFetch<CaptainDocument>(`/captains/${captainId}/documents`, {
+      method: 'POST',
+      body: input,
+    }),
+  review: (
+    docId: string,
+    input: { decision: 'approve' | 'reject'; notes?: string },
+  ): Promise<CaptainDocument> =>
+    apiFetch<CaptainDocument>(`/captain-documents/${docId}/review`, {
+      method: 'POST',
+      body: input,
+    }),
+  remove: (docId: string): Promise<void> =>
+    apiFetch<void>(`/captain-documents/${docId}`, { method: 'DELETE' }),
+};
+
+export const captainTripsApi = {
+  listForCaptain: (captainId: string): Promise<CaptainTripRow[]> =>
+    apiFetch<CaptainTripRow[]>(`/captains/${captainId}/trips`),
+  record: (captainId: string, input: RecordTripInput): Promise<RecordTripResult> =>
+    apiFetch<RecordTripResult>(`/captains/${captainId}/trips`, {
+      method: 'POST',
+      body: input,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

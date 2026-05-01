@@ -52,8 +52,11 @@ export const CAPABILITY_DEFINITIONS = [
     description: 'Create / update / delete pipelines and their stages',
   },
 
-  // CRM — captains (P2-01)
+  // CRM — captains (P2-01 + P2-09)
   { code: 'captain.read', description: 'View captains' },
+  { code: 'captain.document.write', description: 'Upload / replace captain documents' },
+  { code: 'captain.document.review', description: 'Approve / reject captain documents' },
+  { code: 'captain.trip.write', description: 'Ingest captain trip telemetry' },
 
   // Follow-ups (P2-01)
   { code: 'followup.read', description: 'View follow-ups (all + mine)' },

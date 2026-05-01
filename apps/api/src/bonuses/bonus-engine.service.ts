@@ -7,13 +7,15 @@ import { NotificationsService } from '../notifications/notifications.service';
 /**
  * P2-03 — Bonus Engine.
  *
- * Fires when a captain is activated (lead converted) and writes one
- * `BonusAccrual` row per matching active `BonusRule`. Idempotency is
- * enforced by the unique on (bonusRuleId, captainId, triggerKind), so
- * re-running `onActivationInTx` for the same captain is a no-op.
+ * Fires when a captain is activated (lead converted) or completes
+ * their first trip (P2-09). One `BonusAccrual` row per matching
+ * active `BonusRule`. Idempotency is enforced by the unique on
+ * (bonusRuleId, captainId, triggerKind), so re-running for the
+ * same (captain, triggerKind) is a no-op.
  *
  * Matching policy (MVP):
- *   - bonusType = 'activation'
+ *   - bonusType = the requested trigger kind (e.g. 'activation' or
+ *     'first_trip')
  *   - bonus_rule.is_active = true
  *   - rule.teamId is null OR rule.teamId = captain.teamId
  *   - rule.roleId is null OR rule.roleId = recipient.roleId
@@ -25,7 +27,9 @@ import { NotificationsService } from '../notifications/notifications.service';
  *     org tree. For now company / country live as documentation
  *     fields on the rule; the team filter is the operative scope.
  *     P2-13 (payout pipeline) is the right home for richer scope.
- *   - first_trip / trip_milestone — no trip data model yet.
+ *   - trip_milestone — needs a richer rule schema (threshold count
+ *     column or a JSON DSL). The current free-text `trigger` field
+ *     can't drive deterministic firing.
  *
  * Notifications: each accrual fires a `bonus.accrued` notification
  * to the recipient. Idempotency means a second invocation does not
@@ -50,6 +54,62 @@ export class BonusEngine {
       actorUserId: string | null;
     },
   ): Promise<{ created: number; skipped: number }> {
+    return this.fireForTrigger(tx, tenantId, {
+      ...input,
+      triggerKind: 'activation',
+      eventPayload: { event: 'activation', captainTeamId: input.captainTeamId },
+    });
+  }
+
+  /**
+   * P2-09 — fires bonus rules of bonusType `first_trip`. Called by
+   * `CaptainTripsService.recordTrip` exactly once per captain (the
+   * idempotency guard is the (rule, captain, triggerKind) UNIQUE).
+   */
+  async onFirstTripInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    input: {
+      captainId: string;
+      captainTeamId: string | null;
+      recipientUserId: string;
+      actorUserId: string | null;
+      tripId: string;
+      occurredAt: Date;
+    },
+  ): Promise<{ created: number; skipped: number }> {
+    return this.fireForTrigger(tx, tenantId, {
+      captainId: input.captainId,
+      captainTeamId: input.captainTeamId,
+      recipientUserId: input.recipientUserId,
+      actorUserId: input.actorUserId,
+      triggerKind: 'first_trip',
+      bonusType: 'first_trip',
+      eventPayload: {
+        event: 'first_trip',
+        captainTeamId: input.captainTeamId,
+        tripId: input.tripId,
+        occurredAt: input.occurredAt.toISOString(),
+      },
+    });
+  }
+
+  /** Shared fire-engine, parameterised by trigger kind. */
+  private async fireForTrigger(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    input: {
+      captainId: string;
+      captainTeamId: string | null;
+      recipientUserId: string;
+      actorUserId: string | null;
+      triggerKind: string;
+      /** Defaults to triggerKind for activation/first_trip parity. */
+      bonusType?: string;
+      eventPayload: Record<string, unknown>;
+    },
+  ): Promise<{ created: number; skipped: number }> {
+    const bonusType = input.bonusType ?? input.triggerKind;
     const recipient = await tx.user.findUnique({
       where: { id: input.recipientUserId },
       select: { id: true, roleId: true },
@@ -64,7 +124,7 @@ export class BonusEngine {
     const candidates = await tx.bonusRule.findMany({
       where: {
         isActive: true,
-        bonusType: 'activation',
+        bonusType,
         AND: [
           { OR: [{ teamId: null }, { teamId: input.captainTeamId ?? undefined }] },
           { OR: [{ roleId: null }, { roleId: recipient.roleId }] },
@@ -84,7 +144,7 @@ export class BonusEngine {
           bonusRuleId_captainId_triggerKind: {
             bonusRuleId: rule.id,
             captainId: input.captainId,
-            triggerKind: 'activation',
+            triggerKind: input.triggerKind,
           },
         },
         select: { id: true },
@@ -99,13 +159,10 @@ export class BonusEngine {
           bonusRuleId: rule.id,
           recipientUserId: input.recipientUserId,
           captainId: input.captainId,
-          triggerKind: 'activation',
+          triggerKind: input.triggerKind,
           amount: rule.amount,
           status: 'pending',
-          payload: {
-            event: 'activation',
-            captainTeamId: input.captainTeamId,
-          } as Prisma.InputJsonValue,
+          payload: input.eventPayload as Prisma.InputJsonValue,
         },
       });
       created += 1;
@@ -120,7 +177,7 @@ export class BonusEngine {
           captainId: input.captainId,
           recipientUserId: input.recipientUserId,
           amount: accrual.amount.toString(),
-          triggerKind: 'activation',
+          triggerKind: input.triggerKind,
         },
       });
 
@@ -129,12 +186,12 @@ export class BonusEngine {
           recipientUserId: input.recipientUserId,
           kind: 'bonus.accrued',
           title: `Bonus earned: ${accrual.amount.toString()}`,
-          body: `Activation bonus pending payout.`,
+          body: `${input.triggerKind} bonus pending payout.`,
           payload: {
             accrualId: accrual.id,
             bonusRuleId: rule.id,
             captainId: input.captainId,
-            triggerKind: 'activation',
+            triggerKind: input.triggerKind,
           },
         });
       }
