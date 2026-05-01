@@ -50,6 +50,34 @@ export const LinkConversationLeadSchema = z
   .strict();
 export type LinkConversationLeadDto = z.infer<typeof LinkConversationLeadSchema>;
 
+/**
+ * C35 — body for POST /conversations/:id/handover.
+ *
+ * Three transfer modes:
+ *   - `full`    — keep history; just reassign the linked lead.
+ *   - `clean`   — close the current conversation so the new agent
+ *                 sees a clean inbox; future inbound from the same
+ *                 phone opens a fresh thread.
+ *   - `summary` — additionally write a `note` activity carrying the
+ *                 outgoing agent's handover summary onto the lead.
+ *
+ * `notify` is a flag on the audit payload only — wiring a real
+ * notification channel is out of scope for the MVP.
+ */
+export const HandoverConversationSchema = z
+  .object({
+    newAssigneeId: z.string().uuid(),
+    mode: z.enum(['full', 'clean', 'summary']),
+    summary: z.string().trim().max(2000).optional(),
+    notify: z.boolean().optional(),
+  })
+  .strict()
+  .refine((v) => v.mode !== 'summary' || (v.summary && v.summary.length > 0), {
+    message: 'summary is required when mode = summary',
+    path: ['summary'],
+  });
+export type HandoverConversationDto = z.infer<typeof HandoverConversationSchema>;
+
 // ───── WhatsApp accounts admin (C24A) ─────
 
 const provider = z.enum(['meta_cloud']);

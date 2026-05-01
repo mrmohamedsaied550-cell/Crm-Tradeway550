@@ -7,12 +7,12 @@ import { Link as LinkIcon, MessagesSquare, Phone } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/input';
+import { Field, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, conversationsApi, leadsApi } from '@/lib/api';
-import type { Lead, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
+import { ApiError, conversationsApi, leadsApi, usersApi } from '@/lib/api';
+import type { AdminUser, Lead, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 
 /**
@@ -42,6 +42,18 @@ export default function AdminWhatsAppPage(): JSX.Element {
   const [linkLeadId, setLinkLeadId] = useState<string>('');
   const [linking, setLinking] = useState<boolean>(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+
+  // C35 — handover modal state.
+  const [handoverOpen, setHandoverOpen] = useState<boolean>(false);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [handoverForm, setHandoverForm] = useState<{
+    newAssigneeId: string;
+    mode: 'full' | 'clean' | 'summary';
+    summary: string;
+    notify: boolean;
+  }>({ newAssigneeId: '', mode: 'full', summary: '', notify: false });
+  const [handing, setHanding] = useState<boolean>(false);
+  const [handoverError, setHandoverError] = useState<string | null>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -121,6 +133,44 @@ export default function AdminWhatsAppPage(): JSX.Element {
       setLeads(page.items);
     } catch (err) {
       setLinkError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function openHandoverModal(): Promise<void> {
+    setHandoverOpen(true);
+    setHandoverError(null);
+    setHandoverForm({ newAssigneeId: '', mode: 'full', summary: '', notify: false });
+    try {
+      const page = await usersApi.list({ status: 'active', limit: 200 });
+      setUsers(page.items);
+    } catch (err) {
+      setHandoverError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function onHandover(e: FormEvent<HTMLFormElement>): Promise<void> {
+    e.preventDefault();
+    if (!selectedId || !handoverForm.newAssigneeId) return;
+    setHanding(true);
+    setHandoverError(null);
+    try {
+      await conversationsApi.handover(selectedId, {
+        newAssigneeId: handoverForm.newAssigneeId,
+        mode: handoverForm.mode,
+        ...(handoverForm.mode === 'summary' && handoverForm.summary
+          ? { summary: handoverForm.summary }
+          : {}),
+        notify: handoverForm.notify,
+      });
+      setNotice(t('handoverDone'));
+      setHandoverOpen(false);
+      // If the mode was 'clean', the conversation was closed — reload
+      // the list so its status badge updates.
+      await reload();
+    } catch (err) {
+      setHandoverError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setHanding(false);
     }
   }
 
@@ -218,10 +268,21 @@ export default function AdminWhatsAppPage(): JSX.Element {
                     </span>
                   </span>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => void openLinkModal()}>
-                  <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t('linkLeadCta')}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => void openLinkModal()}>
+                    <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t('linkLeadCta')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void openHandoverModal()}
+                    disabled={!selectedDetail?.lead}
+                    title={selectedDetail?.lead ? '' : t('handoverNeedsLead')}
+                  >
+                    {t('handoverCta')}
+                  </Button>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto bg-surface px-3 py-3">
@@ -297,6 +358,95 @@ export default function AdminWhatsAppPage(): JSX.Element {
             </Button>
             <Button type="submit" loading={linking} disabled={!linkLeadId}>
               {tCommon('save')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={handoverOpen}
+        title={t('handoverTitle')}
+        onClose={() => setHandoverOpen(false)}
+        width="lg"
+      >
+        <form onSubmit={onHandover} className="flex flex-col gap-3">
+          {handoverError ? <Notice tone="error">{handoverError}</Notice> : null}
+          <p className="text-sm text-ink-secondary">{t('handoverHint')}</p>
+
+          <Field label={t('handoverNewAssignee')} required>
+            <Select
+              value={handoverForm.newAssigneeId}
+              onChange={(e) => setHandoverForm({ ...handoverForm, newAssigneeId: e.target.value })}
+              required
+            >
+              <option value="" disabled>
+                {tCommon('select')}
+              </option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} — {u.email}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="text-sm font-medium text-ink-primary">
+              {t('handoverModeLabel')}
+            </legend>
+            {(['full', 'clean', 'summary'] as const).map((m) => (
+              <label key={m} className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="handover-mode"
+                  value={m}
+                  checked={handoverForm.mode === m}
+                  onChange={() => setHandoverForm({ ...handoverForm, mode: m })}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium">{t(`handoverModes.${m}.title`)}</span>
+                  <span className="ms-1 text-ink-tertiary">— {t(`handoverModes.${m}.body`)}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+
+          {handoverForm.mode === 'summary' ? (
+            <Field label={t('handoverSummary')} required>
+              <Textarea
+                value={handoverForm.summary}
+                onChange={(e) => setHandoverForm({ ...handoverForm, summary: e.target.value })}
+                rows={4}
+                required
+                maxLength={2000}
+                placeholder={t('handoverSummaryPlaceholder')}
+              />
+            </Field>
+          ) : null}
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={handoverForm.notify}
+              onChange={(e) => setHandoverForm({ ...handoverForm, notify: e.target.checked })}
+            />
+            {t('handoverNotify')}
+          </label>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" type="button" onClick={() => setHandoverOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button
+              type="submit"
+              loading={handing}
+              disabled={
+                !handoverForm.newAssigneeId ||
+                (handoverForm.mode === 'summary' && !handoverForm.summary.trim())
+              }
+            >
+              {t('handoverConfirm')}
             </Button>
           </div>
         </form>

@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Param,
   ParseUUIDPipe,
@@ -18,6 +20,7 @@ import type { AccessTokenClaims } from '../identity/jwt.types';
 
 import { WhatsAppService } from './whatsapp.service';
 import {
+  HandoverConversationSchema,
   LinkConversationLeadSchema,
   ListConversationMessagesQuerySchema,
   ListConversationsQuerySchema,
@@ -28,6 +31,7 @@ class ListConversationsQueryDto extends createZodDto(ListConversationsQuerySchem
 class ListConversationMessagesQueryDto extends createZodDto(ListConversationMessagesQuerySchema) {}
 class SendConversationMessageDto extends createZodDto(SendConversationMessageSchema) {}
 class LinkConversationLeadDto extends createZodDto(LinkConversationLeadSchema) {}
+class HandoverConversationDto extends createZodDto(HandoverConversationSchema) {}
 
 /**
  * /api/v1/conversations — read-only WhatsApp conversation admin surface.
@@ -100,6 +104,33 @@ export class ConversationsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.whatsapp.linkConversationToLead(user.tid, id, body.leadId);
+  }
+
+  /**
+   * C35 — handover the conversation (and the linked lead) to another
+   * agent. Modes: full | clean | summary. The audit row lands on the
+   * lead's activity timeline as `type=assignment`.
+   *
+   * Permission gating is intentionally deferred — the MVP is "any
+   * authenticated user with tenant scope can hand over." A capability
+   * guard (admin = anyone, tl_sales = own team, sales_agent = self)
+   * lands when the wider RBAC policy framework arrives.
+   */
+  @Post(':id/handover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Hand a conversation off to another agent' })
+  handover(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: HandoverConversationDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.whatsapp.handoverConversation(user.tid, id, {
+      newAssigneeId: body.newAssigneeId,
+      mode: body.mode,
+      summary: body.summary,
+      notify: body.notify,
+      actorUserId: user.sub,
+    });
   }
 
   /**

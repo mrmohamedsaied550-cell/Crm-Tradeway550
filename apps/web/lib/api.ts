@@ -362,6 +362,28 @@ export const conversationsApi = {
       method: 'POST',
       body: { leadId },
     }),
+  handover: (
+    id: string,
+    input: {
+      newAssigneeId: string;
+      mode: 'full' | 'clean' | 'summary';
+      summary?: string;
+      notify?: boolean;
+    },
+  ): Promise<{
+    conversationId: string;
+    leadId: string;
+    fromUserId: string | null;
+    toUserId: string;
+    mode: 'full' | 'clean' | 'summary';
+  }> =>
+    apiFetch<{
+      conversationId: string;
+      leadId: string;
+      fromUserId: string | null;
+      toUserId: string;
+      mode: 'full' | 'clean' | 'summary';
+    }>(`/conversations/${id}/handover`, { method: 'POST', body: input }),
   get: (id: string): Promise<WhatsAppConversation> =>
     apiFetch<WhatsAppConversation>(`/conversations/${id}`),
   listMessages: (id: string, query: { limit?: number } = {}): Promise<WhatsAppMessage[]> =>

@@ -398,7 +398,32 @@
       "linked": "Conversation linked.",
       "selectAConversation": "Select a conversation",
       "selectAConversationHint": "Pick one from the list to read its messages.",
-      "noMessages": "No messages yet"
+      "noMessages": "No messages yet",
+      "handoverCta": "Handover",
+      "handoverNeedsLead": "Link the conversation to a lead first.",
+      "handoverTitle": "Hand over to another agent",
+      "handoverHint": "Reassigns the linked lead and writes an audit-trail entry.",
+      "handoverNewAssignee": "New assignee",
+      "handoverModeLabel": "Transfer mode",
+      "handoverModes": {
+        "full": {
+          "title": "Full transfer",
+          "body": "Keep all message history; just reassign the lead."
+        },
+        "clean": {
+          "title": "Clean transfer",
+          "body": "Close the current conversation; future inbound starts a fresh thread."
+        },
+        "summary": {
+          "title": "Summary transfer",
+          "body": "Add a handover summary as a note on the lead."
+        }
+      },
+      "handoverSummary": "Handover summary",
+      "handoverSummaryPlaceholder": "Outline what the new agent should know…",
+      "handoverNotify": "Notify the new agent (records intent in the audit log).",
+      "handoverConfirm": "Hand over",
+      "handoverDone": "Conversation handed over."
     }
   },
   "agent": {

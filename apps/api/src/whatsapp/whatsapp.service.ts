@@ -499,6 +499,147 @@ export class WhatsAppService {
   }
 
   /**
+   * C35 — handover a conversation (and its linked lead) to another
+   * agent. Three transfer modes:
+   *
+   *   - `full`    — keep history, just reassign the lead.
+   *   - `clean`   — close the current conversation. The next inbound
+   *                 from the same phone opens a fresh thread under the
+   *                 new agent (the partial-unique-on-open index from
+   *                 C22 takes care of that).
+   *   - `summary` — additionally writes a `note` lead-activity carrying
+   *                 the outgoing agent's handover summary.
+   *
+   * Always emits an `assignment` activity row with a payload describing
+   * the handover so the audit trail captures who → who, mode, and the
+   * notify flag.
+   *
+   * Cross-tenant ids surface as 404 because RLS hides them.
+   */
+  async handoverConversation(
+    tenantId: string,
+    conversationId: string,
+    opts: {
+      newAssigneeId: string;
+      mode: 'full' | 'clean' | 'summary';
+      summary?: string;
+      notify?: boolean;
+      actorUserId: string | null;
+    },
+  ): Promise<{
+    conversationId: string;
+    leadId: string;
+    fromUserId: string | null;
+    toUserId: string;
+    mode: 'full' | 'clean' | 'summary';
+  }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversation = await tx.whatsAppConversation.findUnique({
+        where: { id: conversationId },
+        select: { id: true, leadId: true, status: true },
+      });
+      if (!conversation) {
+        throw new NotFoundException({
+          code: 'whatsapp.conversation_not_found',
+          message: `Conversation ${conversationId} not found in active tenant`,
+        });
+      }
+      if (!conversation.leadId) {
+        throw new NotFoundException({
+          code: 'whatsapp.conversation_not_linked',
+          message:
+            'Conversation has no linked lead — link it first via POST /:id/link-lead before handover',
+        });
+      }
+
+      const lead = await tx.lead.findUnique({
+        where: { id: conversation.leadId },
+        select: { id: true, assignedToId: true },
+      });
+      if (!lead) {
+        throw new NotFoundException({
+          code: 'whatsapp.lead_not_found',
+          message: `Linked lead ${conversation.leadId} not found in active tenant`,
+        });
+      }
+
+      const newAssignee = await tx.user.findUnique({
+        where: { id: opts.newAssigneeId },
+        select: { id: true, status: true },
+      });
+      if (!newAssignee || newAssignee.status === 'disabled') {
+        throw new NotFoundException({
+          code: 'whatsapp.assignee_not_found',
+          message: `Assignee ${opts.newAssigneeId} not found / disabled in active tenant`,
+        });
+      }
+
+      const fromUserId = lead.assignedToId;
+
+      // Reassign the lead.
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: { assignedToId: opts.newAssigneeId },
+      });
+
+      // Close the conversation on a clean transfer.
+      if (opts.mode === 'clean' && conversation.status !== 'closed') {
+        await tx.whatsAppConversation.update({
+          where: { id: conversationId },
+          data: { status: 'closed' },
+        });
+      }
+
+      // Audit trail — `assignment` activity with handover payload.
+      await tx.leadActivity.create({
+        data: {
+          tenantId,
+          leadId: lead.id,
+          type: 'assignment',
+          body: `WhatsApp handover (${opts.mode})`,
+          payload: {
+            event: 'whatsapp_handover',
+            conversationId,
+            mode: opts.mode,
+            fromUserId,
+            toUserId: opts.newAssigneeId,
+            notify: opts.notify ?? false,
+            ...(opts.summary ? { summary: opts.summary } : {}),
+          } as Prisma.InputJsonValue,
+          createdById: opts.actorUserId ?? null,
+        },
+      });
+
+      // Summary mode also emits the summary as a regular note so it
+      // shows up in the lead's activity timeline next to the handover.
+      if (opts.mode === 'summary' && opts.summary) {
+        await tx.leadActivity.create({
+          data: {
+            tenantId,
+            leadId: lead.id,
+            type: 'note',
+            body: opts.summary,
+            payload: {
+              event: 'whatsapp_handover_summary',
+              fromUserId,
+              toUserId: opts.newAssigneeId,
+            } as Prisma.InputJsonValue,
+            createdById: opts.actorUserId ?? null,
+          },
+        });
+      }
+
+      return {
+        conversationId,
+        leadId: lead.id,
+        fromUserId,
+        toUserId: opts.newAssigneeId,
+        mode: opts.mode,
+      };
+    });
+  }
+
+  /**
    * Lazy auto-link helper. Looks up tenant-scoped leads with the
    * conversation's phone — the (tenantId, phone) unique on `leads`
    * guarantees at most one match in practice, but we still run the

@@ -398,7 +398,32 @@
       "linked": "تم ربط المحادثة.",
       "selectAConversation": "اختر محادثة",
       "selectAConversationHint": "اختر واحدة من القائمة لقراءة رسائلها.",
-      "noMessages": "لا توجد رسائل بعد"
+      "noMessages": "لا توجد رسائل بعد",
+      "handoverCta": "تحويل",
+      "handoverNeedsLead": "اربط المحادثة بعميل أولاً.",
+      "handoverTitle": "تحويل المحادثة إلى وكيل آخر",
+      "handoverHint": "يُعاد إسناد العميل وتُسجَّل عملية في سجلّ التدقيق.",
+      "handoverNewAssignee": "الوكيل الجديد",
+      "handoverModeLabel": "نوع التحويل",
+      "handoverModes": {
+        "full": {
+          "title": "تحويل كامل",
+          "body": "الاحتفاظ بكلّ سجلّ الرسائل، مع إعادة الإسناد فقط."
+        },
+        "clean": {
+          "title": "تحويل نظيف",
+          "body": "إغلاق المحادثة الحالية، وأي رسالة واردة لاحقاً تبدأ محادثة جديدة."
+        },
+        "summary": {
+          "title": "تحويل بملخّص",
+          "body": "إضافة ملخّص تحويل كملاحظة على العميل."
+        }
+      },
+      "handoverSummary": "ملخّص التحويل",
+      "handoverSummaryPlaceholder": "اكتب ما ينبغي أن يعرفه الوكيل الجديد…",
+      "handoverNotify": "إشعار الوكيل الجديد (يُسجَّل في سجلّ التدقيق).",
+      "handoverConfirm": "تحويل",
+      "handoverDone": "تم تحويل المحادثة."
     }
   },
   "agent": {
