@@ -342,6 +342,21 @@
         "trigger": "المحفّز",
         "amount": "القيمة",
         "active": "نشطة"
+      },
+      "accruals": {
+        "title": "الاستحقاقات",
+        "empty": "لا توجد استحقاقات تطابق هذا الفلتر.",
+        "statusUpdated": "تم تحديث الاستحقاق.",
+        "statuses": {
+          "pending": "قيد الانتظار",
+          "paid": "مدفوع",
+          "void": "ملغى",
+          "all": "الكل"
+        },
+        "actions": {
+          "markPaid": "تأشير كمدفوع",
+          "void": "إلغاء"
+        }
       }
     },
     "competitions": {

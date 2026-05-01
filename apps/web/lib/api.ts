@@ -32,6 +32,8 @@ import type {
   PaginatedResult,
   PipelineStage,
   RoleSummary,
+  BonusAccrual,
+  BonusAccrualStatus,
   BonusRule,
   BonusType,
   Competition,
@@ -445,6 +447,33 @@ export const bonusesApi = {
   disable: (id: string): Promise<BonusRule> =>
     apiFetch<BonusRule>(`/bonuses/${id}/disable`, { method: 'POST' }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/bonuses/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Bonus accruals (P2-03) — read + status transitions
+// ───────────────────────────────────────────────────────────────────────
+
+export const bonusAccrualsApi = {
+  /** Calling user's accruals (newest first). */
+  mine: (query: { status?: BonusAccrualStatus } = {}): Promise<BonusAccrual[]> =>
+    apiFetch<BonusAccrual[]>('/bonus-accruals/mine', {
+      query: query.status ? { status: query.status } : undefined,
+    }),
+  /** Tenant-wide list (admin). */
+  list: (
+    query: { status?: BonusAccrualStatus; recipientUserId?: string } = {},
+  ): Promise<BonusAccrual[]> =>
+    apiFetch<BonusAccrual[]>('/bonus-accruals', {
+      query: {
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.recipientUserId ? { recipientUserId: query.recipientUserId } : {}),
+      },
+    }),
+  setStatus: (id: string, status: BonusAccrualStatus): Promise<BonusAccrual> =>
+    apiFetch<BonusAccrual>(`/bonus-accruals/${id}/status`, {
+      method: 'POST',
+      body: { status },
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

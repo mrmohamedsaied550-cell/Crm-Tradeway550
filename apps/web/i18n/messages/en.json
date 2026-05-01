@@ -342,6 +342,21 @@
         "trigger": "Trigger",
         "amount": "Amount",
         "active": "Active"
+      },
+      "accruals": {
+        "title": "Accruals",
+        "empty": "No accruals match this filter.",
+        "statusUpdated": "Accrual updated.",
+        "statuses": {
+          "pending": "Pending",
+          "paid": "Paid",
+          "void": "Void",
+          "all": "All"
+        },
+        "actions": {
+          "markPaid": "Mark paid",
+          "void": "Void"
+        }
       }
     },
     "competitions": {

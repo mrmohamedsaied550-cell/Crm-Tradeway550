@@ -54,6 +54,7 @@ model Tenant {
   whatsAppMessages      WhatsAppMessage[]
   whatsAppConversations WhatsAppConversation[]
   bonusRules            BonusRule[]
+  bonusAccruals         BonusAccrual[]
   competitions          Competition[]
   leadFollowUps         LeadFollowUp[]
   auditEvents           AuditEvent[]
@@ -182,6 +183,8 @@ model User {
   auditEvents        AuditEvent[]
   /// P2-02 — in-app notifications addressed to this user.
   notifications      Notification[]
+  /// P2-03 — bonus accruals earned by this user.
+  bonusAccruals      BonusAccrual[] @relation("BonusAccrualRecipient")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -350,6 +353,8 @@ model Captain {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  bonusAccruals BonusAccrual[]
 
   @@index([tenantId, onboardingStatus])
   @@index([tenantId, status])
@@ -664,9 +669,50 @@ model BonusRule {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  accruals  BonusAccrual[]
+
   @@index([tenantId, isActive])
   @@index([tenantId, companyId, countryId])
   @@map("bonus_rules")
+}
+
+/// BonusAccrual (P2-03) — one row per fired bonus rule.
+///
+/// Created by `BonusEngine.onActivation(captain)` when a lead converts
+/// to an active captain. Future trigger kinds (`first_trip`,
+/// `trip_milestone`) layer on without schema changes — `triggerKind`
+/// is a string. `recipientUserId` is the agent who earned the bonus
+/// (the captain's lead's assignee at activation time). `status` flows
+/// through `pending → paid` (or `void` via admin action) — payout
+/// pipeline ships in P2-13.
+model BonusAccrual {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  bonusRuleId     String   @map("bonus_rule_id") @db.Uuid
+  bonusRule       BonusRule @relation(fields: [bonusRuleId], references: [id], onDelete: Restrict)
+
+  recipientUserId String   @map("recipient_user_id") @db.Uuid
+  recipient       User     @relation("BonusAccrualRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+
+  captainId       String?  @map("captain_id") @db.Uuid
+  captain         Captain? @relation(fields: [captainId], references: [id], onDelete: SetNull)
+
+  triggerKind     String   @map("trigger_kind")
+  amount          Decimal  @db.Decimal(12, 2)
+  status          String   @default("pending")
+  payload         Json?
+
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // "all my pending accruals, newest first" + admin filter by status.
+  @@index([tenantId, recipientUserId, status, createdAt])
+  @@index([tenantId, status, createdAt])
+  // Idempotency: a rule fires once per (rule, captain, trigger).
+  @@unique([bonusRuleId, captainId, triggerKind])
+  @@map("bonus_accruals")
 }
 
 /// Notification (P2-02) — in-app inbox for time-sensitive events.

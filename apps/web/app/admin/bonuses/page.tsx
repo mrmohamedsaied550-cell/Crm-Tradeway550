@@ -14,13 +14,22 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import {
   ApiError,
+  bonusAccrualsApi,
   bonusesApi,
   companiesApi,
   countriesApi,
   teamsApi,
   type CreateBonusRuleInput,
 } from '@/lib/api';
-import type { BonusRule, BonusType, Company, Country, Team } from '@/lib/api-types';
+import type {
+  BonusAccrual,
+  BonusAccrualStatus,
+  BonusRule,
+  BonusType,
+  Company,
+  Country,
+  Team,
+} from '@/lib/api-types';
 
 const BONUS_TYPES: readonly BonusType[] = [
   'first_trip',
@@ -48,6 +57,11 @@ export default function BonusesPage(): JSX.Element {
   const tCommon = useTranslations('admin.common');
 
   const [rows, setRows] = useState<BonusRule[]>([]);
+  const [accruals, setAccruals] = useState<BonusAccrual[]>([]);
+  const [accrualStatusFilter, setAccrualStatusFilter] = useState<BonusAccrualStatus | 'all'>(
+    'pending',
+  );
+  const [accrualBusy, setAccrualBusy] = useState<Set<string>>(new Set());
   const [companies, setCompanies] = useState<Company[]>([]);
   const [countries, setCountries] = useState<Country[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -65,26 +79,53 @@ export default function BonusesPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [list, c, ctry, ts] = await Promise.all([
+      const [list, c, ctry, ts, acc] = await Promise.all([
         bonusesApi.list(),
         companiesApi.list(),
         countriesApi.list(),
         teamsApi.list(),
+        bonusAccrualsApi
+          .list(
+            accrualStatusFilter === 'all'
+              ? {}
+              : { status: accrualStatusFilter as BonusAccrualStatus },
+          )
+          .catch(() => [] as BonusAccrual[]),
       ]);
       setRows(list);
       setCompanies(c);
       setCountries(ctry);
       setTeams(ts);
+      setAccruals(acc);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [accrualStatusFilter]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  async function onAccrualStatus(id: string, status: BonusAccrualStatus): Promise<void> {
+    if (accrualBusy.has(id)) return;
+    setAccrualBusy((s) => new Set(s).add(id));
+    setError(null);
+    try {
+      await bonusAccrualsApi.setStatus(id, status);
+      setNotice(t('accruals.statusUpdated'));
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setAccrualBusy((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
 
   const countriesForCompany = useMemo(
     () => countries.filter((c) => !form.companyId || c.companyId === form.companyId),
@@ -249,6 +290,82 @@ export default function BonusesPage(): JSX.Element {
       ) : (
         <DataTable<BonusRule> rows={rows} columns={columns} keyOf={(b) => b.id} />
       )}
+
+      {/* P2-03 — accruals fired by the bonus engine */}
+      <section className="rounded-lg border border-surface-border bg-surface-card shadow-card">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
+          <h2 className="text-sm font-semibold text-ink-primary">{t('accruals.title')}</h2>
+          <div className="flex items-center gap-1.5">
+            {(['pending', 'paid', 'void', 'all'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setAccrualStatusFilter(s)}
+                className={
+                  s === accrualStatusFilter
+                    ? 'rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white'
+                    : 'rounded-md border border-surface-border bg-surface px-2.5 py-1 text-xs font-medium text-ink-secondary hover:bg-brand-50 hover:text-brand-700'
+                }
+              >
+                {t(`accruals.statuses.${s}`)}
+              </button>
+            ))}
+          </div>
+        </header>
+        {accruals.length === 0 ? (
+          <p className="p-4 text-center text-xs text-ink-tertiary">{t('accruals.empty')}</p>
+        ) : (
+          <ul className="divide-y divide-surface-border">
+            {accruals.map((a) => (
+              <li
+                key={a.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              >
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-medium text-ink-primary">
+                    {a.recipient?.name ?? a.recipientUserId.slice(0, 8)} ·{' '}
+                    <span className="font-mono">{Number(a.amount).toFixed(2)}</span>
+                  </span>
+                  <span className="text-xs text-ink-tertiary">
+                    {a.triggerKind} · {a.captain?.name ?? '—'}{' '}
+                    {a.captain?.phone ? <code className="font-mono">{a.captain.phone}</code> : null}{' '}
+                    · {new Date(a.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    tone={
+                      a.status === 'paid' ? 'healthy' : a.status === 'void' ? 'inactive' : 'warning'
+                    }
+                  >
+                    {t(`accruals.statuses.${a.status}`)}
+                  </Badge>
+                  {a.status === 'pending' ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onAccrualStatus(a.id, 'paid')}
+                        disabled={accrualBusy.has(a.id)}
+                      >
+                        {t('accruals.actions.markPaid')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onAccrualStatus(a.id, 'void')}
+                        disabled={accrualBusy.has(a.id)}
+                      >
+                        {t('accruals.actions.void')}
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <Modal
         open={creating || editing !== null}

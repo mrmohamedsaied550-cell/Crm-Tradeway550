@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "bonus_accruals_tenant_id_recipient_user_id_status_created_at_id" RENAME TO "bonus_accruals_tenant_id_recipient_user_id_status_created_a_idx";

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { BonusEngine } from '../bonuses/bonus-engine.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { CONVERTED_STAGE_CODE } from './pipeline.registry';
@@ -36,6 +37,10 @@ export class CaptainsService {
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
     private readonly leads: LeadsService,
+    /** P2-03 — optional so tests that hand-instantiate this service
+     *  without DI continue to work. The real DI container always
+     *  injects it because BonusesModule is @Global. */
+    private readonly bonusEngine?: BonusEngine,
   ) {}
 
   // ───────── reads ─────────
@@ -170,6 +175,20 @@ export class CaptainsService {
           },
           createdById: actorUserId,
         });
+
+        // P2-03 — bonus engine. Activation = lead converted to a
+        // captain. The recipient is the lead's current assignee
+        // (the agent who closed the deal). Engine is idempotent
+        // via its (rule, captain, trigger) unique, so a re-run on
+        // the same captain is safe.
+        if (this.bonusEngine && lead.assignedToId) {
+          await this.bonusEngine.onActivationInTx(tx, tenantId, {
+            captainId: captain.id,
+            captainTeamId: captain.teamId,
+            recipientUserId: lead.assignedToId,
+            actorUserId,
+          });
+        }
 
         return captain;
       });
