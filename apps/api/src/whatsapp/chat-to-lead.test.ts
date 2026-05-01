@@ -46,10 +46,29 @@ async function withTenantRaw<T>(tid: string, fn: (tx: PrismaClient) => Promise<T
 
 async function ensurePipelineStage(tenantId: string): Promise<string> {
   return withTenantRaw(tenantId, async (tx) => {
+    const existing = await tx.pipeline.findFirst({
+      where: { tenantId, isDefault: true },
+      select: { id: true },
+    });
+    const pipelineId =
+      existing?.id ??
+      (
+        await tx.pipeline.create({
+          data: { tenantId, name: 'Default', isDefault: true, isActive: true },
+          select: { id: true },
+        })
+      ).id;
     const stage = await tx.pipelineStage.upsert({
-      where: { tenantId_code: { tenantId, code: 'new' } },
+      where: { pipelineId_code: { pipelineId, code: 'new' } },
       update: {},
-      create: { tenantId, code: 'new', name: 'New', order: 10, isTerminal: false },
+      create: {
+        tenantId,
+        pipelineId,
+        code: 'new',
+        name: 'New',
+        order: 10,
+        isTerminal: false,
+      },
     });
     return stage.id;
   });

@@ -69,12 +69,25 @@ async function withTenantRaw<T>(tid: string, fn: (tx: PrismaClient) => Promise<T
 
 async function seedPipeline(tid: string): Promise<void> {
   await withTenantRaw(tid, async (tx) => {
+    const existing = await tx.pipeline.findFirst({
+      where: { tenantId: tid, isDefault: true },
+      select: { id: true },
+    });
+    const pipelineId =
+      existing?.id ??
+      (
+        await tx.pipeline.create({
+          data: { tenantId: tid, name: 'Default', isDefault: true, isActive: true },
+          select: { id: true },
+        })
+      ).id;
     for (const def of PIPELINE_STAGE_DEFINITIONS) {
       await tx.pipelineStage.upsert({
-        where: { tenantId_code: { tenantId: tid, code: def.code } },
+        where: { pipelineId_code: { pipelineId, code: def.code } },
         update: { name: def.name, order: def.order, isTerminal: def.isTerminal },
         create: {
           tenantId: tid,
+          pipelineId,
           code: def.code,
           name: def.name,
           order: def.order,

@@ -42,6 +42,8 @@ import type {
   FollowUpActionType,
   LeadFollowUp,
   MetaLeadSource,
+  Pipeline,
+  PipelineStageRow,
   SendConversationMessageResult,
   WhatsAppAccount,
   Team,
@@ -275,6 +277,52 @@ export const rolesApi = {
 
 export const pipelineApi = {
   listStages: (): Promise<PipelineStage[]> => apiFetch<PipelineStage[]>('/pipeline/stages'),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Pipeline Builder (P2-07) — admin CRUD over pipelines + their stages.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreatePipelineInput {
+  name: string;
+  companyId?: string | null;
+  countryId?: string | null;
+  isActive?: boolean;
+}
+export interface CreatePipelineStageInput {
+  code: string;
+  name: string;
+  order?: number;
+  isTerminal?: boolean;
+}
+
+export const pipelinesApi = {
+  list: (): Promise<Pipeline[]> => apiFetch<Pipeline[]>('/pipelines'),
+  get: (id: string): Promise<Pipeline> => apiFetch<Pipeline>(`/pipelines/${id}`),
+  create: (input: CreatePipelineInput): Promise<Pipeline> =>
+    apiFetch<Pipeline>('/pipelines', { method: 'POST', body: input }),
+  update: (id: string, input: { name?: string; isActive?: boolean }): Promise<Pipeline> =>
+    apiFetch<Pipeline>(`/pipelines/${id}`, { method: 'PATCH', body: input }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/pipelines/${id}`, { method: 'DELETE' }),
+
+  addStage: (id: string, input: CreatePipelineStageInput): Promise<PipelineStageRow> =>
+    apiFetch<PipelineStageRow>(`/pipelines/${id}/stages`, { method: 'POST', body: input }),
+  updateStage: (
+    id: string,
+    stageId: string,
+    input: { name?: string; isTerminal?: boolean },
+  ): Promise<PipelineStageRow> =>
+    apiFetch<PipelineStageRow>(`/pipelines/${id}/stages/${stageId}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  removeStage: (id: string, stageId: string): Promise<void> =>
+    apiFetch<void>(`/pipelines/${id}/stages/${stageId}`, { method: 'DELETE' }),
+  reorderStages: (id: string, stageIds: string[]): Promise<PipelineStageRow[]> =>
+    apiFetch<PipelineStageRow[]>(`/pipelines/${id}/stages/reorder`, {
+      method: 'POST',
+      body: { stageIds },
+    }),
 };
 
 export const leadsApi = {

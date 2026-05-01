@@ -94,8 +94,18 @@ describe('bonuses — engine (P2-03)', () => {
 
       // A planted lead per team so the captain create can satisfy
       // the captain ↔ lead unique.
+      const pipeline = await tx.pipeline.create({
+        data: { tenantId, name: 'Default', isDefault: true, isActive: true },
+      });
       const stage = await tx.pipelineStage.create({
-        data: { tenantId, code: 'new', name: 'New', order: 10, isTerminal: false },
+        data: {
+          tenantId,
+          pipelineId: pipeline.id,
+          code: 'new',
+          name: 'New',
+          order: 10,
+          isTerminal: false,
+        },
       });
       const leadA = await tx.lead.create({
         data: {

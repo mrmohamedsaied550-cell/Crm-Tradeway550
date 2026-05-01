@@ -68,12 +68,29 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     tenantId = tenant.id;
 
     await withTenantRaw(tenantId, async (tx) => {
-      // Pipeline stages.
-      await tx.pipelineStage.create({
-        data: { tenantId, code: 'new', name: 'New', order: 10, isTerminal: false },
+      // Pipeline stages live under a Pipeline (P2-07).
+      const pipeline = await tx.pipeline.create({
+        data: { tenantId, name: 'Default', isDefault: true, isActive: true },
       });
       await tx.pipelineStage.create({
-        data: { tenantId, code: 'converted', name: 'Converted', order: 40, isTerminal: true },
+        data: {
+          tenantId,
+          pipelineId: pipeline.id,
+          code: 'new',
+          name: 'New',
+          order: 10,
+          isTerminal: false,
+        },
+      });
+      await tx.pipelineStage.create({
+        data: {
+          tenantId,
+          pipelineId: pipeline.id,
+          code: 'converted',
+          name: 'Converted',
+          order: 40,
+          isTerminal: true,
+        },
       });
 
       const adminRole = await tx.role.create({

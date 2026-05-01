@@ -309,6 +309,45 @@ export interface WhatsAppAccount {
   updatedAt: string;
 }
 
+// ───── Pipelines (P2-07) ─────
+
+/**
+ * One administered pipeline definition. The tenant-default carries
+ * `isDefault = true` and is the only pipeline the lead-lifecycle
+ * code paths resolve stages against. Additional pipelines exist
+ * for per-(company × country) overrides.
+ */
+export interface Pipeline {
+  id: string;
+  tenantId: string;
+  companyId: string | null;
+  countryId: string | null;
+  name: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Present on list endpoints. */
+  _count?: { stages: number };
+  /** Lightweight join shape from the API. */
+  company?: { id: string; code: string; name: string } | null;
+  country?: { id: string; code: string; name: string } | null;
+  /** Present on detail endpoints. */
+  stages?: PipelineStageRow[];
+}
+
+export interface PipelineStageRow {
+  id: string;
+  pipelineId: string;
+  tenantId: string;
+  code: string;
+  name: string;
+  order: number;
+  isTerminal: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ───── Meta lead-ad sources (P2-06) ─────
 
 /**

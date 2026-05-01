@@ -43,6 +43,7 @@ model Tenant {
   roles            Role[]
   users            User[]
   sessions         UserSession[]
+  pipelines        Pipeline[]
   pipelineStages   PipelineStage[]
   leads            Lead[]
   captains         Captain[]
@@ -226,14 +227,65 @@ model UserSession {
 }
 
 /// PipelineStage — one node in a tenant's lead funnel.
-/// MVP ships a single shared funnel per tenant; per Company × Country
-/// pipelines (per the PRD) layer on later. Order is unique-per-tenant so
-/// admin UIs can render sorted lists deterministically. `isTerminal`
-/// flags Converted / Lost so reports can exclude them from "active" KPIs.
+/// Pipeline (P2-07) — admin-managed lead funnel, scoped at the tenant
+/// level OR narrowed to a (Company × Country) pair.
+///
+/// Every tenant has exactly one "default" pipeline (`isDefault = true`,
+/// `companyId IS NULL`, `countryId IS NULL`) which owns the canonical
+/// 5-stage funnel produced by the seed. Admins can create additional
+/// pipelines for specific (Company, Country) tuples to override the
+/// stage list per market. The default pipeline is the fallback for
+/// every code path that resolves a stage by code without context
+/// (CSV import, Meta lead-gen, manual lead creation, conversion).
+///
+/// Routing of new leads to non-default pipelines (i.e. picking the
+/// per-market pipeline at lead-create time based on `companyId` /
+/// `countryId`) lands in a follow-up alongside Lead.companyId — the
+/// schema here is the foundation.
+model Pipeline {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Optional Company narrowing. NULL = pipeline is not Company-scoped.
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  /// Optional Country narrowing. NULL = pipeline is not Country-scoped.
+  countryId String?  @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  name      String
+  /// Exactly one row per tenant must have `isDefault = true`. Enforced
+  /// by a partial unique index in the migration (`WHERE is_default`).
+  isDefault Boolean  @default(false) @map("is_default")
+  isActive  Boolean  @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  stages PipelineStage[]
+
+  // A given (tenant, company, country) pair can have at most one
+  // pipeline row. The tenant-default sits at (tenantId, NULL, NULL)
+  // and is also covered by this constraint (NULLs treated as distinct
+  // by Postgres, but the partial-unique on isDefault forces single
+  // default per tenant).
+  @@unique([tenantId, companyId, countryId])
+  @@index([tenantId, isActive])
+  @@map("pipelines")
+}
+
+/// PipelineStage — one ordered stage inside a Pipeline. `order` is
+/// unique within the parent pipeline so an admin UI can render the
+/// list deterministically. `isTerminal` flags Converted / Lost so
+/// reports can exclude them from "active" KPIs.
+///
+/// `tenantId` is duplicated from the parent pipeline so the FORCE'd
+/// RLS policy can do a single GUC compare without joining.
 model PipelineStage {
   id         String   @id @default(uuid()) @db.Uuid
   tenantId   String   @map("tenant_id") @db.Uuid
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipelineId String   @map("pipeline_id") @db.Uuid
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   code       String
   name       String
   order      Int
@@ -243,9 +295,10 @@ model PipelineStage {
 
   leads Lead[]
 
-  @@unique([tenantId, code])
-  @@unique([tenantId, order])
+  @@unique([pipelineId, code])
+  @@unique([pipelineId, order])
   @@index([tenantId])
+  @@index([pipelineId])
   @@map("pipeline_stages")
 }
 
@@ -406,6 +459,7 @@ model Company {
   countries    Country[]
   bonusRules   BonusRule[]
   competitions Competition[]
+  pipelines    Pipeline[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -434,6 +488,7 @@ model Country {
   teams        Team[]
   bonusRules   BonusRule[]
   competitions Competition[]
+  pipelines    Pipeline[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.

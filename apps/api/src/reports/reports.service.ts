@@ -59,6 +59,13 @@ export class ReportsService {
       };
 
       // Total leads + per-stage breakdown.
+      // P2-07 — stages live under per-tenant Pipelines now. The report
+      // scopes to the tenant's default pipeline so the funnel
+      // breakdown stays consistent with the pre-P2-07 contract.
+      const defaultPipeline = await tx.pipeline.findFirst({
+        where: { isDefault: true },
+        select: { id: true },
+      });
       const [totalLeads, grouped, stages] = await Promise.all([
         tx.lead.count({ where: baseLeadWhere }),
         tx.lead.groupBy({
@@ -67,6 +74,7 @@ export class ReportsService {
           _count: { _all: true },
         }),
         tx.pipelineStage.findMany({
+          where: defaultPipeline ? { pipelineId: defaultPipeline.id } : undefined,
           orderBy: { order: 'asc' },
           select: { id: true, code: true, name: true },
         }),

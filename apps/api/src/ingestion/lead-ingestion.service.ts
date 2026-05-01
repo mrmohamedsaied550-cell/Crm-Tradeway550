@@ -192,8 +192,23 @@ export class LeadIngestionService {
       // `pipeline.findByCodeOrThrow` (which calls `requireTenantId`)
       // would throw. The withTenant helper has already set the GUC,
       // so an unscoped Prisma read is RLS-safe here.
+      //
+      // P2-07 — stages live under a Pipeline now. Walk: tenant →
+      // default pipeline → stage by code.
+      const defaultPipeline = await tx.pipeline.findFirst({
+        where: { tenantId: input.tenantId, isDefault: true },
+        select: { id: true },
+      });
+      if (!defaultPipeline) {
+        return {
+          kind: 'error' as const,
+          reason: `tenant has no default pipeline`,
+        };
+      }
       const stage = await tx.pipelineStage.findUnique({
-        where: { tenantId_code: { tenantId: input.tenantId, code: DEFAULT_STAGE_CODE } },
+        where: {
+          pipelineId_code: { pipelineId: defaultPipeline.id, code: DEFAULT_STAGE_CODE },
+        },
         select: { id: true, isTerminal: true },
       });
       if (!stage) {

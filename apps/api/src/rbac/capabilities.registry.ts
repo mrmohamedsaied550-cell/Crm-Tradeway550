@@ -45,8 +45,12 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },
   { code: 'meta.leadsource.write', description: 'Create / update / delete Meta lead-ad sources' },
 
-  // CRM — pipeline catalogue (P2-01)
-  { code: 'pipeline.read', description: 'View pipeline stages' },
+  // CRM — pipeline catalogue (P2-01 read; P2-07 write)
+  { code: 'pipeline.read', description: 'View pipelines + their stages' },
+  {
+    code: 'pipeline.write',
+    description: 'Create / update / delete pipelines and their stages',
+  },
 
   // CRM — captains (P2-01)
   { code: 'captain.read', description: 'View captains' },

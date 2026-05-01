@@ -13,6 +13,7 @@ import {
   ScrollText,
   Contact,
   Columns,
+  Layers,
   Trophy,
   Award,
   Flag,
@@ -33,6 +34,7 @@ interface NavItem {
     | 'users'
     | 'leads'
     | 'pipeline'
+    | 'pipelineBuilder'
     | 'captains'
     | 'bonuses'
     | 'competitions'
@@ -55,6 +57,12 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
   { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns, cap: 'pipeline.read' },
+  {
+    href: '/admin/pipeline-builder',
+    labelKey: 'pipelineBuilder',
+    icon: Layers,
+    cap: 'pipeline.read',
+  },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy, cap: 'captain.read' },
   { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award, cap: 'bonus.read' },
   { href: '/admin/competitions', labelKey: 'competitions', icon: Flag, cap: 'competition.read' },
