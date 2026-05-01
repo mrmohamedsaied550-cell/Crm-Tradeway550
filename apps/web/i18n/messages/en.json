@@ -554,6 +554,18 @@
         "title": "Leads by stage",
         "subtitle": "Distribution across the pipeline.",
         "empty": "No leads in scope yet."
+      },
+      "exportCsv": "Export CSV",
+      "timeseries": {
+        "title": "Activity over time",
+        "subtitle": "Daily counts for the selected metric. Default window is the trailing 30 days.",
+        "metric": "Metric",
+        "metrics": {
+          "leads_created": "Leads created",
+          "activations": "Activations",
+          "first_trips": "First trips"
+        },
+        "empty": "No activity in the selected window."
       }
     },
     "whatsapp": {

@@ -831,11 +831,42 @@ export interface SummaryReport {
   conversionRate: number | null;
 }
 
+export type TimeseriesMetric = 'leads_created' | 'activations' | 'first_trips';
+
+export interface TimeseriesPoint {
+  date: string;
+  count: number;
+}
+
+export interface TimeseriesReport {
+  metric: TimeseriesMetric;
+  from: string;
+  to: string;
+  points: TimeseriesPoint[];
+}
+
 export const reportsApi = {
   summary: (filters: ReportFilters = {}): Promise<SummaryReport> =>
     apiFetch<SummaryReport>('/reports/summary', {
       query: { ...filters } as Record<string, string | undefined>,
     }),
+  timeseries: (filters: ReportFilters & { metric: TimeseriesMetric }): Promise<TimeseriesReport> =>
+    apiFetch<TimeseriesReport>('/reports/timeseries', {
+      query: { ...filters } as Record<string, string | undefined>,
+    }),
+  /**
+   * P2-11 — returns the URL for the CSV export, with the access
+   * token embedded in the Authorization header via a fetch + blob
+   * download. Browser-friendly: triggers a download by clicking
+   * a synthesised <a> with `download="..."`.
+   */
+  exportCsvUrl: (filters: ReportFilters = {}): string => {
+    const url = new URL(`${API_BASE_URL}${API_VERSION_PREFIX}/reports/export.csv`);
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+    return url.toString();
+  },
 };
 
 // ───────────────────────────────────────────────────────────────────────

@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { AlertTriangle, Calendar, Contact, Loader2, TrendingUp, Trophy } from 'lucide-react';
+import {
+  AlertTriangle,
+  Calendar,
+  Contact,
+  Download,
+  Loader2,
+  TrendingUp,
+  Trophy,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/input';
@@ -16,7 +24,10 @@ import {
   teamsApi,
   type ReportFilters,
   type SummaryReport,
+  type TimeseriesMetric,
+  type TimeseriesReport,
 } from '@/lib/api';
+import { getAccessToken } from '@/lib/auth';
 import type { Company, Country, Team } from '@/lib/api-types';
 
 /**
@@ -62,41 +73,85 @@ export default function AdminReportsPage(): JSX.Element {
   const [teams, setTeams] = useState<Team[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [data, setData] = useState<SummaryReport | null>(null);
+  const [series, setSeries] = useState<TimeseriesReport | null>(null);
+  const [metric, setMetric] = useState<TimeseriesMetric>('leads_created');
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<boolean>(false);
 
   const reload = useCallback(
-    async (next: FormState = form): Promise<void> => {
+    async (next: FormState = form, nextMetric: TimeseriesMetric = metric): Promise<void> => {
       setLoading(true);
       setError(null);
       try {
-        const summary = await reportsApi.summary(toFilters(next));
+        const filters = toFilters(next);
+        const [summary, ts] = await Promise.all([
+          reportsApi.summary(filters),
+          reportsApi.timeseries({ ...filters, metric: nextMetric }),
+        ]);
         setData(summary);
+        setSeries(ts);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : String(err));
       } finally {
         setLoading(false);
       }
     },
-    [form],
+    [form, metric],
   );
 
-  // First mount — load filter options + initial summary.
+  /**
+   * P2-11 — CSV export. We can't use a plain anchor `download` because
+   * the server endpoint requires the JWT. So fetch with the bearer
+   * header, blob the response, and trigger a synthetic <a> click.
+   */
+  async function downloadCsv(): Promise<void> {
+    setExporting(true);
+    setError(null);
+    try {
+      const url = reportsApi.exportCsvUrl(toFilters(form));
+      const token = getAccessToken();
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `crm-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // First mount — load filter options + initial summary + timeseries.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [c, ctry, ts, summary] = await Promise.all([
+        const [c, ctry, ts, summary, initialSeries] = await Promise.all([
           companiesApi.list(),
           countriesApi.list(),
           teamsApi.list(),
           reportsApi.summary({}),
+          reportsApi.timeseries({ metric: 'leads_created' }),
         ]);
         if (cancelled) return;
         setCompanies(c);
         setCountries(ctry);
         setTeams(ts);
         setData(summary);
+        setSeries(initialSeries);
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.message : String(err));
       } finally {
@@ -210,6 +265,11 @@ export default function AdminReportsPage(): JSX.Element {
           >
             {tCommon('clearFilters')}
           </Button>
+          <div className="flex-1" />
+          <Button variant="secondary" onClick={() => void downloadCsv()} loading={exporting}>
+            <Download className="h-4 w-4" />
+            {t('exportCsv')}
+          </Button>
         </div>
       </section>
 
@@ -290,8 +350,125 @@ export default function AdminReportsPage(): JSX.Element {
               </ul>
             )}
           </section>
+
+          {/* Time-series chart */}
+          <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-ink-primary">
+                  {t('timeseries.title')}
+                </h2>
+                <p className="mt-1 text-xs text-ink-secondary">{t('timeseries.subtitle')}</p>
+              </div>
+              <div className="w-full max-w-xs">
+                <Field label={t('timeseries.metric')}>
+                  <Select
+                    value={metric}
+                    onChange={(e) => {
+                      const m = e.target.value as TimeseriesMetric;
+                      setMetric(m);
+                      void reload(form, m);
+                    }}
+                  >
+                    <option value="leads_created">{t('timeseries.metrics.leads_created')}</option>
+                    <option value="activations">{t('timeseries.metrics.activations')}</option>
+                    <option value="first_trips">{t('timeseries.metrics.first_trips')}</option>
+                  </Select>
+                </Field>
+              </div>
+            </div>
+            <div className="mt-4">
+              <TimeseriesChart series={series} emptyLabel={t('timeseries.empty')} />
+            </div>
+          </section>
         </>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Inline-SVG line chart. Deliberately minimal — no chart-lib
+ * dependency, no animation. Renders the points along an X axis
+ * spaced evenly per day, Y axis scaled to the max value (with a
+ * minimum of 1 so a flat-zero series still draws an axis).
+ *
+ * Hover bubble: a circle marker per point, with a small tooltip
+ * (`<title>`) so the SVG is screen-reader friendly without React
+ * portals.
+ */
+function TimeseriesChart({
+  series,
+  emptyLabel,
+}: {
+  series: TimeseriesReport | null;
+  emptyLabel: string;
+}): JSX.Element {
+  if (!series || series.points.length === 0) {
+    return <p className="text-sm text-ink-tertiary">{emptyLabel}</p>;
+  }
+  const points = series.points;
+  const max = Math.max(1, ...points.map((p) => p.count));
+  const W = 720;
+  const H = 200;
+  const padX = 36;
+  const padY = 24;
+  const innerW = W - padX * 2;
+  const innerH = H - padY * 2;
+  const stepX = points.length > 1 ? innerW / (points.length - 1) : innerW / 2;
+  const xy = points.map((p, i) => {
+    const x = padX + (points.length === 1 ? innerW / 2 : i * stepX);
+    const y = padY + innerH - (p.count / max) * innerH;
+    return { x, y, p };
+  });
+  const linePath = xy
+    .map(({ x, y }, i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`)
+    .join(' ');
+  // Pick a few x-axis labels evenly so a 30-day chart isn't crammed.
+  const labelStride = Math.max(1, Math.floor(points.length / 6));
+  const total = points.reduce((acc, p) => acc + p.count, 0);
+  return (
+    <div className="overflow-x-auto">
+      <svg
+        role="img"
+        aria-label="time-series chart"
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full min-w-[540px] max-w-full"
+      >
+        {/* Y axis ticks */}
+        {[0, 0.5, 1].map((t) => {
+          const y = padY + innerH * (1 - t);
+          const label = Math.round(max * t);
+          return (
+            <g key={t}>
+              <line x1={padX} y1={y} x2={W - padX / 2} y2={y} stroke="#e5e7eb" strokeWidth="1" />
+              <text x={padX - 6} y={y + 3} textAnchor="end" fontSize="10" fill="#6b7280">
+                {label}
+              </text>
+            </g>
+          );
+        })}
+        {/* Line */}
+        <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="2" />
+        {/* Markers */}
+        {xy.map(({ x, y, p }) => (
+          <circle key={p.date} cx={x} cy={y} r={2.5} fill="#2563eb">
+            <title>{`${p.date} — ${p.count}`}</title>
+          </circle>
+        ))}
+        {/* X axis labels */}
+        {xy.map(({ x, p }, i) =>
+          i % labelStride === 0 || i === xy.length - 1 ? (
+            <text key={p.date} x={x} y={H - 6} textAnchor="middle" fontSize="10" fill="#6b7280">
+              {p.date.slice(5)}
+            </text>
+          ) : null,
+        )}
+      </svg>
+      <p className="mt-2 text-xs text-ink-tertiary">
+        Σ {total} · {new Date(series.from).toISOString().slice(0, 10)} →{' '}
+        {new Date(series.to).toISOString().slice(0, 10)}
+      </p>
     </div>
   );
 }
