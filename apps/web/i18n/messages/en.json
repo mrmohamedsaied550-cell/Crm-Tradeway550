@@ -308,9 +308,37 @@
       "heading": "Agent shell",
       "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
     },
+    "workspace": {
+      "title": "My Leads",
+      "subtitle": "Leads currently assigned to you. Add a note or move the stage inline.",
+      "open": "Open my leads",
+      "noUser": "Sign in to see your assigned leads.",
+      "emptyTitle": "No leads assigned to you yet",
+      "emptyBody": "When a manager assigns leads to you, they'll appear here.",
+      "noteAdded": "Note added.",
+      "stageMoved": "Stage updated.",
+      "noteModalTitle": "Add a note",
+      "noteLabel": "Note",
+      "stageModalTitle": "Move stage",
+      "stageLabel": "Pipeline stage",
+      "stagePickerPlaceholder": "Pick a stage…",
+      "cols": {
+        "name": "Lead",
+        "source": "Source",
+        "stage": "Stage",
+        "sla": "SLA",
+        "actions": "Actions"
+      },
+      "actions": {
+        "addNote": "Note",
+        "moveStage": "Stage",
+        "openDetail": "Open"
+      }
+    },
     "inbox": {
       "title": "WhatsApp inbox",
       "subtitle": "Live conversations with leads and captains.",
+      "open": "Open inbox",
       "phoneFilter": "Filter by phone",
       "phoneFilterPlaceholder": "+201001112222",
       "accountFilter": "WhatsApp account",
