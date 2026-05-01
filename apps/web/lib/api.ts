@@ -471,6 +471,36 @@ export interface LeaderboardEntry {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// Reports (C38)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface ReportFilters {
+  companyId?: string;
+  countryId?: string;
+  teamId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface SummaryReport {
+  totalLeads: number;
+  leadsByStage: Array<{ stageCode: string; stageName: string; count: number }>;
+  overdueCount: number;
+  dueTodayCount: number;
+  followUpsPending: number;
+  followUpsDone: number;
+  activations: number;
+  conversionRate: number | null;
+}
+
+export const reportsApi = {
+  summary: (filters: ReportFilters = {}): Promise<SummaryReport> =>
+    apiFetch<SummaryReport>('/reports/summary', {
+      query: { ...filters } as Record<string, string | undefined>,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Follow-ups (C36)
 // ───────────────────────────────────────────────────────────────────────
 

@@ -45,6 +45,7 @@
       "bonuses": "Bonuses",
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
+      "reports": "Reports",
       "audit": "Audit Log"
     },
     "authBar": {
@@ -386,6 +387,32 @@
         "activate": "Activate",
         "close": "Close",
         "leaderboard": "Leaderboard"
+      }
+    },
+    "reports": {
+      "title": "Reports",
+      "subtitle": "Tenant-level snapshot of leads, follow-ups, and conversion.",
+      "apply": "Apply filters",
+      "filters": {
+        "company": "Company",
+        "country": "Country",
+        "team": "Team",
+        "from": "From",
+        "to": "To"
+      },
+      "cards": {
+        "totalLeads": "Total leads",
+        "overdue": "Overdue",
+        "dueToday": "Due today",
+        "activations": "Activations",
+        "conversion": "Conversion rate",
+        "followUpsPending": "Follow-ups pending",
+        "followUpsDone": "Follow-ups completed"
+      },
+      "leadsByStage": {
+        "title": "Leads by stage",
+        "subtitle": "Distribution across the pipeline.",
+        "empty": "No leads in scope yet."
       }
     },
     "whatsapp": {

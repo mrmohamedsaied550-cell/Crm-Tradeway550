@@ -45,6 +45,7 @@
       "bonuses": "المكافآت",
       "competitions": "المسابقات",
       "whatsapp": "واتساب",
+      "reports": "التقارير",
       "audit": "سجلّ التدقيق"
     },
     "authBar": {
@@ -386,6 +387,32 @@
         "activate": "تفعيل",
         "close": "إغلاق",
         "leaderboard": "المتصدّرون"
+      }
+    },
+    "reports": {
+      "title": "التقارير",
+      "subtitle": "لقطة على مستوى المستأجر للعملاء والمتابعات ومعدّل التحويل.",
+      "apply": "تطبيق الفلاتر",
+      "filters": {
+        "company": "الشركة",
+        "country": "الدولة",
+        "team": "الفريق",
+        "from": "من",
+        "to": "إلى"
+      },
+      "cards": {
+        "totalLeads": "إجمالي العملاء",
+        "overdue": "متأخّر",
+        "dueToday": "اليوم",
+        "activations": "عمليات التنشيط",
+        "conversion": "معدّل التحويل",
+        "followUpsPending": "متابعات معلّقة",
+        "followUpsDone": "متابعات مكتملة"
+      },
+      "leadsByStage": {
+        "title": "العملاء حسب المرحلة",
+        "subtitle": "التوزيع عبر خط الأنابيب.",
+        "empty": "لا يوجد عملاء ضمن النطاق بعد."
       }
     },
     "whatsapp": {
