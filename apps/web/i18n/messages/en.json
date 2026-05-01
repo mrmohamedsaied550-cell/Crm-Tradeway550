@@ -42,6 +42,10 @@
       "leads": "Leads",
       "pipeline": "Pipeline",
       "captains": "Captains",
+      "bonuses": "Bonuses",
+      "competitions": "Competitions",
+      "whatsapp": "WhatsApp",
+      "reports": "Reports",
       "audit": "Audit Log"
     },
     "authBar": {
@@ -91,7 +95,8 @@
       "created": "Created",
       "retry": "Retry",
       "clearFilters": "Clear filters",
-      "errorTitle": "Couldn't load data"
+      "errorTitle": "Couldn't load data",
+      "select": "Select…"
     },
     "companies": {
       "title": "Companies",
@@ -192,6 +197,9 @@
       "search": "Search name / phone / email",
       "openDetail": "Open",
       "unassigned": "Unassigned",
+      "autoAssign": "Auto-assign",
+      "autoAssigned": "Lead auto-assigned via round-robin.",
+      "autoAssignNoEligible": "No eligible agent available right now.",
       "detailTitle": "Lead detail",
       "activitiesTitle": "Activity timeline",
       "addNote": "Add note",
@@ -299,6 +307,160 @@
       "emptyHint": "Convert a lead from the leads list to create the first captain.",
       "emptyFiltered": "No captains match the filters",
       "emptyFilteredHint": "Try clearing the filters."
+    },
+    "bonuses": {
+      "title": "Bonuses",
+      "subtitle": "Bonus rules for captain incentives. Payout engine is not yet wired.",
+      "createCta": "Create rule",
+      "createTitle": "Create bonus rule",
+      "editTitle": "Edit bonus rule",
+      "emptyTitle": "No bonus rules yet",
+      "emptyBody": "Create a rule to define how bonuses are triggered and how much is paid.",
+      "created": "Bonus rule created",
+      "updated": "Bonus rule updated",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "teamAny": "Any team",
+      "triggerPlaceholder": "e.g. 5 first trips in week 1",
+      "cols": {
+        "scope": "Scope",
+        "type": "Type",
+        "trigger": "Trigger",
+        "amount": "Amount",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "actions": {
+        "enable": "Enable",
+        "disable": "Disable"
+      },
+      "fields": {
+        "company": "Company",
+        "country": "Country",
+        "team": "Team (optional)",
+        "bonusType": "Bonus type",
+        "trigger": "Trigger",
+        "amount": "Amount",
+        "active": "Active"
+      }
+    },
+    "competitions": {
+      "title": "Competitions",
+      "subtitle": "Time-bounded contests with a leaderboard. Reward payout is not yet wired.",
+      "createCta": "Create competition",
+      "createTitle": "Create competition",
+      "editTitle": "Edit competition",
+      "emptyTitle": "No competitions yet",
+      "emptyBody": "Create one to track team performance over a window.",
+      "created": "Competition created",
+      "updated": "Competition updated",
+      "leaderboardTitle": "Leaderboard",
+      "leaderboardEmpty": "No data yet for this competition.",
+      "cols": {
+        "name": "Name",
+        "scope": "Scope",
+        "window": "Window",
+        "metric": "Metric",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "fields": {
+        "name": "Name",
+        "company": "Company (optional)",
+        "country": "Country (optional)",
+        "team": "Team (optional)",
+        "startDate": "Start date",
+        "endDate": "End date",
+        "metric": "Metric",
+        "reward": "Reward",
+        "status": "Status"
+      },
+      "metrics": {
+        "leads_created": "Leads created",
+        "activations": "Activations",
+        "first_trips": "First trips",
+        "conversion_rate": "Conversion rate"
+      },
+      "statuses": {
+        "draft": "Draft",
+        "active": "Active",
+        "closed": "Closed"
+      },
+      "actions": {
+        "activate": "Activate",
+        "close": "Close",
+        "leaderboard": "Leaderboard"
+      }
+    },
+    "audit": {
+      "title": "Audit log",
+      "subtitle": "Recent admin actions across leads, follow-ups, bonuses, competitions, and WhatsApp handovers.",
+      "emptyTitle": "No audit events yet",
+      "emptyBody": "Mutations to leads, follow-ups, bonuses, competitions, and WhatsApp handovers will appear here.",
+      "actorSystem": "system"
+    },
+    "reports": {
+      "title": "Reports",
+      "subtitle": "Tenant-level snapshot of leads, follow-ups, and conversion.",
+      "apply": "Apply filters",
+      "filters": {
+        "company": "Company",
+        "country": "Country",
+        "team": "Team",
+        "from": "From",
+        "to": "To"
+      },
+      "cards": {
+        "totalLeads": "Total leads",
+        "overdue": "Overdue",
+        "dueToday": "Due today",
+        "activations": "Activations",
+        "conversion": "Conversion rate",
+        "followUpsPending": "Follow-ups pending",
+        "followUpsDone": "Follow-ups completed"
+      },
+      "leadsByStage": {
+        "title": "Leads by stage",
+        "subtitle": "Distribution across the pipeline.",
+        "empty": "No leads in scope yet."
+      }
+    },
+    "whatsapp": {
+      "title": "WhatsApp",
+      "subtitle": "Conversations across every connected account.",
+      "noLead": "No linked lead",
+      "linkLeadCta": "Link to a lead",
+      "linkLeadTitle": "Link conversation to a lead",
+      "linkLeadHint": "Pick a lead to attach this conversation to.",
+      "linked": "Conversation linked.",
+      "selectAConversation": "Select a conversation",
+      "selectAConversationHint": "Pick one from the list to read its messages.",
+      "noMessages": "No messages yet",
+      "handoverCta": "Handover",
+      "handoverNeedsLead": "Link the conversation to a lead first.",
+      "handoverTitle": "Hand over to another agent",
+      "handoverHint": "Reassigns the linked lead and writes an audit-trail entry.",
+      "handoverNewAssignee": "New assignee",
+      "handoverModeLabel": "Transfer mode",
+      "handoverModes": {
+        "full": {
+          "title": "Full transfer",
+          "body": "Keep all message history; just reassign the lead."
+        },
+        "clean": {
+          "title": "Clean transfer",
+          "body": "Close the current conversation; future inbound starts a fresh thread."
+        },
+        "summary": {
+          "title": "Summary transfer",
+          "body": "Add a handover summary as a note on the lead."
+        }
+      },
+      "handoverSummary": "Handover summary",
+      "handoverSummaryPlaceholder": "Outline what the new agent should know…",
+      "handoverNotify": "Notify the new agent (records intent in the audit log).",
+      "handoverConfirm": "Hand over",
+      "handoverDone": "Conversation handed over."
     }
   },
   "agent": {
@@ -308,9 +470,66 @@
       "heading": "Agent shell",
       "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
     },
+    "workspace": {
+      "title": "My Leads",
+      "subtitle": "Leads currently assigned to you. Update stage, log a note, schedule the next action.",
+      "open": "Open my leads",
+      "counters": {
+        "overdue": "overdue",
+        "dueToday": "due today"
+      },
+      "overdueSection": {
+        "title": "Overdue leads",
+        "dueLabel": "Was due"
+      },
+      "dueTodaySection": {
+        "title": "Due today",
+        "atLabel": "At"
+      },
+      "noUser": "Sign in to see your assigned leads.",
+      "emptyTitle": "No leads assigned to you yet",
+      "emptyBody": "When a manager assigns leads to you, they'll appear here.",
+      "updateDone": "Lead updated.",
+      "updateModalTitle": "Update lead",
+      "updateStageLabel": "Stage",
+      "updateNoteLabel": "Note (optional)",
+      "updateNotePlaceholder": "What happened on this lead?",
+      "updateScheduleToggle": "Schedule the next action",
+      "stagePickerPlaceholder": "Pick a stage…",
+      "nextActionType": "Type",
+      "nextActionDate": "Date",
+      "nextActionTime": "Time",
+      "overdueIndicator": "Has an overdue follow-up",
+      "cols": {
+        "name": "Lead",
+        "source": "Source",
+        "stage": "Stage",
+        "sla": "SLA",
+        "actions": "Actions"
+      },
+      "actions": {
+        "update": "Update",
+        "openDetail": "Open"
+      },
+      "followUps": {
+        "title": "My Follow-ups",
+        "empty": "—",
+        "emptyHint": "No pending follow-ups. Schedule one when you update a lead.",
+        "pending": "pending",
+        "overdue": "overdue",
+        "complete": "Done",
+        "types": {
+          "call": "Call",
+          "whatsapp": "WhatsApp",
+          "visit": "Visit",
+          "other": "Other"
+        }
+      }
+    },
     "inbox": {
       "title": "WhatsApp inbox",
       "subtitle": "Live conversations with leads and captains.",
+      "open": "Open inbox",
       "phoneFilter": "Filter by phone",
       "phoneFilterPlaceholder": "+201001112222",
       "accountFilter": "WhatsApp account",

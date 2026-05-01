@@ -10,6 +10,7 @@
  */
 
 const ACCESS_TOKEN_KEY = 'crm.accessToken';
+const REFRESH_TOKEN_KEY = 'crm.refreshToken';
 const TENANT_CODE_KEY = 'crm.tenantCode';
 const ME_CACHE_KEY = 'crm.me';
 
@@ -29,13 +30,30 @@ function isBrowser(): boolean {
 
 export function getAccessToken(): string | null {
   if (!isBrowser()) return null;
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  const v = window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  // Treat an empty / whitespace-only entry as "no token" so apiFetch's
+  // `if (token)` check never spuriously skips the Authorization header.
+  return v && v.trim().length > 0 ? v : null;
 }
 
 export function setAccessToken(token: string | null): void {
   if (!isBrowser()) return;
-  if (token) window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  const v = typeof token === 'string' ? token.trim() : '';
+  if (v.length > 0) window.localStorage.setItem(ACCESS_TOKEN_KEY, v);
   else window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+export function getRefreshToken(): string | null {
+  if (!isBrowser()) return null;
+  const v = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  return v && v.trim().length > 0 ? v : null;
+}
+
+export function setRefreshToken(token: string | null): void {
+  if (!isBrowser()) return;
+  const v = typeof token === 'string' ? token.trim() : '';
+  if (v.length > 0) window.localStorage.setItem(REFRESH_TOKEN_KEY, v);
+  else window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
 export function getTenantCode(): string | null {
@@ -68,6 +86,7 @@ export function setCachedMe(me: MeCache | null): void {
 
 export function clearAuth(): void {
   setAccessToken(null);
+  setRefreshToken(null);
   setTenantCode(null);
   setCachedMe(null);
 }

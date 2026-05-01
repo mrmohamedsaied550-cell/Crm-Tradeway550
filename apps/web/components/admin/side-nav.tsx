@@ -13,6 +13,10 @@ import {
   Contact,
   Columns,
   Trophy,
+  Award,
+  Flag,
+  MessagesSquare,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,6 +32,10 @@ interface NavItem {
     | 'leads'
     | 'pipeline'
     | 'captains'
+    | 'bonuses'
+    | 'competitions'
+    | 'whatsapp'
+    | 'reports'
     | 'audit';
   icon: LucideIcon;
   /** When true, the link is rendered but disabled — destination doesn't exist. */
@@ -43,7 +51,11 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/leads', labelKey: 'leads', icon: Contact },
   { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy },
-  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, pending: true },
+  { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award },
+  { href: '/admin/competitions', labelKey: 'competitions', icon: Flag },
+  { href: '/admin/whatsapp', labelKey: 'whatsapp', icon: MessagesSquare },
+  { href: '/admin/reports', labelKey: 'reports', icon: BarChart3 },
+  { href: '/admin/audit', labelKey: 'audit', icon: ScrollText },
 ];
 
 /**

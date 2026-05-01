@@ -42,6 +42,10 @@
       "leads": "العملاء المحتملون",
       "pipeline": "خط الأنابيب",
       "captains": "الكباتن",
+      "bonuses": "المكافآت",
+      "competitions": "المسابقات",
+      "whatsapp": "واتساب",
+      "reports": "التقارير",
       "audit": "سجلّ التدقيق"
     },
     "authBar": {
@@ -91,7 +95,8 @@
       "created": "تم الإنشاء",
       "retry": "إعادة المحاولة",
       "clearFilters": "مسح الفلاتر",
-      "errorTitle": "تعذّر تحميل البيانات"
+      "errorTitle": "تعذّر تحميل البيانات",
+      "select": "اختر…"
     },
     "companies": {
       "title": "الشركات",
@@ -192,6 +197,9 @@
       "search": "بحث في الاسم / الهاتف / البريد",
       "openDetail": "فتح",
       "unassigned": "غير مُسنَد",
+      "autoAssign": "إسناد تلقائي",
+      "autoAssigned": "تم إسناد العميل تلقائياً.",
+      "autoAssignNoEligible": "لا يوجد وكيل متاح حالياً.",
       "detailTitle": "تفاصيل العميل المحتمل",
       "activitiesTitle": "الأنشطة",
       "addNote": "إضافة ملاحظة",
@@ -299,6 +307,160 @@
       "emptyHint": "حوّل عميلاً محتملاً من قائمة العملاء لإنشاء أول كابتن.",
       "emptyFiltered": "لا يوجد كباتن يطابقون الفلاتر",
       "emptyFilteredHint": "جرّب مسح الفلاتر."
+    },
+    "bonuses": {
+      "title": "المكافآت",
+      "subtitle": "قواعد المكافآت لتحفيز الكباتن. محرّك الصرف لم يُربط بعد.",
+      "createCta": "إنشاء قاعدة",
+      "createTitle": "إنشاء قاعدة مكافأة",
+      "editTitle": "تعديل قاعدة مكافأة",
+      "emptyTitle": "لا توجد قواعد مكافآت بعد",
+      "emptyBody": "أنشئ قاعدة لتحديد كيفية تحفيز الكباتن ومقدار المكافأة.",
+      "created": "تم إنشاء القاعدة",
+      "updated": "تم تحديث القاعدة",
+      "statusActive": "نشطة",
+      "statusInactive": "غير نشطة",
+      "teamAny": "أي فريق",
+      "triggerPlaceholder": "مثال: 5 رحلات أولى في الأسبوع 1",
+      "cols": {
+        "scope": "النطاق",
+        "type": "النوع",
+        "trigger": "المحفّز",
+        "amount": "القيمة",
+        "status": "الحالة",
+        "actions": "إجراءات"
+      },
+      "actions": {
+        "enable": "تفعيل",
+        "disable": "تعطيل"
+      },
+      "fields": {
+        "company": "الشركة",
+        "country": "الدولة",
+        "team": "الفريق (اختياري)",
+        "bonusType": "نوع المكافأة",
+        "trigger": "المحفّز",
+        "amount": "القيمة",
+        "active": "نشطة"
+      }
+    },
+    "competitions": {
+      "title": "المسابقات",
+      "subtitle": "مسابقات محدّدة بفترة زمنية مع لوحة متصدّرين. صرف الجوائز لم يُربط بعد.",
+      "createCta": "إنشاء مسابقة",
+      "createTitle": "إنشاء مسابقة",
+      "editTitle": "تعديل مسابقة",
+      "emptyTitle": "لا توجد مسابقات بعد",
+      "emptyBody": "أنشئ واحدة لمتابعة أداء الفريق خلال نافذة محدّدة.",
+      "created": "تم إنشاء المسابقة",
+      "updated": "تم تحديث المسابقة",
+      "leaderboardTitle": "لوحة المتصدّرين",
+      "leaderboardEmpty": "لا توجد بيانات لهذه المسابقة بعد.",
+      "cols": {
+        "name": "الاسم",
+        "scope": "النطاق",
+        "window": "النافذة",
+        "metric": "المقياس",
+        "status": "الحالة",
+        "actions": "إجراءات"
+      },
+      "fields": {
+        "name": "الاسم",
+        "company": "الشركة (اختياري)",
+        "country": "الدولة (اختياري)",
+        "team": "الفريق (اختياري)",
+        "startDate": "تاريخ البدء",
+        "endDate": "تاريخ الانتهاء",
+        "metric": "المقياس",
+        "reward": "الجائزة",
+        "status": "الحالة"
+      },
+      "metrics": {
+        "leads_created": "العملاء المُنشَؤون",
+        "activations": "عمليات التنشيط",
+        "first_trips": "الرحلات الأولى",
+        "conversion_rate": "معدّل التحويل"
+      },
+      "statuses": {
+        "draft": "مسوّدة",
+        "active": "نشطة",
+        "closed": "مغلقة"
+      },
+      "actions": {
+        "activate": "تفعيل",
+        "close": "إغلاق",
+        "leaderboard": "المتصدّرون"
+      }
+    },
+    "audit": {
+      "title": "سجلّ التدقيق",
+      "subtitle": "الإجراءات الإدارية الأخيرة على العملاء والمتابعات والمكافآت والمسابقات وتحويلات واتساب.",
+      "emptyTitle": "لا توجد أحداث في السجل بعد",
+      "emptyBody": "ستظهر هنا التغييرات على العملاء والمتابعات والمكافآت والمسابقات وتحويلات واتساب.",
+      "actorSystem": "النظام"
+    },
+    "reports": {
+      "title": "التقارير",
+      "subtitle": "لقطة على مستوى المستأجر للعملاء والمتابعات ومعدّل التحويل.",
+      "apply": "تطبيق الفلاتر",
+      "filters": {
+        "company": "الشركة",
+        "country": "الدولة",
+        "team": "الفريق",
+        "from": "من",
+        "to": "إلى"
+      },
+      "cards": {
+        "totalLeads": "إجمالي العملاء",
+        "overdue": "متأخّر",
+        "dueToday": "اليوم",
+        "activations": "عمليات التنشيط",
+        "conversion": "معدّل التحويل",
+        "followUpsPending": "متابعات معلّقة",
+        "followUpsDone": "متابعات مكتملة"
+      },
+      "leadsByStage": {
+        "title": "العملاء حسب المرحلة",
+        "subtitle": "التوزيع عبر خط الأنابيب.",
+        "empty": "لا يوجد عملاء ضمن النطاق بعد."
+      }
+    },
+    "whatsapp": {
+      "title": "واتساب",
+      "subtitle": "كل المحادثات عبر الحسابات المتصلة.",
+      "noLead": "لا يوجد عميل مرتبط",
+      "linkLeadCta": "ربط بعميل",
+      "linkLeadTitle": "ربط المحادثة بعميل",
+      "linkLeadHint": "اختر عميلاً لربط هذه المحادثة به.",
+      "linked": "تم ربط المحادثة.",
+      "selectAConversation": "اختر محادثة",
+      "selectAConversationHint": "اختر واحدة من القائمة لقراءة رسائلها.",
+      "noMessages": "لا توجد رسائل بعد",
+      "handoverCta": "تحويل",
+      "handoverNeedsLead": "اربط المحادثة بعميل أولاً.",
+      "handoverTitle": "تحويل المحادثة إلى وكيل آخر",
+      "handoverHint": "يُعاد إسناد العميل وتُسجَّل عملية في سجلّ التدقيق.",
+      "handoverNewAssignee": "الوكيل الجديد",
+      "handoverModeLabel": "نوع التحويل",
+      "handoverModes": {
+        "full": {
+          "title": "تحويل كامل",
+          "body": "الاحتفاظ بكلّ سجلّ الرسائل، مع إعادة الإسناد فقط."
+        },
+        "clean": {
+          "title": "تحويل نظيف",
+          "body": "إغلاق المحادثة الحالية، وأي رسالة واردة لاحقاً تبدأ محادثة جديدة."
+        },
+        "summary": {
+          "title": "تحويل بملخّص",
+          "body": "إضافة ملخّص تحويل كملاحظة على العميل."
+        }
+      },
+      "handoverSummary": "ملخّص التحويل",
+      "handoverSummaryPlaceholder": "اكتب ما ينبغي أن يعرفه الوكيل الجديد…",
+      "handoverNotify": "إشعار الوكيل الجديد (يُسجَّل في سجلّ التدقيق).",
+      "handoverConfirm": "تحويل",
+      "handoverDone": "تم تحويل المحادثة."
     }
   },
   "agent": {
@@ -308,9 +470,66 @@
       "heading": "هيكل واجهة الوكيل",
       "body": "C4 يوفّر السطح فقط. صندوق محادثات واتساب وتفاصيل العميل وصفحات الأداء تأتي في المرحلة 1.5 (W1–W12)."
     },
+    "workspace": {
+      "title": "العملاء المسنَدون لي",
+      "subtitle": "العملاء المسنَدون إليك حالياً. حدّث المرحلة وسجّل ملاحظة وحدّد الإجراء التالي.",
+      "open": "فتح عملائي",
+      "counters": {
+        "overdue": "متأخّرون",
+        "dueToday": "اليوم"
+      },
+      "overdueSection": {
+        "title": "عملاء متأخّرون",
+        "dueLabel": "كان مستحقّاً"
+      },
+      "dueTodaySection": {
+        "title": "مستحقّ اليوم",
+        "atLabel": "الساعة"
+      },
+      "noUser": "سجّل الدخول لعرض العملاء المسنَدين إليك.",
+      "emptyTitle": "لا يوجد عملاء مسنَدون إليك بعد",
+      "emptyBody": "عند إسناد عملاء إليك من قِبَل المدير سيظهرون هنا.",
+      "updateDone": "تم تحديث العميل.",
+      "updateModalTitle": "تحديث العميل",
+      "updateStageLabel": "المرحلة",
+      "updateNoteLabel": "ملاحظة (اختيارية)",
+      "updateNotePlaceholder": "ما الذي حدث مع هذا العميل؟",
+      "updateScheduleToggle": "جدولة الإجراء التالي",
+      "stagePickerPlaceholder": "اختر مرحلة…",
+      "nextActionType": "النوع",
+      "nextActionDate": "التاريخ",
+      "nextActionTime": "الوقت",
+      "overdueIndicator": "لديه متابعة متأخرة",
+      "cols": {
+        "name": "العميل",
+        "source": "المصدر",
+        "stage": "المرحلة",
+        "sla": "SLA",
+        "actions": "إجراءات"
+      },
+      "actions": {
+        "update": "تحديث",
+        "openDetail": "فتح"
+      },
+      "followUps": {
+        "title": "متابعاتي",
+        "empty": "—",
+        "emptyHint": "لا توجد متابعات معلّقة. جدول واحدة عند تحديث عميل.",
+        "pending": "معلّقة",
+        "overdue": "متأخرة",
+        "complete": "تمت",
+        "types": {
+          "call": "اتصال",
+          "whatsapp": "واتساب",
+          "visit": "زيارة",
+          "other": "أخرى"
+        }
+      }
+    },
     "inbox": {
       "title": "صندوق محادثات واتساب",
       "subtitle": "محادثات مباشرة مع العملاء المحتملين والكباتن.",
+      "open": "فتح الصندوق",
       "phoneFilter": "تصفية حسب الهاتف",
       "phoneFilterPlaceholder": "+201001112222",
       "accountFilter": "حساب واتساب",

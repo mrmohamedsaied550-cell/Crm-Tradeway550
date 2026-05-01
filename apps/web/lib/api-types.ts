@@ -123,6 +123,10 @@ export interface Lead {
   slaDueAt: string | null;
   slaStatus: SlaStatus;
   lastResponseAt: string | null;
+  /** C37 — denormalised. */
+  lastActivityAt?: string | null;
+  /** C37 — soonest pending follow-up's dueAt; null when none. */
+  nextActionDueAt?: string | null;
   createdAt: string;
   updatedAt: string;
   captain?: Pick<Captain, 'id' | 'onboardingStatus'> | null;
@@ -193,6 +197,73 @@ export interface SendConversationMessageResult {
   messageId: string;
   providerMessageId: string;
   conversationId: string;
+}
+
+// ───── Bonuses (C32) ─────
+
+export type BonusType =
+  | 'first_trip'
+  | 'activation'
+  | 'trip_milestone'
+  | 'conversion_rate'
+  | 'manual';
+
+export interface BonusRule {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  countryId: string;
+  teamId: string | null;
+  roleId: string | null;
+  bonusType: BonusType;
+  trigger: string;
+  /** Decimal-as-string from Prisma; render with Number(...) where needed. */
+  amount: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Competitions (C33) ─────
+
+export type CompetitionMetric = 'leads_created' | 'activations' | 'first_trips' | 'conversion_rate';
+
+export type CompetitionStatus = 'draft' | 'active' | 'closed';
+
+export interface Competition {
+  id: string;
+  tenantId: string;
+  name: string;
+  companyId: string | null;
+  countryId: string | null;
+  teamId: string | null;
+  startDate: string;
+  endDate: string;
+  metric: CompetitionMetric;
+  reward: string;
+  status: CompetitionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Follow-ups (C36) ─────
+
+export type FollowUpActionType = 'call' | 'whatsapp' | 'visit' | 'other';
+
+export interface LeadFollowUp {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  actionType: FollowUpActionType;
+  dueAt: string;
+  note: string | null;
+  completedAt: string | null;
+  assignedToId: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Present on /follow-ups/mine. */
+  lead?: { id: string; name: string; phone: string };
 }
 
 // ───── WhatsApp accounts (C24A) — read-only client view ─────

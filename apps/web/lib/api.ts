@@ -32,6 +32,13 @@ import type {
   PaginatedResult,
   PipelineStage,
   RoleSummary,
+  BonusRule,
+  BonusType,
+  Competition,
+  CompetitionMetric,
+  CompetitionStatus,
+  FollowUpActionType,
+  LeadFollowUp,
   SendConversationMessageResult,
   WhatsAppAccount,
   Team,
@@ -78,7 +85,17 @@ async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T>
   };
   const token = opts.bearerToken === undefined ? getAccessToken() : opts.bearerToken;
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const tenantCode = opts.tenantCode === undefined ? getTenantCode() : opts.tenantCode;
+  // X-Tenant is the dev fallback for unauthenticated paths. The server's
+  // tenant context middleware (C27) prefers the JWT `tid` claim and only
+  // honours the header in non-production. Sending it on authenticated
+  // calls accomplishes nothing except triggering a CORS preflight that
+  // fails unless the operator has explicitly added X-Tenant to the
+  // server's allowedHeaders list — so we omit it whenever a Bearer
+  // token is already present. Callers can still pass `tenantCode`
+  // explicitly (e.g. login passes `null`); only the implicit
+  // localStorage-driven path is gated.
+  const explicitTenant = opts.tenantCode !== undefined;
+  const tenantCode = explicitTenant ? opts.tenantCode : token ? null : getTenantCode();
   if (tenantCode) headers['X-Tenant'] = tenantCode;
 
   let body: BodyInit | undefined;
@@ -267,6 +284,13 @@ export const leadsApi = {
       offset?: number;
     } = {},
   ): Promise<PaginatedResult<Lead>> => apiFetch<PaginatedResult<Lead>>('/leads', { query }),
+  /** C37 — leads whose pending follow-up is past its dueAt. Defaults
+   *  to the calling user; pass `mine: '0'` to broaden to all. */
+  overdue: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>
+    apiFetch<Lead[]>('/leads/overdue', { query }),
+  /** C37 — leads with a pending follow-up due today. */
+  dueToday: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>
+    apiFetch<Lead[]>('/leads/due-today', { query }),
   get: (id: string): Promise<Lead> => apiFetch<Lead>(`/leads/${id}`),
   create: (input: {
     name: string;
@@ -342,6 +366,33 @@ export const conversationsApi = {
     } = {},
   ): Promise<PaginatedResult<WhatsAppConversation>> =>
     apiFetch<PaginatedResult<WhatsAppConversation>>('/conversations', { query }),
+  linkLead: (id: string, leadId: string): Promise<{ id: string; leadId: string | null }> =>
+    apiFetch<{ id: string; leadId: string | null }>(`/conversations/${id}/link-lead`, {
+      method: 'POST',
+      body: { leadId },
+    }),
+  handover: (
+    id: string,
+    input: {
+      newAssigneeId: string;
+      mode: 'full' | 'clean' | 'summary';
+      summary?: string;
+      notify?: boolean;
+    },
+  ): Promise<{
+    conversationId: string;
+    leadId: string;
+    fromUserId: string | null;
+    toUserId: string;
+    mode: 'full' | 'clean' | 'summary';
+  }> =>
+    apiFetch<{
+      conversationId: string;
+      leadId: string;
+      fromUserId: string | null;
+      toUserId: string;
+      mode: 'full' | 'clean' | 'summary';
+    }>(`/conversations/${id}/handover`, { method: 'POST', body: input }),
   get: (id: string): Promise<WhatsAppConversation> =>
     apiFetch<WhatsAppConversation>(`/conversations/${id}`),
   listMessages: (id: string, query: { limit?: number } = {}): Promise<WhatsAppMessage[]> =>
@@ -365,4 +416,145 @@ export const conversationsApi = {
  */
 export const whatsappAccountsApi = {
   list: (): Promise<WhatsAppAccount[]> => apiFetch<WhatsAppAccount[]>('/whatsapp/accounts'),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Bonuses (C32)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateBonusRuleInput {
+  companyId: string;
+  countryId: string;
+  teamId?: string | null;
+  roleId?: string | null;
+  bonusType: BonusType;
+  trigger: string;
+  amount: string;
+  isActive?: boolean;
+}
+
+export const bonusesApi = {
+  list: (): Promise<BonusRule[]> => apiFetch<BonusRule[]>('/bonuses'),
+  get: (id: string): Promise<BonusRule> => apiFetch<BonusRule>(`/bonuses/${id}`),
+  create: (input: CreateBonusRuleInput): Promise<BonusRule> =>
+    apiFetch<BonusRule>('/bonuses', { method: 'POST', body: input }),
+  update: (id: string, input: Partial<CreateBonusRuleInput>): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}`, { method: 'PATCH', body: input }),
+  enable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/enable`, { method: 'POST' }),
+  disable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/disable`, { method: 'POST' }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/bonuses/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Competitions (C33)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateCompetitionInput {
+  name: string;
+  companyId?: string | null;
+  countryId?: string | null;
+  teamId?: string | null;
+  startDate: string;
+  endDate: string;
+  metric: CompetitionMetric;
+  reward: string;
+  status?: CompetitionStatus;
+}
+
+export interface LeaderboardEntry {
+  userId: string | null;
+  name: string;
+  email: string | null;
+  score: number;
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Audit (C40)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface AuditRow {
+  source: 'audit_event' | 'lead_activity';
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  actorUserId: string | null;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export const auditApi = {
+  list: (query: { limit?: number; before?: string } = {}): Promise<AuditRow[]> =>
+    apiFetch<AuditRow[]>('/audit', { query }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Reports (C38)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface ReportFilters {
+  companyId?: string;
+  countryId?: string;
+  teamId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface SummaryReport {
+  totalLeads: number;
+  leadsByStage: Array<{ stageCode: string; stageName: string; count: number }>;
+  overdueCount: number;
+  dueTodayCount: number;
+  followUpsPending: number;
+  followUpsDone: number;
+  activations: number;
+  conversionRate: number | null;
+}
+
+export const reportsApi = {
+  summary: (filters: ReportFilters = {}): Promise<SummaryReport> =>
+    apiFetch<SummaryReport>('/reports/summary', {
+      query: { ...filters } as Record<string, string | undefined>,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Follow-ups (C36)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateFollowUpInput {
+  actionType: FollowUpActionType;
+  dueAt: string;
+  note?: string;
+  assignedToId?: string | null;
+}
+
+export const followUpsApi = {
+  mine: (
+    query: { status?: 'pending' | 'overdue' | 'done' | 'all'; limit?: number } = {},
+  ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/mine', { query }),
+  listForLead: (leadId: string): Promise<LeadFollowUp[]> =>
+    apiFetch<LeadFollowUp[]>(`/leads/${leadId}/follow-ups`),
+  create: (leadId: string, input: CreateFollowUpInput): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  complete: (id: string): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/follow-ups/${id}/complete`, { method: 'POST' }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/follow-ups/${id}`, { method: 'DELETE' }),
+};
+
+export const competitionsApi = {
+  list: (): Promise<Competition[]> => apiFetch<Competition[]>('/competitions'),
+  get: (id: string): Promise<Competition> => apiFetch<Competition>(`/competitions/${id}`),
+  create: (input: CreateCompetitionInput): Promise<Competition> =>
+    apiFetch<Competition>('/competitions', { method: 'POST', body: input }),
+  update: (id: string, input: Partial<CreateCompetitionInput>): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}`, { method: 'PATCH', body: input }),
+  setStatus: (id: string, status: CompetitionStatus): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}/status`, { method: 'POST', body: { status } }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/competitions/${id}`, { method: 'DELETE' }),
+  leaderboard: (id: string): Promise<LeaderboardEntry[]> =>
+    apiFetch<LeaderboardEntry[]>(`/competitions/${id}/leaderboard`),
 };

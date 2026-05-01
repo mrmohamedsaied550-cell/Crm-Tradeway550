@@ -82,6 +82,37 @@ export class LeadsController {
     return this.leads.list(query);
   }
 
+  /**
+   * C37 — leads whose pending follow-up is past its dueAt. Defaults
+   * to the calling user's worklist; pass `assignedToId=…` (or `mine=0`)
+   * to override / broaden.
+   */
+  @Get('leads/overdue')
+  @ApiOperation({ summary: 'Overdue leads (pending follow-up dueAt < now)' })
+  listOverdue(
+    @Query('assignedToId') assignedToId: string | undefined,
+    @Query('mine') mine: string | undefined,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    const filter = assignedToId ?? (mine === '0' ? undefined : user.sub);
+    return this.leads.listOverdue({ assignedToId: filter });
+  }
+
+  /**
+   * C37 — leads whose pending follow-up falls within today's window.
+   * Same defaults as /leads/overdue.
+   */
+  @Get('leads/due-today')
+  @ApiOperation({ summary: 'Leads with a pending follow-up due today' })
+  listDueToday(
+    @Query('assignedToId') assignedToId: string | undefined,
+    @Query('mine') mine: string | undefined,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    const filter = assignedToId ?? (mine === '0' ? undefined : user.sub);
+    return this.leads.listDueToday({ assignedToId: filter });
+  }
+
   @Get('leads/:id')
   @ApiOperation({ summary: 'Get a lead by id' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {

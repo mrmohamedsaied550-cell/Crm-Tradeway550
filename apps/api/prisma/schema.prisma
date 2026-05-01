@@ -53,6 +53,10 @@ model Tenant {
   whatsAppAccounts      WhatsAppAccount[]
   whatsAppMessages      WhatsAppMessage[]
   whatsAppConversations WhatsAppConversation[]
+  bonusRules            BonusRule[]
+  competitions          Competition[]
+  leadFollowUps         LeadFollowUp[]
+  auditEvents           AuditEvent[]
 
   @@map("tenants")
 }
@@ -91,6 +95,7 @@ model Role {
 
   capabilities RoleCapability[]
   users        User[]
+  bonusRules   BonusRule[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -167,6 +172,13 @@ model User {
   createdLeads   Lead[]         @relation("LeadCreator")
   assignedLeads  Lead[]         @relation("LeadAssignee")
   authoredActivities LeadActivity[]
+  /// C36 — follow-ups the user is responsible for. The owner of a
+  /// follow-up is `assignedToId`; `createdById` is who scheduled it
+  /// (may be the same).
+  assignedFollowUps  LeadFollowUp[] @relation("LeadFollowUpAssignee")
+  createdFollowUps   LeadFollowUp[] @relation("LeadFollowUpCreator")
+  /// C40 — audit-event rows authored by this user.
+  auditEvents        AuditEvent[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -265,12 +277,25 @@ model Lead {
   slaStatus       String    @default("active") @map("sla_status")
   lastResponseAt  DateTime? @map("last_response_at") @db.Timestamptz(6)
 
+  /// Discipline tracking (C37).
+  /// `lastActivityAt` is the timestamp of the most recent activity row
+  /// of any type — denormalised from MAX(lead_activities.created_at)
+  /// so the agent inbox can sort / filter without joining.
+  /// `nextActionDueAt` is the dueAt of the soonest pending follow-up
+  /// (LeadFollowUp where completedAt IS NULL). The follow-ups service
+  /// keeps this in sync on insert / complete / delete. Used for the
+  /// /leads/overdue and /leads/due-today endpoints + the agent
+  /// workspace's red-amber counters.
+  lastActivityAt  DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  nextActionDueAt DateTime? @map("next_action_due_at") @db.Timestamptz(6)
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   captain    Captain?
   activities LeadActivity[]
   whatsappConversations WhatsAppConversation[]
+  followUps  LeadFollowUp[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
@@ -278,6 +303,8 @@ model Lead {
   @@index([tenantId, createdAt])
   // Hot path for the SLA breach scanner: `WHERE tenant=? AND slaStatus='active' AND slaDueAt < now`.
   @@index([tenantId, slaStatus, slaDueAt])
+  // C37 — overdue / due-today scans by assignee + next action.
+  @@index([tenantId, assignedToId, nextActionDueAt])
   @@map("leads")
 }
 
@@ -367,7 +394,9 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  countries Country[]
+  countries    Country[]
+  bonusRules   BonusRule[]
+  competitions Competition[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -393,7 +422,9 @@ model Country {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  teams Team[]
+  teams        Team[]
+  bonusRules   BonusRule[]
+  competitions Competition[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.
@@ -419,8 +450,10 @@ model Team {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users    User[]
-  captains Captain[]
+  users        User[]
+  captains     Captain[]
+  bonusRules   BonusRule[]
+  competitions Competition[]
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
@@ -597,4 +630,130 @@ model WhatsAppRoute {
 
   @@index([verifyToken])
   @@map("whatsapp_routes")
+}
+
+/// BonusRule (C32) — admin-managed bonus configuration.
+/// Scope: Company × Country, optionally narrowed by Team and/or Role.
+/// Type: one of first_trip / activation / trip_milestone / conversion_rate / manual.
+/// `trigger` is a free-text description (e.g. "5 first trips in week").
+/// `amount` is in tenant default currency (Decimal, 12 / 2). Payout
+/// engine + bonus-period accruals land in a later chunk; for the MVP
+/// we only manage rules.
+model BonusRule {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  companyId String   @map("company_id") @db.Uuid
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  countryId String   @map("country_id") @db.Uuid
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  teamId    String?  @map("team_id") @db.Uuid
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  roleId    String?  @map("role_id") @db.Uuid
+  role      Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  bonusType String   @map("bonus_type")
+  trigger   String
+  amount    Decimal  @db.Decimal(12, 2)
+  isActive  Boolean  @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, isActive])
+  @@index([tenantId, companyId, countryId])
+  @@map("bonus_rules")
+}
+
+/// AuditEvent (C40) — non-lead-scoped admin actions.
+///
+/// Lead-scoped events (note, stage_change, assignment, sla_breach,
+/// whatsapp_handover) live on `lead_activities` already. This table
+/// captures the rest: bonus rule changes, competition changes,
+/// follow-up create / complete, etc. The unified /audit endpoint
+/// streams both tables in a single normalized view sorted desc by
+/// timestamp.
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Stable action verb, e.g. "bonus.create", "competition.status_change".
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  payload     Json?
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action, createdAt])
+  @@map("audit_events")
+}
+
+/// LeadFollowUp (C36) — a scheduled future action on a lead.
+///
+/// Type is one of: call / whatsapp / visit / other. `dueAt` is when
+/// it should happen. `assignedToId` is the agent who owns the
+/// follow-up (defaults to the lead's current assignee, but can be
+/// overridden at create time). `completedAt` flips when the agent
+/// marks it done — overdue = !completed && dueAt < now.
+model LeadFollowUp {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId      String   @map("lead_id") @db.Uuid
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  actionType  String   @map("action_type")
+  dueAt       DateTime @map("due_at") @db.Timestamptz(6)
+  note        String?
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  assignedToId String? @map("assigned_to_id") @db.Uuid
+  assignedTo   User?   @relation("LeadFollowUpAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdById  String? @map("created_by_id") @db.Uuid
+  createdBy    User?   @relation("LeadFollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId, dueAt])
+  // Hot path: "my open follow-ups, soonest first" + the overdue scan.
+  @@index([tenantId, assignedToId, completedAt, dueAt])
+  @@map("lead_followups")
+}
+
+/// Competition (C33) — admin-managed agent / team contest definition.
+/// `metric` is the leaderboard yardstick: leads_created / activations
+/// / first_trips / conversion_rate. `status` is draft / active / closed.
+/// Leaderboard computation is best-effort against the existing data
+/// (leads + lead_activities); a richer materialised view ships later.
+model Competition {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  countryId String?  @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  teamId    String?  @map("team_id") @db.Uuid
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  startDate DateTime @map("start_date") @db.Timestamptz(6)
+  endDate   DateTime @map("end_date") @db.Timestamptz(6)
+  metric    String
+  reward    String
+  status    String   @default("draft")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, status, startDate])
+  @@map("competitions")
 }

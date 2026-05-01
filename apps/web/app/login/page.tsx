@@ -7,7 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { ApiError, authApi } from '@/lib/api';
-import { setAccessToken, setCachedMe, setTenantCode, getAccessToken } from '@/lib/auth';
+import {
+  setAccessToken,
+  setCachedMe,
+  setRefreshToken,
+  setTenantCode,
+  getAccessToken,
+} from '@/lib/auth';
 
 const DEFAULT_TENANT_CODE = 'trade_way_default';
 
@@ -41,7 +47,10 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       const result = await authApi.login({ email, password, tenantCode });
+      // Persist BOTH tokens so the upcoming refresh flow + any direct
+      // /auth/refresh / /auth/logout calls can find the refresh token.
       setAccessToken(result.accessToken);
+      setRefreshToken(result.refreshToken);
       setTenantCode(tenantCode);
       setCachedMe({
         userId: result.user.id,
@@ -54,7 +63,19 @@ export default function LoginPage() {
       });
       router.push(next);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : t('failed');
+      // ApiError → server-side reject (4xx/5xx) with a friendly message.
+      // Anything else is a network / CORS / config failure — surface the
+      // real message so the operator can see e.g. "Failed to fetch" or
+      // "NetworkError when attempting to fetch resource" instead of a
+      // generic "Sign-in failed" that hides the cause.
+      let message: string;
+      if (err instanceof ApiError) {
+        message = err.message;
+      } else if (err instanceof Error && err.message) {
+        message = `${t('failed')}: ${err.message}`;
+      } else {
+        message = t('failed');
+      }
       setError(message);
     } finally {
       setSubmitting(false);

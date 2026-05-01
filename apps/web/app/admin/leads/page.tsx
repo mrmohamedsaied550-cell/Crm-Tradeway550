@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Plus } from 'lucide-react';
+import { Plus, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -143,6 +143,31 @@ export default function LeadsPage(): JSX.Element {
     }
   }
 
+  // C39 — round-robin auto-assign for one lead.
+  const [autoAssigning, setAutoAssigning] = useState<Set<string>>(new Set());
+  async function onAutoAssign(row: Lead): Promise<void> {
+    if (autoAssigning.has(row.id)) return;
+    setAutoAssigning((s) => new Set(s).add(row.id));
+    setError(null);
+    try {
+      const result = await leadsApi.autoAssign(row.id);
+      if (result === null) {
+        setError(t('autoAssignNoEligible'));
+      } else {
+        setNotice(t('autoAssigned'));
+      }
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setAutoAssigning((s) => {
+        const next = new Set(s);
+        next.delete(row.id);
+        return next;
+      });
+    }
+  }
+
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
@@ -180,6 +205,25 @@ export default function LeadsPage(): JSX.Element {
       key: 'source',
       header: t('source'),
       render: (r) => <span className="text-xs text-ink-secondary">{r.source}</span>,
+    },
+    {
+      key: 'actions',
+      header: tCommon('actions'),
+      render: (r) =>
+        r.stage.isTerminal ? (
+          <span className="text-xs text-ink-tertiary">—</span>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void onAutoAssign(r)}
+            loading={autoAssigning.has(r.id)}
+            disabled={autoAssigning.has(r.id)}
+          >
+            <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('autoAssign')}
+          </Button>
+        ),
     },
   ];
 

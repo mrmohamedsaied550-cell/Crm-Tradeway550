@@ -14,6 +14,11 @@ import { IdentityModule } from './identity/identity.module';
 import { CrmModule } from './crm/crm.module';
 import { OrgModule } from './org/org.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { BonusesModule } from './bonuses/bonuses.module';
+import { CompetitionsModule } from './competitions/competitions.module';
+import { FollowUpsModule } from './follow-ups/follow-ups.module';
+import { ReportsModule } from './reports/reports.module';
+import { AuditModule } from './audit/audit.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -44,6 +49,11 @@ import { buildLoggerConfig } from './common/logger';
     CrmModule,
     OrgModule,
     WhatsAppModule,
+    BonusesModule,
+    CompetitionsModule,
+    FollowUpsModule,
+    ReportsModule,
+    AuditModule,
     HealthModule,
   ],
   providers: [
