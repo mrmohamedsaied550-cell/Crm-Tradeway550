@@ -14,11 +14,20 @@
  */
 
 import { API_BASE_URL, API_VERSION_PREFIX } from './api-base';
-import { getAccessToken, getTenantCode } from './auth';
+import {
+  clearAuth,
+  getAccessToken,
+  getRefreshToken,
+  getTenantCode,
+  setAccessToken,
+  setRefreshToken,
+} from './auth';
 import type {
   AdminUser,
   Captain,
+  CaptainDocument,
   CaptainStatus,
+  CaptainTripRow,
   Company,
   ConversationStatus,
   Country,
@@ -31,6 +40,8 @@ import type {
   MeUser,
   PaginatedResult,
   PipelineStage,
+  RecordTripResult,
+  RefreshResponse,
   RoleSummary,
   BonusAccrual,
   BonusAccrualStatus,
@@ -42,8 +53,12 @@ import type {
   FollowUpActionType,
   LeadFollowUp,
   MetaLeadSource,
+  Pipeline,
+  PipelineStageRow,
   SendConversationMessageResult,
+  TenantSettingsRow,
   WhatsAppAccount,
+  WhatsAppTemplateRow,
   Team,
   UserStatus,
   WhatsAppConversation,
@@ -70,6 +85,13 @@ interface ApiFetchOptions {
   bearerToken?: string | null;
   /** Send the tenant code as `X-Tenant`. Defaults to whatever auth.ts has. */
   tenantCode?: string | null;
+  /**
+   * P2-10 — internal flag. When `true`, the 401-refresh interceptor
+   * skips its retry path and just throws so we don't recurse forever
+   * (a refreshed token still hitting 401 means the underlying
+   * authorisation is broken, not the token).
+   */
+  _isRetry?: boolean;
 }
 
 function buildUrl(path: string, query: ApiFetchOptions['query']): string {
@@ -80,6 +102,89 @@ function buildUrl(path: string, query: ApiFetchOptions['query']): string {
     }
   }
   return url.toString();
+}
+
+/**
+ * P2-10 — single-flight refresh promise.
+ *
+ * Multiple in-flight 401s share the same refresh round-trip so we
+ * don't run N parallel `/auth/refresh` calls and burn N refresh
+ * tokens (the server's reuse-detection would then revoke the entire
+ * session chain on the second call). Cleared once the refresh
+ * settles, regardless of outcome.
+ */
+let inFlightRefresh: Promise<string | null> | null = null;
+
+/**
+ * Try once to rotate the refresh token. Returns the new access
+ * token on success, or null on failure (in which case
+ * `clearAuth()` has already been called by `apiFetch`'s caller).
+ *
+ * The fetch here is intentionally low-level (raw `fetch`, no
+ * `apiFetch` recursion): a refresh-token call going through
+ * apiFetch would pass through the same 401-retry logic and could
+ * loop forever.
+ */
+async function refreshTokensOnce(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  let res: Response;
+  try {
+    res = await fetch(buildUrl('/auth/refresh', undefined), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken }),
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const parsed = (await res.json().catch(() => null)) as RefreshResponse | null;
+  if (
+    !parsed ||
+    typeof parsed.accessToken !== 'string' ||
+    typeof parsed.refreshToken !== 'string'
+  ) {
+    return null;
+  }
+  setAccessToken(parsed.accessToken);
+  setRefreshToken(parsed.refreshToken);
+  return parsed.accessToken;
+}
+
+/**
+ * Coalesces concurrent refresh attempts to a single in-flight
+ * promise. Every caller awaits the same outcome.
+ */
+function refreshTokensSingleFlight(): Promise<string | null> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = refreshTokensOnce().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+/**
+ * P2-10 — when refresh fails (or there's no refresh token), wipe
+ * the cached identity and bounce the operator to /login. We do
+ * this from the API client so a stale tab automatically heals
+ * itself instead of presenting cryptic 401 toasts.
+ */
+function forceLogout(): void {
+  clearAuth();
+  if (typeof window !== 'undefined') {
+    const here = window.location.pathname + window.location.search;
+    // Avoid bouncing infinitely if we're already on /login.
+    if (!window.location.pathname.startsWith('/login')) {
+      const next = encodeURIComponent(here);
+      window.location.assign(`/login?next=${next}`);
+    }
+  }
 }
 
 async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T> {
@@ -128,6 +233,31 @@ async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T>
   }
 
   if (!res.ok) {
+    // P2-10 — auto-refresh on 401 for authenticated requests.
+    //
+    // Conditions that must ALL hold:
+    //   - status is 401,
+    //   - the original call carried a Bearer token (so it WAS
+    //     authenticated; a 401 from a public endpoint isn't a
+    //     token-expiry signal),
+    //   - this isn't already a retry (`_isRetry` guard prevents
+    //     infinite loops),
+    //   - we're not calling /auth/login or /auth/refresh ourselves
+    //     (those use bearerToken: null and bypass anyway, but
+    //     belt-and-braces).
+    //
+    // On success: re-issue the request once with the fresh token.
+    // On failure: clear local auth and redirect to /login so the
+    // user can sign in again.
+    const isAuthEndpoint = path.startsWith('/auth/refresh') || path.startsWith('/auth/login');
+    if (res.status === 401 && token && !opts._isRetry && !isAuthEndpoint) {
+      const newToken = await refreshTokensSingleFlight();
+      if (newToken) {
+        return apiFetch<T>(path, { ...opts, _isRetry: true });
+      }
+      forceLogout();
+    }
+
     const obj = parsed as Record<string, unknown> | null;
     // Nest's exception filter typically wraps error payloads as
     // { statusCode, message: <inner>, error }. The inner message we attach
@@ -161,6 +291,20 @@ export const authApi = {
     return apiFetch<LoginResponse>('/auth/login', {
       method: 'POST',
       body: input,
+      bearerToken: null,
+      tenantCode: null,
+    });
+  },
+  /**
+   * P2-10 — explicit rotate-the-tokens endpoint. The transparent
+   * 401-retry path inside `apiFetch` is what most callers rely on;
+   * this is exposed for tests and for any future "refresh before
+   * the access token expires" pre-emptive flow.
+   */
+  refresh(refreshToken: string): Promise<RefreshResponse> {
+    return apiFetch<RefreshResponse>('/auth/refresh', {
+      method: 'POST',
+      body: { refreshToken },
       bearerToken: null,
       tenantCode: null,
     });
@@ -277,6 +421,52 @@ export const pipelineApi = {
   listStages: (): Promise<PipelineStage[]> => apiFetch<PipelineStage[]>('/pipeline/stages'),
 };
 
+// ───────────────────────────────────────────────────────────────────────
+// Pipeline Builder (P2-07) — admin CRUD over pipelines + their stages.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreatePipelineInput {
+  name: string;
+  companyId?: string | null;
+  countryId?: string | null;
+  isActive?: boolean;
+}
+export interface CreatePipelineStageInput {
+  code: string;
+  name: string;
+  order?: number;
+  isTerminal?: boolean;
+}
+
+export const pipelinesApi = {
+  list: (): Promise<Pipeline[]> => apiFetch<Pipeline[]>('/pipelines'),
+  get: (id: string): Promise<Pipeline> => apiFetch<Pipeline>(`/pipelines/${id}`),
+  create: (input: CreatePipelineInput): Promise<Pipeline> =>
+    apiFetch<Pipeline>('/pipelines', { method: 'POST', body: input }),
+  update: (id: string, input: { name?: string; isActive?: boolean }): Promise<Pipeline> =>
+    apiFetch<Pipeline>(`/pipelines/${id}`, { method: 'PATCH', body: input }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/pipelines/${id}`, { method: 'DELETE' }),
+
+  addStage: (id: string, input: CreatePipelineStageInput): Promise<PipelineStageRow> =>
+    apiFetch<PipelineStageRow>(`/pipelines/${id}/stages`, { method: 'POST', body: input }),
+  updateStage: (
+    id: string,
+    stageId: string,
+    input: { name?: string; isTerminal?: boolean },
+  ): Promise<PipelineStageRow> =>
+    apiFetch<PipelineStageRow>(`/pipelines/${id}/stages/${stageId}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  removeStage: (id: string, stageId: string): Promise<void> =>
+    apiFetch<void>(`/pipelines/${id}/stages/${stageId}`, { method: 'DELETE' }),
+  reorderStages: (id: string, stageIds: string[]): Promise<PipelineStageRow[]> =>
+    apiFetch<PipelineStageRow[]>(`/pipelines/${id}/stages/reorder`, {
+      method: 'POST',
+      body: { stageIds },
+    }),
+};
+
 export const leadsApi = {
   list: (
     query: {
@@ -371,6 +561,57 @@ export const captainsApi = {
 };
 
 // ───────────────────────────────────────────────────────────────────────
+// Captain documents + trip telemetry (P2-09)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface UploadCaptainDocumentInput {
+  kind: string;
+  storageRef: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  expiresAt?: string | null;
+}
+
+export interface RecordTripInput {
+  tripId: string;
+  occurredAt: string;
+  payload?: Record<string, unknown>;
+}
+
+export const captainDocumentsApi = {
+  listForCaptain: (captainId: string, status?: string): Promise<CaptainDocument[]> =>
+    apiFetch<CaptainDocument[]>(`/captains/${captainId}/documents`, {
+      query: status ? { status } : undefined,
+    }),
+  upload: (captainId: string, input: UploadCaptainDocumentInput): Promise<CaptainDocument> =>
+    apiFetch<CaptainDocument>(`/captains/${captainId}/documents`, {
+      method: 'POST',
+      body: input,
+    }),
+  review: (
+    docId: string,
+    input: { decision: 'approve' | 'reject'; notes?: string },
+  ): Promise<CaptainDocument> =>
+    apiFetch<CaptainDocument>(`/captain-documents/${docId}/review`, {
+      method: 'POST',
+      body: input,
+    }),
+  remove: (docId: string): Promise<void> =>
+    apiFetch<void>(`/captain-documents/${docId}`, { method: 'DELETE' }),
+};
+
+export const captainTripsApi = {
+  listForCaptain: (captainId: string): Promise<CaptainTripRow[]> =>
+    apiFetch<CaptainTripRow[]>(`/captains/${captainId}/trips`),
+  record: (captainId: string, input: RecordTripInput): Promise<RecordTripResult> =>
+    apiFetch<RecordTripResult>(`/captains/${captainId}/trips`, {
+      method: 'POST',
+      body: input,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // WhatsApp — conversations + messages (C22 / C23)
 // ───────────────────────────────────────────────────────────────────────
 
@@ -421,6 +662,66 @@ export const conversationsApi = {
       method: 'POST',
       body: { text },
     }),
+  /** P2-12 — send a Meta-approved template; allowed even outside the 24h window. */
+  sendTemplate: (
+    id: string,
+    input: { templateName: string; language: string; variables: string[] },
+  ): Promise<SendConversationMessageResult> =>
+    apiFetch<SendConversationMessageResult>(`/conversations/${id}/messages/template`, {
+      method: 'POST',
+      body: input,
+    }),
+  /** P2-12 — send media (image / document); gated by the 24h window. */
+  sendMedia: (
+    id: string,
+    input: {
+      kind: 'image' | 'document';
+      mediaUrl: string;
+      mediaMimeType?: string;
+      caption?: string;
+    },
+  ): Promise<SendConversationMessageResult> =>
+    apiFetch<SendConversationMessageResult>(`/conversations/${id}/messages/media`, {
+      method: 'POST',
+      body: input,
+    }),
+};
+
+/**
+ * P2-12 — admin CRUD over the WhatsApp template picker.
+ */
+export interface CreateWhatsAppTemplateInput {
+  accountId: string;
+  name: string;
+  language: string;
+  category: 'marketing' | 'utility' | 'authentication';
+  bodyText: string;
+  status?: 'approved' | 'paused' | 'rejected';
+}
+
+export const whatsappTemplatesApi = {
+  list: (
+    query: { accountId?: string; status?: 'approved' | 'paused' | 'rejected' } = {},
+  ): Promise<WhatsAppTemplateRow[]> =>
+    apiFetch<WhatsAppTemplateRow[]>('/whatsapp/templates', { query }),
+  get: (id: string): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>(`/whatsapp/templates/${id}`),
+  create: (input: CreateWhatsAppTemplateInput): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>('/whatsapp/templates', { method: 'POST', body: input }),
+  update: (
+    id: string,
+    input: {
+      bodyText?: string;
+      category?: 'marketing' | 'utility' | 'authentication';
+      status?: 'approved' | 'paused' | 'rejected';
+    },
+  ): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>(`/whatsapp/templates/${id}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/whatsapp/templates/${id}`, { method: 'DELETE' }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -591,11 +892,42 @@ export interface SummaryReport {
   conversionRate: number | null;
 }
 
+export type TimeseriesMetric = 'leads_created' | 'activations' | 'first_trips';
+
+export interface TimeseriesPoint {
+  date: string;
+  count: number;
+}
+
+export interface TimeseriesReport {
+  metric: TimeseriesMetric;
+  from: string;
+  to: string;
+  points: TimeseriesPoint[];
+}
+
 export const reportsApi = {
   summary: (filters: ReportFilters = {}): Promise<SummaryReport> =>
     apiFetch<SummaryReport>('/reports/summary', {
       query: { ...filters } as Record<string, string | undefined>,
     }),
+  timeseries: (filters: ReportFilters & { metric: TimeseriesMetric }): Promise<TimeseriesReport> =>
+    apiFetch<TimeseriesReport>('/reports/timeseries', {
+      query: { ...filters } as Record<string, string | undefined>,
+    }),
+  /**
+   * P2-11 — returns the URL for the CSV export, with the access
+   * token embedded in the Authorization header via a fetch + blob
+   * download. Browser-friendly: triggers a download by clicking
+   * a synthesised <a> with `download="..."`.
+   */
+  exportCsvUrl: (filters: ReportFilters = {}): string => {
+    const url = new URL(`${API_BASE_URL}${API_VERSION_PREFIX}/reports/export.csv`);
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+    return url.toString();
+  },
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -664,4 +996,20 @@ export const metaLeadSourcesApi = {
     apiFetch<MetaLeadSource>(`/meta-lead-sources/${id}`, { method: 'PATCH', body: input }),
   remove: (id: string): Promise<void> =>
     apiFetch<void>(`/meta-lead-sources/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Tenant settings (P2-08) — timezone / SLA window / default dial code.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface UpdateTenantSettingsInput {
+  timezone?: string;
+  slaMinutes?: number;
+  defaultDialCode?: string;
+}
+
+export const tenantSettingsApi = {
+  get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
+  update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
+    apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
 };

@@ -7,9 +7,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PipelineService } from './pipeline.service';
 import { DEFAULT_STAGE_CODE, isSlaResetting, type ActivityType } from './pipeline.registry';
-import { normalizeE164 } from './phone.util';
+import { normalizeE164WithDefault } from './phone.util';
+import { dayBoundsInTimezone } from './time.util';
 import { AssignmentService } from './assignment.service';
 import { SlaService } from './sla.service';
 import type { CreateLeadDto, UpdateLeadDto, AddActivityDto, ListLeadsQueryDto } from './leads.dto';
@@ -30,6 +32,7 @@ export class LeadsService {
     private readonly pipeline: PipelineService,
     private readonly assignment: AssignmentService,
     private readonly sla: SlaService,
+    private readonly tenantSettings: TenantSettingsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -39,12 +42,22 @@ export class LeadsService {
   async create(dto: CreateLeadDto, actorUserId: string) {
     const tenantId = requireTenantId();
     const stage = await this.pipeline.findByCodeOrThrow(dto.stageCode ?? DEFAULT_STAGE_CODE);
+    const settings = await this.tenantSettings.getCurrent();
 
-    // Defensive normalisation. The DTO's zod transform usually does this
-    // before we get here, but the service is also called from tests +
-    // background workers — keeping the canonical form at the service
-    // boundary means the DB never sees a raw user-typed phone.
-    const phone = normalizeE164(dto.phone);
+    // P2-08 — the DTO only sanity-checks the shape; full E.164
+    // normalisation happens here, with the tenant's defaultDialCode
+    // applied to local-format input ("01001234567" → "+201001234567").
+    // A malformed phone surfaces as a 400 with a stable code so the
+    // admin UI can branch.
+    let phone: string;
+    try {
+      phone = normalizeE164WithDefault(dto.phone, settings.defaultDialCode);
+    } catch (err) {
+      throw new BadRequestException({
+        code: 'lead.invalid_phone',
+        message: (err as Error).message,
+      });
+    }
 
     if (dto.assignedToId) {
       await this.assertUserInTenant(dto.assignedToId);
@@ -55,7 +68,7 @@ export class LeadsService {
         const now = new Date();
         // Non-terminal new lead → SLA starts ticking immediately. Terminal
         // (rare on create — admin import case) → SLA paused.
-        const slaDueAt = stage.isTerminal ? null : this.sla.computeDueAt(now);
+        const slaDueAt = stage.isTerminal ? null : this.sla.computeDueAt(now, settings.slaMinutes);
         const slaStatus = stage.isTerminal ? 'paused' : 'active';
 
         const lead = await tx.lead.create({
@@ -187,8 +200,11 @@ export class LeadsService {
   async listDueToday(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
     const tenantId = requireTenantId();
     const now = opts.now ?? new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    // P2-08 — compute the day boundary in the TENANT's timezone, not
+    // the server's. An admin in Cairo and an admin in Casablanca
+    // running off the same server should each see "their" today.
+    const settings = await this.tenantSettings.getCurrent();
+    const { start, end } = dayBoundsInTimezone(now, settings.timezone);
     const where: Prisma.LeadWhereInput = {
       nextActionDueAt: { gte: start, lte: end },
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
@@ -231,7 +247,18 @@ export class LeadsService {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
 
-    const normalizedPhone = dto.phone !== undefined ? normalizeE164(dto.phone) : undefined;
+    const settings = await this.tenantSettings.getCurrent();
+    let normalizedPhone: string | undefined;
+    if (dto.phone !== undefined) {
+      try {
+        normalizedPhone = normalizeE164WithDefault(dto.phone, settings.defaultDialCode);
+      } catch (err) {
+        throw new BadRequestException({
+          code: 'lead.invalid_phone',
+          message: (err as Error).message,
+        });
+      }
+    }
 
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
@@ -284,6 +311,7 @@ export class LeadsService {
       await this.assertUserInTenant(assigneeUserId);
     }
 
+    const settings = await this.tenantSettings.getCurrent();
     return this.prisma.withTenant(tenantId, async (tx) => {
       // Reassignment counts as an SLA-resetting event so the new owner
       // gets a full window. We skip the reset when the lead is in a
@@ -294,7 +322,7 @@ export class LeadsService {
         data: {
           assignedToId: assigneeUserId,
           ...(!inTerminal && {
-            slaDueAt: this.sla.computeDueAt(),
+            slaDueAt: this.sla.computeDueAt(new Date(), settings.slaMinutes),
             slaStatus: 'active',
           }),
         },
@@ -334,6 +362,7 @@ export class LeadsService {
       });
     }
 
+    const settings = await this.tenantSettings.getCurrent();
     return this.prisma.withTenant(tenantId, async (tx) => {
       const pickedId = await this.assignment.assignLeadViaRoundRobin({
         tx,
@@ -360,7 +389,7 @@ export class LeadsService {
       return tx.lead.update({
         where: { id },
         data: {
-          slaDueAt: this.sla.computeDueAt(),
+          slaDueAt: this.sla.computeDueAt(new Date(), settings.slaMinutes),
           slaStatus: 'active',
         },
         include: { stage: true, captain: true },
@@ -383,6 +412,7 @@ export class LeadsService {
       return before;
     }
 
+    const settings = await this.tenantSettings.getCurrent();
     return this.prisma.withTenant(tenantId, async (tx) => {
       // Stage transitions drive SLA state:
       //   non-terminal → fresh window (counts as agent response).
@@ -390,7 +420,11 @@ export class LeadsService {
       const now = new Date();
       const sla: Prisma.LeadUncheckedUpdateInput = toStage.isTerminal
         ? { slaDueAt: null, slaStatus: 'paused' }
-        : { slaDueAt: this.sla.computeDueAt(now), slaStatus: 'active', lastResponseAt: now };
+        : {
+            slaDueAt: this.sla.computeDueAt(now, settings.slaMinutes),
+            slaStatus: 'active',
+            lastResponseAt: now,
+          };
 
       const updated = await tx.lead.update({
         where: { id },
@@ -420,6 +454,7 @@ export class LeadsService {
   async addActivity(id: string, dto: AddActivityDto, actorUserId: string) {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
+    const settings = await this.tenantSettings.getCurrent();
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const created = await tx.leadActivity.create({
@@ -451,7 +486,10 @@ export class LeadsService {
       // converted/lost the clock stays off until a human moves it back
       // to a non-terminal stage via moveStage().
       if (isSlaResetting(dto.type) && !before.stage.isTerminal) {
-        await this.sla.resetForLead(tx, id, { markResponse: true });
+        await this.sla.resetForLead(tx, id, {
+          markResponse: true,
+          slaMinutes: settings.slaMinutes,
+        });
       }
 
       return created;

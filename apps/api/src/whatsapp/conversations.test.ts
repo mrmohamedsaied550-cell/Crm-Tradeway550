@@ -168,11 +168,14 @@ describe('whatsapp — conversation threading (C22)', () => {
   it('outbound sendText threads into the same open conversation as inbound', async () => {
     const account = await svc.findRoutingByPhoneNumberId('PNID-C22-A');
     assert.ok(account);
+    // P2-12 — receivedAt must be within the 24h customer-service
+    // window for the outbound sendText below; using a fixed
+    // historical timestamp would now trip the freeform-window gate.
     const inbound = await svc.persistInbound(account, {
       phone: '+201001100003',
       text: 'inbound first',
       providerMessageId: 'wamid.C22.thread.in',
-      receivedAt: new Date('2026-04-01T12:00:00Z'),
+      receivedAt: new Date(Date.now() - 60_000),
       phoneNumberId: 'PNID-C22-A',
     });
     assert.ok(inbound);

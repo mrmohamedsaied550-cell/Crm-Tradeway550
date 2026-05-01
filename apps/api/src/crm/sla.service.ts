@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
-import { getSlaWindowMs } from './sla.config';
+import { getSlaMinutes } from './sla.config';
 
 export type SlaStatus = 'active' | 'breached' | 'paused';
 
@@ -44,32 +45,63 @@ export class SlaService {
     private readonly prisma: PrismaService,
     private readonly assignment: AssignmentService,
     private readonly notifications?: NotificationsService,
+    // Optional so the existing hand-instantiated test harnesses
+    // (assignment.test.ts, sla.test.ts, ...) keep compiling without
+    // also wiring TenantSettingsService. Production wiring always
+    // supplies it via the global TenantsModule.
+    @Optional() private readonly tenantSettings?: TenantSettingsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
   // helpers used by LeadsService / CaptainsService inside their own tx
   // ───────────────────────────────────────────────────────────────────────
 
-  /** Compute when the SLA expires for a freshly-touched lead. */
-  computeDueAt(now: Date = new Date()): Date {
-    return new Date(now.getTime() + getSlaWindowMs());
+  /**
+   * Compute when the SLA expires for a freshly-touched lead.
+   *
+   * Stays synchronous so the existing inline-in-data callsites
+   * (`tx.lead.update({ data: { slaDueAt: this.sla.computeDueAt(...) } })`)
+   * don't have to be re-written as awaits. When `slaMinutes` is
+   * omitted we fall back to the env-var (`LEAD_SLA_MINUTES`); P2-08
+   * tenant-aware callers fetch the value once via
+   * `getEffectiveSlaMinutes(tenantId)` and pass it down.
+   */
+  computeDueAt(now: Date = new Date(), slaMinutes?: number): Date {
+    const minutes = slaMinutes ?? getSlaMinutes();
+    return new Date(now.getTime() + minutes * 60 * 1000);
+  }
+
+  /**
+   * Resolve the SLA window length for a tenant: settings row when
+   * present, env-var fallback when not. Async because the read
+   * can hit the DB on first call. Keep this off any hot loop —
+   * callers fetch once at the top of a request and reuse.
+   */
+  async getEffectiveSlaMinutes(tenantId: string): Promise<number> {
+    if (!this.tenantSettings) return getSlaMinutes();
+    const settings = await this.tenantSettings.getForTenant(tenantId);
+    return settings.slaMinutes;
   }
 
   /**
    * Set sla_due_at = now + window, sla_status = 'active'. Optionally also
    * stamps `last_response_at` (callers pass `markResponse: true` only for
    * agent-driven activity types — see SLA_RESETTING_ACTIVITY_TYPES).
+   *
+   * P2-08: pass `slaMinutes` to override the env-var fallback with the
+   * tenant-configured value. Callers that don't have it readily
+   * available can omit and accept the env default.
    */
   async resetForLead(
     tx: Prisma.TransactionClient,
     leadId: string,
-    opts: { markResponse?: boolean; now?: Date } = {},
+    opts: { markResponse?: boolean; now?: Date; slaMinutes?: number } = {},
   ): Promise<void> {
     const now = opts.now ?? new Date();
     await tx.lead.update({
       where: { id: leadId },
       data: {
-        slaDueAt: this.computeDueAt(now),
+        slaDueAt: this.computeDueAt(now, opts.slaMinutes),
         slaStatus: 'active',
         ...(opts.markResponse && { lastResponseAt: now }),
       },
@@ -125,6 +157,10 @@ export class SlaService {
     now: Date = new Date(),
   ): Promise<BreachReassignmentResult[]> {
     const tenantId = requireTenantId();
+    // Resolve the tenant's SLA window once for this run so the
+    // "fresh SLA window for the new owner" computation below uses
+    // the configured value instead of the env-var fallback.
+    const slaMinutes = await this.getEffectiveSlaMinutes(tenantId);
     const breaches = await this.findBreachedLeads(now);
     const results: BreachReassignmentResult[] = [];
 
@@ -211,7 +247,7 @@ export class SlaService {
             where: { id: fresh.id },
             data: {
               slaStatus: 'active',
-              slaDueAt: this.computeDueAt(now),
+              slaDueAt: this.computeDueAt(now, slaMinutes),
             },
           });
           // P2-02 — bell the new owner so they pick it up immediately,

@@ -26,6 +26,7 @@ import { SlaService } from '../crm/sla.service';
 import { hashPassword } from '../identity/password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { LeadIngestionService } from './lead-ingestion.service';
 
 const TENANT_CODE = '__p2_06_ingestion__';
@@ -56,9 +57,17 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     prismaSvc = new PrismaService();
     const pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    const sla = new SlaService(prismaSvc, assignment);
     const audit = new AuditService(prismaSvc);
-    ingestion = new LeadIngestionService(prismaSvc, pipeline, assignment, sla, audit);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    ingestion = new LeadIngestionService(
+      prismaSvc,
+      pipeline,
+      assignment,
+      sla,
+      audit,
+      tenantSettings,
+    );
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },
@@ -68,12 +77,29 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     tenantId = tenant.id;
 
     await withTenantRaw(tenantId, async (tx) => {
-      // Pipeline stages.
-      await tx.pipelineStage.create({
-        data: { tenantId, code: 'new', name: 'New', order: 10, isTerminal: false },
+      // Pipeline stages live under a Pipeline (P2-07).
+      const pipeline = await tx.pipeline.create({
+        data: { tenantId, name: 'Default', isDefault: true, isActive: true },
       });
       await tx.pipelineStage.create({
-        data: { tenantId, code: 'converted', name: 'Converted', order: 40, isTerminal: true },
+        data: {
+          tenantId,
+          pipelineId: pipeline.id,
+          code: 'new',
+          name: 'New',
+          order: 10,
+          isTerminal: false,
+        },
+      });
+      await tx.pipelineStage.create({
+        data: {
+          tenantId,
+          pipelineId: pipeline.id,
+          code: 'converted',
+          name: 'Converted',
+          order: 40,
+          isTerminal: true,
+        },
       });
 
       const adminRole = await tx.role.create({

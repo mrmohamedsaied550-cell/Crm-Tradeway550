@@ -133,9 +133,13 @@ describe('rbac seed', () => {
       'users.disable',
       'users.reset',
       'whatsapp.account.write',
+      'whatsapp.template.write',
       'bonus.write',
       'competition.write',
       'meta.leadsource.write',
+      'pipeline.write',
+      'tenant.settings.write',
+      'captain.trip.write',
     ]);
     for (const r of rows) {
       const codes = r.capabilities.map((rc) => rc.capability.code);

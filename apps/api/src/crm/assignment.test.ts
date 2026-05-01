@@ -20,8 +20,10 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { hashPassword } from '../identity/password.util';
 import { AssignmentService } from './assignment.service';
 import { LeadsService } from './leads.service';
@@ -58,12 +60,25 @@ async function withTenantRaw<T>(tid: string, fn: (tx: PrismaClient) => Promise<T
 
 async function seedPipeline(tid: string): Promise<void> {
   await withTenantRaw(tid, async (tx) => {
+    const existing = await tx.pipeline.findFirst({
+      where: { tenantId: tid, isDefault: true },
+      select: { id: true },
+    });
+    const pipelineId =
+      existing?.id ??
+      (
+        await tx.pipeline.create({
+          data: { tenantId: tid, name: 'Default', isDefault: true, isActive: true },
+          select: { id: true },
+        })
+      ).id;
     for (const def of PIPELINE_STAGE_DEFINITIONS) {
       await tx.pipelineStage.upsert({
-        where: { tenantId_code: { tenantId: tid, code: def.code } },
+        where: { pipelineId_code: { pipelineId, code: def.code } },
         update: { name: def.name, order: def.order, isTerminal: def.isTerminal },
         create: {
           tenantId: tid,
+          pipelineId,
           code: def.code,
           name: def.name,
           order: def.order,
@@ -81,8 +96,10 @@ describe('crm — round-robin assignment (C11)', () => {
     prismaSvc = new PrismaService();
     const pipeline = new PipelineService(prismaSvc);
     assignment = new AssignmentService(prismaSvc);
-    const sla = new SlaService(prismaSvc, assignment);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla);
+    const audit = new AuditService(prismaSvc);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
 
     // Provision the primary test tenant.
     const tenant = await prisma.tenant.upsert({

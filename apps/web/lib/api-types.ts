@@ -105,8 +105,54 @@ export interface Captain {
   hasLicense: boolean;
   hasVehicleRegistration: boolean;
   activatedAt: string | null;
+  firstTripAt: string | null;
+  tripCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ───── Captain documents + trips (P2-09) ─────
+
+export type CaptainDocumentStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface CaptainDocument {
+  id: string;
+  tenantId: string;
+  captainId: string;
+  kind: string;
+  storageRef: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  status: CaptainDocumentStatus;
+  expiresAt: string | null;
+  reviewerUserId: string | null;
+  reviewer?: { id: string; name: string; email: string } | null;
+  reviewedAt: string | null;
+  reviewNotes: string | null;
+  uploadedById: string | null;
+  uploadedBy?: { id: string; name: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CaptainTripRow {
+  id: string;
+  tenantId: string;
+  captainId: string;
+  tripId: string;
+  occurredAt: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface RecordTripResult {
+  tripId: string;
+  duplicate: boolean;
+  captainId: string;
+  firstTripAt: string | null;
+  tripCount: number;
+  recordId?: string;
 }
 
 export interface Lead {
@@ -163,6 +209,9 @@ export interface LoginResponse {
   user: MeUser;
 }
 
+/** P2-10 — `/auth/refresh` shape. Matches LoginResponse on the wire. */
+export type RefreshResponse = LoginResponse;
+
 // ───── WhatsApp (C21 / C22 / C23) ─────
 
 export type ConversationStatus = 'open' | 'closed';
@@ -176,6 +225,8 @@ export interface WhatsAppConversation {
   status: ConversationStatus;
   lastMessageAt: string;
   lastMessageText: string;
+  /** P2-12 — most recent inbound timestamp; drives the 24h window. */
+  lastInboundAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -188,6 +239,12 @@ export interface WhatsAppMessage {
   phone: string;
   text: string;
   direction: WhatsAppDirection;
+  /** P2-12 — message kind. Existing rows backfill to 'text'. */
+  messageType?: 'text' | 'template' | 'image' | 'document';
+  mediaUrl?: string | null;
+  mediaMimeType?: string | null;
+  templateName?: string | null;
+  templateLanguage?: string | null;
   providerMessageId: string | null;
   status: string;
   createdAt: string;
@@ -305,6 +362,81 @@ export interface WhatsAppAccount {
   verifyToken: string;
   hasAppSecret: boolean;
   isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Tenant settings (P2-08) ─────
+
+/**
+ * Per-tenant runtime knobs. Drives SLA window, the default dial code
+ * for local-format phone input, and the timezone used by "due today"
+ * calculations on the agent workspace.
+ */
+export interface TenantSettingsRow {
+  tenantId: string;
+  timezone: string;
+  slaMinutes: number;
+  defaultDialCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── WhatsApp templates + media (P2-12) ─────
+
+export type WhatsAppTemplateStatus = 'approved' | 'paused' | 'rejected';
+export type WhatsAppTemplateCategory = 'marketing' | 'utility' | 'authentication';
+export type WhatsAppMessageType = 'text' | 'template' | 'image' | 'document';
+
+export interface WhatsAppTemplateRow {
+  id: string;
+  tenantId: string;
+  accountId: string;
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
+  bodyText: string;
+  variableCount: number;
+  status: WhatsAppTemplateStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Pipelines (P2-07) ─────
+
+/**
+ * One administered pipeline definition. The tenant-default carries
+ * `isDefault = true` and is the only pipeline the lead-lifecycle
+ * code paths resolve stages against. Additional pipelines exist
+ * for per-(company × country) overrides.
+ */
+export interface Pipeline {
+  id: string;
+  tenantId: string;
+  companyId: string | null;
+  countryId: string | null;
+  name: string;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Present on list endpoints. */
+  _count?: { stages: number };
+  /** Lightweight join shape from the API. */
+  company?: { id: string; code: string; name: string } | null;
+  country?: { id: string; code: string; name: string } | null;
+  /** Present on detail endpoints. */
+  stages?: PipelineStageRow[];
+}
+
+export interface PipelineStageRow {
+  id: string;
+  pipelineId: string;
+  tenantId: string;
+  code: string;
+  name: string;
+  order: number;
+  isTerminal: boolean;
   createdAt: string;
   updatedAt: string;
 }

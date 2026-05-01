@@ -20,6 +20,7 @@ import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
 
+import { SendMediaMessageSchema, SendTemplateMessageSchema } from './whatsapp-templates.dto';
 import { WhatsAppService } from './whatsapp.service';
 import {
   HandoverConversationSchema,
@@ -32,6 +33,8 @@ import {
 class ListConversationsQueryDto extends createZodDto(ListConversationsQuerySchema) {}
 class ListConversationMessagesQueryDto extends createZodDto(ListConversationMessagesQuerySchema) {}
 class SendConversationMessageDto extends createZodDto(SendConversationMessageSchema) {}
+class SendTemplateMessageDto extends createZodDto(SendTemplateMessageSchema) {}
+class SendMediaMessageDto extends createZodDto(SendMediaMessageSchema) {}
 class LinkConversationLeadDto extends createZodDto(LinkConversationLeadSchema) {}
 class HandoverConversationDto extends createZodDto(HandoverConversationSchema) {}
 
@@ -166,6 +169,81 @@ export class ConversationsController {
       accountId: conversation.accountId,
       to: conversation.phone,
       text: body.text,
+    });
+    return {
+      messageId: result.messageId,
+      providerMessageId: result.providerMessageId,
+      conversationId: result.conversationId,
+    };
+  }
+
+  /**
+   * P2-12 — send a Meta-approved template by name + language. The
+   * one outbound path that's allowed OUTSIDE the 24-hour
+   * customer-service window; agents use this to (re-)open a
+   * conversation. Variables are substituted by position into the
+   * template's `{{1}}` / `{{2}}` placeholders.
+   */
+  @Post(':id/messages/template')
+  @RequireCapability('whatsapp.message.send')
+  @ApiOperation({ summary: 'Send a Meta-approved template message' })
+  async sendTemplate(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SendTemplateMessageDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    if (!conversation) {
+      throw new NotFoundException({
+        code: 'whatsapp.conversation_not_found',
+        message: `Conversation ${id} not found in active tenant`,
+      });
+    }
+    const result = await this.whatsapp.sendTemplate({
+      tenantId: user.tid,
+      accountId: conversation.accountId,
+      to: conversation.phone,
+      templateName: body.templateName,
+      language: body.language,
+      variables: body.variables,
+    });
+    return {
+      messageId: result.messageId,
+      providerMessageId: result.providerMessageId,
+      conversationId: result.conversationId,
+    };
+  }
+
+  /**
+   * P2-12 — send an image / document by URL. The operator hosts
+   * the file (S3, signed-URL, etc); the CRM stores the URL +
+   * optional caption as the message body. Gated by the 24-hour
+   * customer-service window like sendText — operators must use
+   * a template to re-open a thread before sending media.
+   */
+  @Post(':id/messages/media')
+  @RequireCapability('whatsapp.media.send')
+  @ApiOperation({ summary: 'Send an image / document message' })
+  async sendMedia(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SendMediaMessageDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    if (!conversation) {
+      throw new NotFoundException({
+        code: 'whatsapp.conversation_not_found',
+        message: `Conversation ${id} not found in active tenant`,
+      });
+    }
+    const result = await this.whatsapp.sendMedia({
+      tenantId: user.tid,
+      accountId: conversation.accountId,
+      to: conversation.phone,
+      kind: body.kind,
+      mediaUrl: body.mediaUrl,
+      mediaMimeType: body.mediaMimeType ?? null,
+      ...(body.caption !== undefined && { caption: body.caption }),
     });
     return {
       messageId: result.messageId,

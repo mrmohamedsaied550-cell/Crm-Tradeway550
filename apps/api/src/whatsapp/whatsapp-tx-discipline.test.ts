@@ -144,6 +144,34 @@ describe('whatsapp — transaction discipline invariants (C28)', () => {
   it('sendText: no withTenant interval overlaps the provider HTTP call', async () => {
     prismaSvc.reset();
     providerInterval = null;
+    // P2-12 — open the 24h customer-service window by planting a
+    // conversation with lastInboundAt = now so the freeform send
+    // below isn't rejected by the new window gate. We're testing
+    // tx-discipline here, not the gate, so just satisfy it.
+    await prismaSvc.withTenant(tenantId, async (tx) => {
+      const existing = await tx.whatsAppConversation.findFirst({
+        where: { accountId, phone: '+201001100200' },
+        select: { id: true },
+      });
+      if (existing) {
+        await tx.whatsAppConversation.update({
+          where: { id: existing.id },
+          data: { lastInboundAt: new Date() },
+        });
+      } else {
+        await tx.whatsAppConversation.create({
+          data: {
+            tenantId,
+            accountId,
+            phone: '+201001100200',
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessageText: '',
+            lastInboundAt: new Date(),
+          },
+        });
+      }
+    });
     await svc.sendText({
       tenantId,
       accountId,
@@ -199,6 +227,32 @@ describe('whatsapp — transaction discipline invariants (C28)', () => {
     };
     const failingProvider = new MetaCloudProvider(failingFetch);
     const failingSvc = new WhatsAppService(prismaSvc, failingProvider);
+
+    // P2-12 — same window-open scaffold as the previous test.
+    await prismaSvc.withTenant(tenantId, async (tx) => {
+      const existing = await tx.whatsAppConversation.findFirst({
+        where: { accountId, phone: '+201001100299' },
+        select: { id: true },
+      });
+      if (existing) {
+        await tx.whatsAppConversation.update({
+          where: { id: existing.id },
+          data: { lastInboundAt: new Date() },
+        });
+      } else {
+        await tx.whatsAppConversation.create({
+          data: {
+            tenantId,
+            accountId,
+            phone: '+201001100299',
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessageText: '',
+            lastInboundAt: new Date(),
+          },
+        });
+      }
+    });
 
     const beforeCount = await prismaSvc.withTenant(tenantId, (tx) =>
       tx.whatsAppMessage.count({ where: { phone: '+201001100299', direction: 'outbound' } }),

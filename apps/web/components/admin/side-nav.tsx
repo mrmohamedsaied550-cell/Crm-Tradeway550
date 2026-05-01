@@ -13,11 +13,14 @@ import {
   ScrollText,
   Contact,
   Columns,
+  Layers,
   Trophy,
   Award,
   Flag,
   MessagesSquare,
+  MessageSquareDashed,
   BarChart3,
+  Settings,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -33,12 +36,15 @@ interface NavItem {
     | 'users'
     | 'leads'
     | 'pipeline'
+    | 'pipelineBuilder'
     | 'captains'
     | 'bonuses'
     | 'competitions'
     | 'whatsapp'
+    | 'whatsappTemplates'
     | 'reports'
-    | 'audit';
+    | 'audit'
+    | 'tenantSettings';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -55,6 +61,12 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
   { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns, cap: 'pipeline.read' },
+  {
+    href: '/admin/pipeline-builder',
+    labelKey: 'pipelineBuilder',
+    icon: Layers,
+    cap: 'pipeline.read',
+  },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy, cap: 'captain.read' },
   { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award, cap: 'bonus.read' },
   { href: '/admin/competitions', labelKey: 'competitions', icon: Flag, cap: 'competition.read' },
@@ -64,8 +76,20 @@ const ITEMS: readonly NavItem[] = [
     icon: MessagesSquare,
     cap: 'whatsapp.conversation.read',
   },
+  {
+    href: '/admin/whatsapp/templates',
+    labelKey: 'whatsappTemplates',
+    icon: MessageSquareDashed,
+    cap: 'whatsapp.template.read',
+  },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },
+  {
+    href: '/admin/tenant-settings',
+    labelKey: 'tenantSettings',
+    icon: Settings,
+    cap: 'tenant.settings.read',
+  },
 ];
 
 /**

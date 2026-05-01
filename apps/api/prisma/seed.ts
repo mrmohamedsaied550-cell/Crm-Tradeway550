@@ -304,12 +304,35 @@ async function seedUsers(
 
 async function seedPipelineStages(tenantId: string): Promise<void> {
   await withTenant(tenantId, async (tx) => {
+    // P2-07 — every tenant has exactly one "default" pipeline that
+    // owns the canonical stage list. The migration backfilled it for
+    // pre-existing tenants; for fresh tenants we upsert it here so
+    // the seed stays idempotent regardless of when the migration ran.
+    const existingDefault = await tx.pipeline.findFirst({
+      where: { tenantId, isDefault: true },
+      select: { id: true },
+    });
+    const pipelineId =
+      existingDefault?.id ??
+      (
+        await tx.pipeline.create({
+          data: {
+            tenantId,
+            name: 'Default',
+            isDefault: true,
+            isActive: true,
+          },
+          select: { id: true },
+        })
+      ).id;
+
     for (const def of PIPELINE_STAGE_DEFINITIONS) {
       await tx.pipelineStage.upsert({
-        where: { tenantId_code: { tenantId, code: def.code } },
+        where: { pipelineId_code: { pipelineId, code: def.code } },
         update: { name: def.name, order: def.order, isTerminal: def.isTerminal },
         create: {
           tenantId,
+          pipelineId,
           code: def.code,
           name: def.name,
           order: def.order,

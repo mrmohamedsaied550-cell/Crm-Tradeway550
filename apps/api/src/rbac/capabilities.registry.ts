@@ -45,24 +45,34 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },
   { code: 'meta.leadsource.write', description: 'Create / update / delete Meta lead-ad sources' },
 
-  // CRM — pipeline catalogue (P2-01)
-  { code: 'pipeline.read', description: 'View pipeline stages' },
+  // CRM — pipeline catalogue (P2-01 read; P2-07 write)
+  { code: 'pipeline.read', description: 'View pipelines + their stages' },
+  {
+    code: 'pipeline.write',
+    description: 'Create / update / delete pipelines and their stages',
+  },
 
-  // CRM — captains (P2-01)
+  // CRM — captains (P2-01 + P2-09)
   { code: 'captain.read', description: 'View captains' },
+  { code: 'captain.document.write', description: 'Upload / replace captain documents' },
+  { code: 'captain.document.review', description: 'Approve / reject captain documents' },
+  { code: 'captain.trip.write', description: 'Ingest captain trip telemetry' },
 
   // Follow-ups (P2-01)
   { code: 'followup.read', description: 'View follow-ups (all + mine)' },
   { code: 'followup.write', description: 'Create / delete follow-ups' },
   { code: 'followup.complete', description: 'Mark a follow-up done' },
 
-  // WhatsApp (P2-01)
+  // WhatsApp (P2-01 + P2-12)
   { code: 'whatsapp.account.read', description: 'View WhatsApp accounts (no secrets)' },
   { code: 'whatsapp.account.write', description: 'Create / update / enable / disable accounts' },
   { code: 'whatsapp.conversation.read', description: 'View conversations + messages' },
   { code: 'whatsapp.message.send', description: 'Send a text message in a conversation' },
   { code: 'whatsapp.handover', description: 'Hand a conversation off to another agent' },
   { code: 'whatsapp.link.lead', description: 'Link a conversation to a lead' },
+  { code: 'whatsapp.template.read', description: 'View WhatsApp templates (picker dropdown)' },
+  { code: 'whatsapp.template.write', description: 'Create / update / delete WhatsApp templates' },
+  { code: 'whatsapp.media.send', description: 'Send image / document media in a conversation' },
 
   // Bonuses (P2-01)
   { code: 'bonus.read', description: 'View bonus rules' },
@@ -82,6 +92,10 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'audit.read', description: 'View the audit log' },
   { code: 'roles.read', description: 'View roles' },
   { code: 'capabilities.read', description: 'View capabilities' },
+
+  // Tenant settings (P2-08)
+  { code: 'tenant.settings.read', description: 'View tenant-level settings' },
+  { code: 'tenant.settings.write', description: 'Update tenant-level settings' },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];

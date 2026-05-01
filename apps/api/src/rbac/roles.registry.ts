@@ -39,10 +39,12 @@ const READ_CRM: readonly CapabilityCode[] = [
   'followup.read',
   'whatsapp.account.read',
   'whatsapp.conversation.read',
+  'whatsapp.template.read',
   'bonus.read',
   'competition.read',
   'report.read',
   'meta.leadsource.read',
+  'tenant.settings.read',
 ];
 
 const AGENT_ACTIONS: readonly CapabilityCode[] = [
@@ -52,7 +54,9 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'followup.write',
   'followup.complete',
   'whatsapp.message.send',
+  'whatsapp.media.send',
   'whatsapp.link.lead',
+  'captain.document.write',
 ];
 
 const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
@@ -92,6 +96,7 @@ export const ROLE_DEFINITIONS = [
       'lead.activity.write',
       'lead.convert',
       'lead.import',
+      'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
       'followup.complete',
@@ -99,11 +104,17 @@ export const ROLE_DEFINITIONS = [
       'whatsapp.message.send',
       'whatsapp.handover',
       'whatsapp.link.lead',
+      'whatsapp.template.write',
+      'whatsapp.media.send',
       'bonus.write',
       'competition.write',
       'audit.read',
       'roles.read',
       'capabilities.read',
+      'tenant.settings.write',
+      'captain.document.write',
+      'captain.document.review',
+      'captain.trip.write',
     ],
   },
   {
@@ -125,17 +136,24 @@ export const ROLE_DEFINITIONS = [
       'lead.activity.write',
       'lead.convert',
       'lead.import',
+      'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
       'followup.complete',
       'whatsapp.message.send',
       'whatsapp.handover',
       'whatsapp.link.lead',
+      'whatsapp.template.write',
+      'whatsapp.media.send',
       'bonus.write',
       'competition.write',
       'audit.read',
       'roles.read',
       'capabilities.read',
+      'tenant.settings.write',
+      'captain.document.write',
+      'captain.document.review',
+      'captain.trip.write',
     ],
   },
   {
@@ -188,8 +206,10 @@ export const ROLE_DEFINITIONS = [
     nameAr: 'أخصائي الجودة',
     nameEn: 'QA Specialist',
     level: 50,
-    // Read-only across the CRM; QA scoring lands later.
-    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read'],
+    // Read-only across the CRM; QA scoring lands later. P2-09 also
+    // grants document review so QA can sign off on captain
+    // onboarding paperwork.
+    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read', 'captain.document.review'],
   },
   {
     code: 'sales_agent',

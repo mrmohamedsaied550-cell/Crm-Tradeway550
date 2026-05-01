@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { decryptSecret } from '../common/crypto';
@@ -9,6 +9,19 @@ import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
 
 const META_CLOUD = 'meta_cloud' as const;
+const WHATSAPP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * P2-12 — substitute positional placeholders `{{1}}`, `{{2}}`, ...
+ * in a template body with the supplied variables. Used to compute
+ * the inbox-preview text for a sent template message.
+ */
+function renderTemplateBody(body: string, variables: readonly string[]): string {
+  return body.replace(/\{\{\s*(\d+)\s*\}\}/gu, (_match, n: string) => {
+    const idx = Number.parseInt(n, 10) - 1;
+    return idx >= 0 && idx < variables.length ? (variables[idx] ?? '') : '';
+  });
+}
 
 /**
  * C25 — auto-link policy. Returns the single match, or null when zero
@@ -245,7 +258,15 @@ export class WhatsAppService {
 
         await tx.whatsAppConversation.update({
           where: { id: conversationId },
-          data: { lastMessageAt: msg.receivedAt, lastMessageText: msg.text },
+          data: {
+            lastMessageAt: msg.receivedAt,
+            lastMessageText: msg.text,
+            // P2-12 — bump the customer-service-window timer so the
+            // outbound freeform path knows the contact has replied
+            // within the last 24h. Templates remain available even
+            // when this is null.
+            lastInboundAt: msg.receivedAt,
+          },
         });
 
         return { messageId: message.id, conversationId };
@@ -292,8 +313,202 @@ export class WhatsAppService {
   }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
     const { tenantId, accountId, to, text } = input;
 
-    // Read the full account row including the access token. The token
-    // never leaves this method — we hand it to the provider and discard.
+    // Load the account first so a cross-tenant lookup surfaces a
+    // typed `whatsapp.account_not_found` 404 instead of an
+    // unauthenticated `whatsapp.window_closed` 400. P2-12 — only
+    // then enforce Meta's 24-hour customer-service window.
+    const { account, config } = await this.loadAccountForSend(tenantId, accountId);
+    await this.assertWindowOpen(tenantId, accountId, to);
+
+    const provider = this.providerFor(account.provider);
+    const { providerMessageId } = await provider.sendText({ config, to, text });
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversationId = await this.ensureOpenConversation(tx, tenantId, accountId, to);
+      const sentAt = new Date();
+
+      const message = await tx.whatsAppMessage.create({
+        data: {
+          tenantId,
+          accountId,
+          conversationId,
+          phone: to,
+          text,
+          direction: 'outbound',
+          messageType: 'text',
+          providerMessageId,
+          status: 'sent',
+        },
+        select: { id: true },
+      });
+
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: sentAt, lastMessageText: text },
+      });
+
+      return { messageId: message.id, providerMessageId, conversationId };
+    });
+  }
+
+  /**
+   * P2-12 — send a Meta-approved template by name + language. This
+   * is the one path that's allowed OUTSIDE the 24-hour customer-
+   * service window: templates are how you initiate or re-open a
+   * conversation. The CRM still requires the template to be
+   * recorded in `whatsapp_templates` (admins maintain the picker
+   * via the templates CRUD) so a typo in `templateName` doesn't
+   * silently send something Meta will reject.
+   */
+  async sendTemplate(input: {
+    tenantId: string;
+    accountId: string;
+    to: string;
+    templateName: string;
+    language: string;
+    variables: readonly string[];
+  }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
+    const { tenantId, accountId, to, templateName, language, variables } = input;
+
+    // Validate the template exists in our table + the variable
+    // count matches before paying for the Meta round-trip.
+    const tpl = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.whatsAppTemplate.findFirst({
+        where: { accountId, name: templateName, language, status: 'approved' },
+        select: { variableCount: true, bodyText: true },
+      }),
+    );
+    if (!tpl) {
+      throw new BadRequestException({
+        code: 'whatsapp.template_not_found',
+        message: `Approved template "${templateName}" (${language}) not found for this account`,
+      });
+    }
+    if (variables.length !== tpl.variableCount) {
+      throw new BadRequestException({
+        code: 'whatsapp.template_variable_mismatch',
+        message: `Template expects ${tpl.variableCount} variables, got ${variables.length}`,
+      });
+    }
+
+    const { account, config } = await this.loadAccountForSend(tenantId, accountId);
+    const provider = this.providerFor(account.provider);
+    const { providerMessageId } = await provider.sendTemplate({
+      config,
+      to,
+      templateName,
+      language,
+      variables,
+    });
+
+    // Render the template body for the inbox preview text. We
+    // don't try to be fancy with formatting; substituting `{{N}}`
+    // with the supplied values is enough.
+    const renderedText = renderTemplateBody(tpl.bodyText, variables);
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversationId = await this.ensureOpenConversation(tx, tenantId, accountId, to);
+      const sentAt = new Date();
+      const message = await tx.whatsAppMessage.create({
+        data: {
+          tenantId,
+          accountId,
+          conversationId,
+          phone: to,
+          text: renderedText,
+          direction: 'outbound',
+          messageType: 'template',
+          templateName,
+          templateLanguage: language,
+          providerMessageId,
+          status: 'sent',
+        },
+        select: { id: true },
+      });
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: sentAt, lastMessageText: renderedText },
+      });
+      return { messageId: message.id, providerMessageId, conversationId };
+    });
+  }
+
+  /**
+   * P2-12 — send media (image / document) by URL. Media-with-caption
+   * counts as a freeform message; gated by the 24-hour window
+   * exactly like sendText.
+   */
+  async sendMedia(input: {
+    tenantId: string;
+    accountId: string;
+    to: string;
+    kind: 'image' | 'document';
+    mediaUrl: string;
+    mediaMimeType?: string | null;
+    caption?: string;
+  }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
+    const { tenantId, accountId, to, kind, mediaUrl } = input;
+    const caption = input.caption ?? '';
+
+    const { account, config } = await this.loadAccountForSend(tenantId, accountId);
+    await this.assertWindowOpen(tenantId, accountId, to);
+    const provider = this.providerFor(account.provider);
+    const { providerMessageId } = await provider.sendMedia({
+      config,
+      to,
+      kind,
+      mediaUrl,
+      ...(caption.length > 0 && { caption }),
+    });
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const conversationId = await this.ensureOpenConversation(tx, tenantId, accountId, to);
+      const sentAt = new Date();
+      const previewText = caption.length > 0 ? caption : `[${kind}]`;
+      const message = await tx.whatsAppMessage.create({
+        data: {
+          tenantId,
+          accountId,
+          conversationId,
+          phone: to,
+          text: previewText,
+          direction: 'outbound',
+          messageType: kind,
+          mediaUrl,
+          mediaMimeType: input.mediaMimeType ?? null,
+          providerMessageId,
+          status: 'sent',
+        },
+        select: { id: true },
+      });
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: sentAt, lastMessageText: previewText },
+      });
+      return { messageId: message.id, providerMessageId, conversationId };
+    });
+  }
+
+  /**
+   * P2-12 — common pre-flight: read the account row, decrypt the
+   * access token, build the provider config. Throws 404 when the
+   * account is missing or disabled. Used by sendText / sendTemplate /
+   * sendMedia.
+   */
+  private async loadAccountForSend(
+    tenantId: string,
+    accountId: string,
+  ): Promise<{
+    account: {
+      id: string;
+      provider: string;
+      phoneNumberId: string;
+      accessToken: string;
+      appSecret: string | null;
+      verifyToken: string;
+    };
+    config: WhatsAppAccountConfig;
+  }> {
     const account = await this.prisma.withTenant(tenantId, (tx) =>
       tx.whatsAppAccount.findUnique({
         where: { id: accountId },
@@ -314,44 +529,54 @@ export class WhatsAppService {
         message: `WhatsApp account ${accountId} not found in active tenant`,
       });
     }
-
-    const provider = this.providerFor(account.provider);
     const config: WhatsAppAccountConfig = {
-      // P2-05 — decrypt at the point of use. Plaintext stays on the
-      // stack only for the duration of the provider call.
       accessToken: decryptSecret(account.accessToken),
       phoneNumberId: account.phoneNumberId,
       appSecret: account.appSecret,
       verifyToken: account.verifyToken,
     };
+    return { account, config };
+  }
 
-    const { providerMessageId } = await provider.sendText({ config, to, text });
-
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const conversationId = await this.ensureOpenConversation(tx, tenantId, accountId, to);
-      const sentAt = new Date();
-
-      const message = await tx.whatsAppMessage.create({
-        data: {
-          tenantId,
-          accountId,
-          conversationId,
-          phone: to,
-          text,
-          direction: 'outbound',
-          providerMessageId,
-          status: 'sent',
-        },
-        select: { id: true },
+  /**
+   * P2-12 — Meta's 24-hour customer-service window:
+   *   - if the contact has NEVER replied (`lastInboundAt = null`)
+   *     freeform send is denied. Use a template instead.
+   *   - if their last reply was > 24h ago, same denial.
+   *   - otherwise allowed.
+   *
+   * For a not-yet-existing conversation we treat it as
+   * `lastInboundAt = null` and deny — there's no reason for a
+   * tenant to reach a brand-new contact with a freeform message
+   * via the CRM; the first touch must go through a template.
+   */
+  private async assertWindowOpen(
+    tenantId: string,
+    accountId: string,
+    phone: string,
+  ): Promise<void> {
+    const conversation = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.whatsAppConversation.findFirst({
+        where: { accountId, phone },
+        select: { lastInboundAt: true },
+      }),
+    );
+    const lastInboundAt = conversation?.lastInboundAt ?? null;
+    if (!lastInboundAt) {
+      throw new BadRequestException({
+        code: 'whatsapp.window_closed',
+        message: 'Cannot send a freeform message before the contact has replied. Use a template.',
       });
-
-      await tx.whatsAppConversation.update({
-        where: { id: conversationId },
-        data: { lastMessageAt: sentAt, lastMessageText: text },
+    }
+    const ageMs = Date.now() - lastInboundAt.getTime();
+    if (ageMs > WHATSAPP_WINDOW_MS) {
+      throw new BadRequestException({
+        code: 'whatsapp.window_closed',
+        message: `Customer-service window expired ${Math.round(
+          ageMs / (60 * 60 * 1000),
+        )}h ago. Use a template to re-open the conversation.`,
       });
-
-      return { messageId: message.id, providerMessageId, conversationId };
-    });
+    }
   }
 
   // ─────── Read helpers (used by the C22 admin endpoints + tests) ───────

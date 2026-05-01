@@ -16,8 +16,10 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
 import { LeadsService } from './leads.service';
 import { PipelineService } from './pipeline.service';
@@ -51,12 +53,25 @@ async function withTenantRaw<T>(tid: string, fn: (tx: PrismaClient) => Promise<T
 
 async function seedPipeline(tid: string): Promise<void> {
   await withTenantRaw(tid, async (tx) => {
+    const existing = await tx.pipeline.findFirst({
+      where: { tenantId: tid, isDefault: true },
+      select: { id: true },
+    });
+    const pipelineId =
+      existing?.id ??
+      (
+        await tx.pipeline.create({
+          data: { tenantId: tid, name: 'Default', isDefault: true, isActive: true },
+          select: { id: true },
+        })
+      ).id;
     for (const def of PIPELINE_STAGE_DEFINITIONS) {
       await tx.pipelineStage.upsert({
-        where: { tenantId_code: { tenantId: tid, code: def.code } },
+        where: { pipelineId_code: { pipelineId, code: def.code } },
         update: {},
         create: {
           tenantId: tid,
+          pipelineId,
           code: def.code,
           name: def.name,
           order: def.order,
@@ -141,8 +156,10 @@ describe('crm — sla scheduler (C29)', () => {
 
     const pipelineSvc = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    slaSvc = new SlaService(prismaSvc, assignment);
-    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, assignment, slaSvc);
+    const audit = new AuditService(prismaSvc);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    slaSvc = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, assignment, slaSvc, tenantSettings);
     scheduler = new SlaSchedulerService(prismaSvc, slaSvc);
   });
 

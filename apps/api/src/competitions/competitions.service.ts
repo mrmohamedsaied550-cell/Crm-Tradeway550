@@ -228,7 +228,54 @@ export class CompetitionsService {
           .sort((a, b) => b.score - a.score);
       }
 
-      // first_trips / conversion_rate: not yet wired (no trip data).
+      if (competition.metric === 'first_trips') {
+        // P2-09 — count of captains whose `firstTripAt` falls in
+        // the competition window, attributed to the agent who
+        // converted them (lead.assignedToId).
+        const grouped = await tx.captain.groupBy({
+          by: ['leadId'],
+          where: {
+            firstTripAt: { gte: start, lte: end },
+            ...(competition.teamId ? { teamId: competition.teamId } : {}),
+          },
+          _count: { _all: true },
+        });
+        if (grouped.length === 0) return [];
+        const leadIds = grouped.map((g) => g.leadId);
+        const leads = await tx.lead.findMany({
+          where: { id: { in: leadIds } },
+          select: { id: true, assignedToId: true },
+        });
+        const ownerByLead = new Map(leads.map((l) => [l.id, l.assignedToId]));
+        const tally = new Map<string, number>();
+        for (const g of grouped) {
+          const ownerId = ownerByLead.get(g.leadId);
+          if (!ownerId) continue;
+          tally.set(ownerId, (tally.get(ownerId) ?? 0) + g._count._all);
+        }
+        const userIds = [...tally.keys()];
+        const users = userIds.length
+          ? await tx.user.findMany({
+              where: { id: { in: userIds } },
+              select: { id: true, name: true, email: true },
+            })
+          : [];
+        const byId = new Map(users.map((u) => [u.id, u]));
+        return [...tally.entries()]
+          .map(([userId, score]) => {
+            const u = byId.get(userId);
+            return {
+              userId,
+              name: u?.name ?? 'Unknown',
+              email: u?.email ?? null,
+              score,
+            };
+          })
+          .sort((a, b) => b.score - a.score);
+      }
+
+      // conversion_rate: needs activations / leads_created split per
+      // user; not yet wired.
       return [];
     });
   }
