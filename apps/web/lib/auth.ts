@@ -30,23 +30,29 @@ function isBrowser(): boolean {
 
 export function getAccessToken(): string | null {
   if (!isBrowser()) return null;
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  const v = window.localStorage.getItem(ACCESS_TOKEN_KEY);
+  // Treat an empty / whitespace-only entry as "no token" so apiFetch's
+  // `if (token)` check never spuriously skips the Authorization header.
+  return v && v.trim().length > 0 ? v : null;
 }
 
 export function setAccessToken(token: string | null): void {
   if (!isBrowser()) return;
-  if (token) window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  const v = typeof token === 'string' ? token.trim() : '';
+  if (v.length > 0) window.localStorage.setItem(ACCESS_TOKEN_KEY, v);
   else window.localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
 export function getRefreshToken(): string | null {
   if (!isBrowser()) return null;
-  return window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  const v = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  return v && v.trim().length > 0 ? v : null;
 }
 
 export function setRefreshToken(token: string | null): void {
   if (!isBrowser()) return;
-  if (token) window.localStorage.setItem(REFRESH_TOKEN_KEY, token);
+  const v = typeof token === 'string' ? token.trim() : '';
+  if (v.length > 0) window.localStorage.setItem(REFRESH_TOKEN_KEY, v);
   else window.localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
