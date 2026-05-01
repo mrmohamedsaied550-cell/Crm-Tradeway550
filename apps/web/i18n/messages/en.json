@@ -42,6 +42,9 @@
       "leads": "Leads",
       "pipeline": "Pipeline",
       "captains": "Captains",
+      "bonuses": "Bonuses",
+      "competitions": "Competitions",
+      "whatsapp": "WhatsApp",
       "audit": "Audit Log"
     },
     "authBar": {
@@ -91,7 +94,8 @@
       "created": "Created",
       "retry": "Retry",
       "clearFilters": "Clear filters",
-      "errorTitle": "Couldn't load data"
+      "errorTitle": "Couldn't load data",
+      "select": "Select…"
     },
     "companies": {
       "title": "Companies",
@@ -299,6 +303,102 @@
       "emptyHint": "Convert a lead from the leads list to create the first captain.",
       "emptyFiltered": "No captains match the filters",
       "emptyFilteredHint": "Try clearing the filters."
+    },
+    "bonuses": {
+      "title": "Bonuses",
+      "subtitle": "Bonus rules for captain incentives. Payout engine is not yet wired.",
+      "createCta": "Create rule",
+      "createTitle": "Create bonus rule",
+      "editTitle": "Edit bonus rule",
+      "emptyTitle": "No bonus rules yet",
+      "emptyBody": "Create a rule to define how bonuses are triggered and how much is paid.",
+      "created": "Bonus rule created",
+      "updated": "Bonus rule updated",
+      "statusActive": "Active",
+      "statusInactive": "Inactive",
+      "teamAny": "Any team",
+      "triggerPlaceholder": "e.g. 5 first trips in week 1",
+      "cols": {
+        "scope": "Scope",
+        "type": "Type",
+        "trigger": "Trigger",
+        "amount": "Amount",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "actions": {
+        "enable": "Enable",
+        "disable": "Disable"
+      },
+      "fields": {
+        "company": "Company",
+        "country": "Country",
+        "team": "Team (optional)",
+        "bonusType": "Bonus type",
+        "trigger": "Trigger",
+        "amount": "Amount",
+        "active": "Active"
+      }
+    },
+    "competitions": {
+      "title": "Competitions",
+      "subtitle": "Time-bounded contests with a leaderboard. Reward payout is not yet wired.",
+      "createCta": "Create competition",
+      "createTitle": "Create competition",
+      "editTitle": "Edit competition",
+      "emptyTitle": "No competitions yet",
+      "emptyBody": "Create one to track team performance over a window.",
+      "created": "Competition created",
+      "updated": "Competition updated",
+      "leaderboardTitle": "Leaderboard",
+      "leaderboardEmpty": "No data yet for this competition.",
+      "cols": {
+        "name": "Name",
+        "scope": "Scope",
+        "window": "Window",
+        "metric": "Metric",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "fields": {
+        "name": "Name",
+        "company": "Company (optional)",
+        "country": "Country (optional)",
+        "team": "Team (optional)",
+        "startDate": "Start date",
+        "endDate": "End date",
+        "metric": "Metric",
+        "reward": "Reward",
+        "status": "Status"
+      },
+      "metrics": {
+        "leads_created": "Leads created",
+        "activations": "Activations",
+        "first_trips": "First trips",
+        "conversion_rate": "Conversion rate"
+      },
+      "statuses": {
+        "draft": "Draft",
+        "active": "Active",
+        "closed": "Closed"
+      },
+      "actions": {
+        "activate": "Activate",
+        "close": "Close",
+        "leaderboard": "Leaderboard"
+      }
+    },
+    "whatsapp": {
+      "title": "WhatsApp",
+      "subtitle": "Conversations across every connected account.",
+      "noLead": "No linked lead",
+      "linkLeadCta": "Link to a lead",
+      "linkLeadTitle": "Link conversation to a lead",
+      "linkLeadHint": "Pick a lead to attach this conversation to.",
+      "linked": "Conversation linked.",
+      "selectAConversation": "Select a conversation",
+      "selectAConversationHint": "Pick one from the list to read its messages.",
+      "noMessages": "No messages yet"
     }
   },
   "agent": {

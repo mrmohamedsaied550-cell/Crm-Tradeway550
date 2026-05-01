@@ -42,6 +42,9 @@
       "leads": "العملاء المحتملون",
       "pipeline": "خط الأنابيب",
       "captains": "الكباتن",
+      "bonuses": "المكافآت",
+      "competitions": "المسابقات",
+      "whatsapp": "واتساب",
       "audit": "سجلّ التدقيق"
     },
     "authBar": {
@@ -91,7 +94,8 @@
       "created": "تم الإنشاء",
       "retry": "إعادة المحاولة",
       "clearFilters": "مسح الفلاتر",
-      "errorTitle": "تعذّر تحميل البيانات"
+      "errorTitle": "تعذّر تحميل البيانات",
+      "select": "اختر…"
     },
     "companies": {
       "title": "الشركات",
@@ -299,6 +303,102 @@
       "emptyHint": "حوّل عميلاً محتملاً من قائمة العملاء لإنشاء أول كابتن.",
       "emptyFiltered": "لا يوجد كباتن يطابقون الفلاتر",
       "emptyFilteredHint": "جرّب مسح الفلاتر."
+    },
+    "bonuses": {
+      "title": "المكافآت",
+      "subtitle": "قواعد المكافآت لتحفيز الكباتن. محرّك الصرف لم يُربط بعد.",
+      "createCta": "إنشاء قاعدة",
+      "createTitle": "إنشاء قاعدة مكافأة",
+      "editTitle": "تعديل قاعدة مكافأة",
+      "emptyTitle": "لا توجد قواعد مكافآت بعد",
+      "emptyBody": "أنشئ قاعدة لتحديد كيفية تحفيز الكباتن ومقدار المكافأة.",
+      "created": "تم إنشاء القاعدة",
+      "updated": "تم تحديث القاعدة",
+      "statusActive": "نشطة",
+      "statusInactive": "غير نشطة",
+      "teamAny": "أي فريق",
+      "triggerPlaceholder": "مثال: 5 رحلات أولى في الأسبوع 1",
+      "cols": {
+        "scope": "النطاق",
+        "type": "النوع",
+        "trigger": "المحفّز",
+        "amount": "القيمة",
+        "status": "الحالة",
+        "actions": "إجراءات"
+      },
+      "actions": {
+        "enable": "تفعيل",
+        "disable": "تعطيل"
+      },
+      "fields": {
+        "company": "الشركة",
+        "country": "الدولة",
+        "team": "الفريق (اختياري)",
+        "bonusType": "نوع المكافأة",
+        "trigger": "المحفّز",
+        "amount": "القيمة",
+        "active": "نشطة"
+      }
+    },
+    "competitions": {
+      "title": "المسابقات",
+      "subtitle": "مسابقات محدّدة بفترة زمنية مع لوحة متصدّرين. صرف الجوائز لم يُربط بعد.",
+      "createCta": "إنشاء مسابقة",
+      "createTitle": "إنشاء مسابقة",
+      "editTitle": "تعديل مسابقة",
+      "emptyTitle": "لا توجد مسابقات بعد",
+      "emptyBody": "أنشئ واحدة لمتابعة أداء الفريق خلال نافذة محدّدة.",
+      "created": "تم إنشاء المسابقة",
+      "updated": "تم تحديث المسابقة",
+      "leaderboardTitle": "لوحة المتصدّرين",
+      "leaderboardEmpty": "لا توجد بيانات لهذه المسابقة بعد.",
+      "cols": {
+        "name": "الاسم",
+        "scope": "النطاق",
+        "window": "النافذة",
+        "metric": "المقياس",
+        "status": "الحالة",
+        "actions": "إجراءات"
+      },
+      "fields": {
+        "name": "الاسم",
+        "company": "الشركة (اختياري)",
+        "country": "الدولة (اختياري)",
+        "team": "الفريق (اختياري)",
+        "startDate": "تاريخ البدء",
+        "endDate": "تاريخ الانتهاء",
+        "metric": "المقياس",
+        "reward": "الجائزة",
+        "status": "الحالة"
+      },
+      "metrics": {
+        "leads_created": "العملاء المُنشَؤون",
+        "activations": "عمليات التنشيط",
+        "first_trips": "الرحلات الأولى",
+        "conversion_rate": "معدّل التحويل"
+      },
+      "statuses": {
+        "draft": "مسوّدة",
+        "active": "نشطة",
+        "closed": "مغلقة"
+      },
+      "actions": {
+        "activate": "تفعيل",
+        "close": "إغلاق",
+        "leaderboard": "المتصدّرون"
+      }
+    },
+    "whatsapp": {
+      "title": "واتساب",
+      "subtitle": "كل المحادثات عبر الحسابات المتصلة.",
+      "noLead": "لا يوجد عميل مرتبط",
+      "linkLeadCta": "ربط بعميل",
+      "linkLeadTitle": "ربط المحادثة بعميل",
+      "linkLeadHint": "اختر عميلاً لربط هذه المحادثة به.",
+      "linked": "تم ربط المحادثة.",
+      "selectAConversation": "اختر محادثة",
+      "selectAConversationHint": "اختر واحدة من القائمة لقراءة رسائلها.",
+      "noMessages": "لا توجد رسائل بعد"
     }
   },
   "agent": {

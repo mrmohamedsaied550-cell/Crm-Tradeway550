@@ -32,6 +32,11 @@ import type {
   PaginatedResult,
   PipelineStage,
   RoleSummary,
+  BonusRule,
+  BonusType,
+  Competition,
+  CompetitionMetric,
+  CompetitionStatus,
   SendConversationMessageResult,
   WhatsAppAccount,
   Team,
@@ -375,4 +380,71 @@ export const conversationsApi = {
  */
 export const whatsappAccountsApi = {
   list: (): Promise<WhatsAppAccount[]> => apiFetch<WhatsAppAccount[]>('/whatsapp/accounts'),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Bonuses (C32)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateBonusRuleInput {
+  companyId: string;
+  countryId: string;
+  teamId?: string | null;
+  roleId?: string | null;
+  bonusType: BonusType;
+  trigger: string;
+  amount: string;
+  isActive?: boolean;
+}
+
+export const bonusesApi = {
+  list: (): Promise<BonusRule[]> => apiFetch<BonusRule[]>('/bonuses'),
+  get: (id: string): Promise<BonusRule> => apiFetch<BonusRule>(`/bonuses/${id}`),
+  create: (input: CreateBonusRuleInput): Promise<BonusRule> =>
+    apiFetch<BonusRule>('/bonuses', { method: 'POST', body: input }),
+  update: (id: string, input: Partial<CreateBonusRuleInput>): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}`, { method: 'PATCH', body: input }),
+  enable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/enable`, { method: 'POST' }),
+  disable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/disable`, { method: 'POST' }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/bonuses/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Competitions (C33)
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateCompetitionInput {
+  name: string;
+  companyId?: string | null;
+  countryId?: string | null;
+  teamId?: string | null;
+  startDate: string;
+  endDate: string;
+  metric: CompetitionMetric;
+  reward: string;
+  status?: CompetitionStatus;
+}
+
+export interface LeaderboardEntry {
+  userId: string | null;
+  name: string;
+  email: string | null;
+  score: number;
+}
+
+export const competitionsApi = {
+  list: (): Promise<Competition[]> => apiFetch<Competition[]>('/competitions'),
+  get: (id: string): Promise<Competition> => apiFetch<Competition>(`/competitions/${id}`),
+  create: (input: CreateCompetitionInput): Promise<Competition> =>
+    apiFetch<Competition>('/competitions', { method: 'POST', body: input }),
+  update: (id: string, input: Partial<CreateCompetitionInput>): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}`, { method: 'PATCH', body: input }),
+  setStatus: (id: string, status: CompetitionStatus): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}/status`, { method: 'POST', body: { status } }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/competitions/${id}`, { method: 'DELETE' }),
+  leaderboard: (id: string): Promise<LeaderboardEntry[]> =>
+    apiFetch<LeaderboardEntry[]>(`/competitions/${id}/leaderboard`),
 };

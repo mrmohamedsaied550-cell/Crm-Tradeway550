@@ -14,6 +14,7 @@ import { IdentityModule } from './identity/identity.module';
 import { CrmModule } from './crm/crm.module';
 import { OrgModule } from './org/org.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { BonusesModule } from './bonuses/bonuses.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -44,6 +45,7 @@ import { buildLoggerConfig } from './common/logger';
     CrmModule,
     OrgModule,
     WhatsAppModule,
+    BonusesModule,
     HealthModule,
   ],
   providers: [

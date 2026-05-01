@@ -13,6 +13,9 @@ import {
   Contact,
   Columns,
   Trophy,
+  Award,
+  Flag,
+  MessagesSquare,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,6 +31,9 @@ interface NavItem {
     | 'leads'
     | 'pipeline'
     | 'captains'
+    | 'bonuses'
+    | 'competitions'
+    | 'whatsapp'
     | 'audit';
   icon: LucideIcon;
   /** When true, the link is rendered but disabled — destination doesn't exist. */
@@ -43,6 +49,9 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/leads', labelKey: 'leads', icon: Contact },
   { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy },
+  { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award },
+  { href: '/admin/competitions', labelKey: 'competitions', icon: Flag, pending: true },
+  { href: '/admin/whatsapp', labelKey: 'whatsapp', icon: MessagesSquare, pending: true },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, pending: true },
 ];
 
