@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { decryptSecret } from '../common/crypto';
 import { normalizeE164 } from '../crm/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -316,7 +317,9 @@ export class WhatsAppService {
 
     const provider = this.providerFor(account.provider);
     const config: WhatsAppAccountConfig = {
-      accessToken: account.accessToken,
+      // P2-05 — decrypt at the point of use. Plaintext stays on the
+      // stack only for the duration of the provider call.
+      accessToken: decryptSecret(account.accessToken),
       phoneNumberId: account.phoneNumberId,
       appSecret: account.appSecret,
       verifyToken: account.verifyToken,

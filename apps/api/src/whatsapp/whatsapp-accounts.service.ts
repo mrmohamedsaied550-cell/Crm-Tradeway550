@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { decryptSecret, encryptSecret } from '../common/crypto';
 import { isProduction } from '../common/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from './whatsapp.service';
@@ -162,7 +163,13 @@ export class WhatsAppAccountsService {
             phoneNumber: dto.phoneNumber,
             phoneNumberId: dto.phoneNumberId,
             provider: dto.provider,
-            accessToken: dto.accessToken,
+            // P2-05 — `access_token` is encrypted at rest. `app_secret`
+            // intentionally stays plaintext: it has to be readable
+            // cross-tenant by the public webhook (via the
+            // `whatsapp_routes` mirror) without a key handshake. The
+            // RLS policy on `whatsapp_accounts` already prevents
+            // exfiltration through the admin path.
+            accessToken: encryptSecret(dto.accessToken),
             appSecret: dto.appSecret ?? null,
             verifyToken: dto.verifyToken,
             isActive: dto.isActive ?? true,
@@ -198,7 +205,10 @@ export class WhatsAppAccountsService {
             ...(dto.displayName !== undefined && { displayName: dto.displayName }),
             ...(dto.phoneNumber !== undefined && { phoneNumber: dto.phoneNumber }),
             ...(dto.phoneNumberId !== undefined && { phoneNumberId: dto.phoneNumberId }),
-            ...(dto.accessToken !== undefined && { accessToken: dto.accessToken }),
+            // P2-05 — encrypt the rotated token before persisting.
+            ...(dto.accessToken !== undefined && {
+              accessToken: encryptSecret(dto.accessToken),
+            }),
             // appSecret: undefined → unchanged; null → clear; string → rotate
             ...(dto.appSecret !== undefined && { appSecret: dto.appSecret }),
             ...(dto.verifyToken !== undefined && { verifyToken: dto.verifyToken }),
@@ -330,7 +340,12 @@ export class WhatsAppAccountsService {
     try {
       return await provider.testConnection({
         config: {
-          accessToken: account.accessToken,
+          // P2-05 — decrypt at the point of use; the plaintext lives
+          // in this stack frame just long enough to be handed to the
+          // provider. Decryption is a no-op for legacy plaintext rows
+          // so a deploy that hasn't yet run the bulk re-encrypt
+          // script keeps working.
+          accessToken: decryptSecret(account.accessToken),
           phoneNumberId: account.phoneNumberId,
           appSecret: account.appSecret,
           verifyToken: account.verifyToken,
