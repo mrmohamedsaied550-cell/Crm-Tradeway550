@@ -357,6 +357,11 @@ export const conversationsApi = {
     } = {},
   ): Promise<PaginatedResult<WhatsAppConversation>> =>
     apiFetch<PaginatedResult<WhatsAppConversation>>('/conversations', { query }),
+  linkLead: (id: string, leadId: string): Promise<{ id: string; leadId: string | null }> =>
+    apiFetch<{ id: string; leadId: string | null }>(`/conversations/${id}/link-lead`, {
+      method: 'POST',
+      body: { leadId },
+    }),
   get: (id: string): Promise<WhatsAppConversation> =>
     apiFetch<WhatsAppConversation>(`/conversations/${id}`),
   listMessages: (id: string, query: { limit?: number } = {}): Promise<WhatsAppMessage[]> =>
