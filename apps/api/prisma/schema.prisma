@@ -55,6 +55,7 @@ model Tenant {
   whatsAppAccounts      WhatsAppAccount[]
   whatsAppMessages      WhatsAppMessage[]
   whatsAppConversations WhatsAppConversation[]
+  whatsAppTemplates     WhatsAppTemplate[]
   bonusRules            BonusRule[]
   bonusAccruals         BonusAccrual[]
   competitions          Competition[]
@@ -662,6 +663,7 @@ model WhatsAppAccount {
 
   messages      WhatsAppMessage[]
   conversations WhatsAppConversation[]
+  templates     WhatsAppTemplate[]
 
   // Phone number is unique per tenant; phoneNumberId is unique globally
   // (Meta-assigned), so we add a stable lookup index for inbound routing.
@@ -699,10 +701,28 @@ model WhatsAppMessage {
 
   /// Other party's E.164 phone number.
   phone             String
-  /// Plain text body. Media / templated messages land in a later chunk.
+  /// Plain text body. For media messages this is the optional caption
+  /// (empty string when none). For template messages it's the rendered
+  /// template body — convenient for the inbox preview without joining
+  /// `whatsapp_templates` and resolving variables.
   text              String
   /// `inbound` | `outbound`.
   direction         String
+  /// P2-12 — message kind: 'text' | 'template' | 'image' | 'document'.
+  /// Existing rows backfill to 'text'; the column has a default so old
+  /// service code paths keep working unchanged.
+  messageType       String  @default("text") @map("message_type")
+  /// P2-12 — operator-hosted media URL (S3, signed-URL, etc). Set only
+  /// when messageType ∈ {'image', 'document'}. NULL for text +
+  /// template messages.
+  mediaUrl          String? @map("media_url")
+  /// P2-12 — optional MIME type echoed back from the provider so the
+  /// inbox can render an icon hint. NULL for text + template.
+  mediaMimeType     String? @map("media_mime_type")
+  /// P2-12 — Meta-approved template name + BCP-47 language code, set
+  /// only when messageType = 'template'.
+  templateName      String? @map("template_name")
+  templateLanguage  String? @map("template_language")
   /// Meta's message id (whatsapp_business_api id). Optional for queued
   /// outbound messages where we haven't received a provider id yet.
   providerMessageId String? @map("provider_message_id")
@@ -750,6 +770,11 @@ model WhatsAppConversation {
   /// inbox-list rendering. Kept in sync at message-insert time.
   lastMessageAt   DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
   lastMessageText String    @default("") @map("last_message_text")
+  /// P2-12 — timestamp of the most recent INBOUND message in this
+  /// thread, used to enforce Meta's 24-hour customer-service window.
+  /// NULL when the contact has never replied: in that case the agent
+  /// may only initiate the conversation via an approved template.
+  lastInboundAt   DateTime? @map("last_inbound_at") @db.Timestamptz(6)
 
   /// C25 — optional link to a Lead in the same tenant. Set explicitly via
   /// the link-lead endpoint, or auto-linked on read when exactly one
@@ -767,7 +792,51 @@ model WhatsAppConversation {
   @@index([tenantId, accountId, lastMessageAt])
   @@index([tenantId, status, lastMessageAt])
   @@index([tenantId, leadId])
+  @@index([tenantId, lastInboundAt])
   @@map("whatsapp_conversations")
+}
+
+/// WhatsAppTemplate (P2-12) — record of a Meta-approved template the
+/// tenant uses to start a conversation outside the 24-hour
+/// customer-service window. We do NOT submit / approve templates from
+/// the CRM (operators do that in Meta's WABA console); instead the
+/// admin records the approved template metadata so agents can pick
+/// it from a dropdown when sending.
+///
+/// `bodyText` is the rendered text WITH `{{1}}` / `{{2}}` placeholders
+/// — clients fill them in via the variables array on send. The
+/// CRM tracks `status` so an admin can mark a template "rejected" or
+/// "paused" and it disappears from the picker.
+model WhatsAppTemplate {
+  id          String  @id @default(uuid()) @db.Uuid
+  tenantId    String  @map("tenant_id") @db.Uuid
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId   String  @map("account_id") @db.Uuid
+  account     WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// Meta-approved template name (e.g. "appointment_reminder").
+  name        String
+  /// BCP-47 language code (e.g. "en", "ar", "en_US").
+  language    String
+  /// Meta category — determines Meta's pricing / latency profile.
+  /// One of: `marketing` | `utility` | `authentication`.
+  category    String
+  /// Body template with positional placeholders `{{1}}`, `{{2}}`, ...
+  bodyText    String  @map("body_text")
+  /// Number of placeholder variables in `bodyText`. Pre-computed at
+  /// upsert time so the picker can validate the variable count
+  /// without re-parsing the template body on every render.
+  variableCount Int   @default(0) @map("variable_count")
+  /// Lifecycle in the CRM: `approved` (default — agent can use it),
+  /// `paused` (admin disabled), `rejected` (Meta rejected).
+  status      String  @default("approved")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([accountId, name, language])
+  @@index([tenantId, status])
+  @@map("whatsapp_templates")
 }
 
 /// WhatsAppRoute — denormalised routing projection of WhatsAppAccount.

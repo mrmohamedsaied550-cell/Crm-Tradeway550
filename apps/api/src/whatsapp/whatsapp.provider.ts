@@ -53,10 +53,20 @@ export interface InboundMessage {
   readonly phoneNumberId: string;
 }
 
-/** Result of `WhatsAppProvider.sendText`. */
+/** Result of `WhatsAppProvider.sendText` (and sendTemplate / sendMedia). */
 export interface OutboundResult {
   readonly providerMessageId: string;
 }
+
+/**
+ * P2-12 — values for a Meta-approved template's positional
+ * placeholders (`{{1}}`, `{{2}}`, ...). The array length must
+ * match the template's `variableCount`; the service rejects
+ * mismatches before calling the provider.
+ */
+export type TemplateVariables = readonly string[];
+
+export type WhatsAppMediaKind = 'image' | 'document';
 
 /** Result of `WhatsAppProvider.testConnection`. */
 export interface ConnectionTestResult {
@@ -113,6 +123,33 @@ export interface WhatsAppProvider {
     config: WhatsAppAccountConfig;
     to: string;
     text: string;
+  }): Promise<OutboundResult>;
+
+  /**
+   * P2-12 — send a Meta-approved template by name. The provider
+   * is responsible for filling positional placeholders from the
+   * `variables` array. `language` is a BCP-47 code (e.g. "en",
+   * "ar", "en_US").
+   */
+  sendTemplate(input: {
+    config: WhatsAppAccountConfig;
+    to: string;
+    templateName: string;
+    language: string;
+    variables: TemplateVariables;
+  }): Promise<OutboundResult>;
+
+  /**
+   * P2-12 — send an image or document by URL. The provider
+   * downloads the file from `mediaUrl` and forwards it to Meta.
+   * Optional `caption` is shown under the media in the chat.
+   */
+  sendMedia(input: {
+    config: WhatsAppAccountConfig;
+    to: string;
+    kind: WhatsAppMediaKind;
+    mediaUrl: string;
+    caption?: string;
   }): Promise<OutboundResult>;
 
   /**

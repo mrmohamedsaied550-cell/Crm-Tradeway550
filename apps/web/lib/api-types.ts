@@ -225,6 +225,8 @@ export interface WhatsAppConversation {
   status: ConversationStatus;
   lastMessageAt: string;
   lastMessageText: string;
+  /** P2-12 — most recent inbound timestamp; drives the 24h window. */
+  lastInboundAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -237,6 +239,12 @@ export interface WhatsAppMessage {
   phone: string;
   text: string;
   direction: WhatsAppDirection;
+  /** P2-12 — message kind. Existing rows backfill to 'text'. */
+  messageType?: 'text' | 'template' | 'image' | 'document';
+  mediaUrl?: string | null;
+  mediaMimeType?: string | null;
+  templateName?: string | null;
+  templateLanguage?: string | null;
   providerMessageId: string | null;
   status: string;
   createdAt: string;
@@ -370,6 +378,26 @@ export interface TenantSettingsRow {
   timezone: string;
   slaMinutes: number;
   defaultDialCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── WhatsApp templates + media (P2-12) ─────
+
+export type WhatsAppTemplateStatus = 'approved' | 'paused' | 'rejected';
+export type WhatsAppTemplateCategory = 'marketing' | 'utility' | 'authentication';
+export type WhatsAppMessageType = 'text' | 'template' | 'image' | 'document';
+
+export interface WhatsAppTemplateRow {
+  id: string;
+  tenantId: string;
+  accountId: string;
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
+  bodyText: string;
+  variableCount: number;
+  status: WhatsAppTemplateStatus;
   createdAt: string;
   updatedAt: string;
 }

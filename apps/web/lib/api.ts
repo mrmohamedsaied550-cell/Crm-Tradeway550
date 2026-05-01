@@ -58,6 +58,7 @@ import type {
   SendConversationMessageResult,
   TenantSettingsRow,
   WhatsAppAccount,
+  WhatsAppTemplateRow,
   Team,
   UserStatus,
   WhatsAppConversation,
@@ -661,6 +662,66 @@ export const conversationsApi = {
       method: 'POST',
       body: { text },
     }),
+  /** P2-12 — send a Meta-approved template; allowed even outside the 24h window. */
+  sendTemplate: (
+    id: string,
+    input: { templateName: string; language: string; variables: string[] },
+  ): Promise<SendConversationMessageResult> =>
+    apiFetch<SendConversationMessageResult>(`/conversations/${id}/messages/template`, {
+      method: 'POST',
+      body: input,
+    }),
+  /** P2-12 — send media (image / document); gated by the 24h window. */
+  sendMedia: (
+    id: string,
+    input: {
+      kind: 'image' | 'document';
+      mediaUrl: string;
+      mediaMimeType?: string;
+      caption?: string;
+    },
+  ): Promise<SendConversationMessageResult> =>
+    apiFetch<SendConversationMessageResult>(`/conversations/${id}/messages/media`, {
+      method: 'POST',
+      body: input,
+    }),
+};
+
+/**
+ * P2-12 — admin CRUD over the WhatsApp template picker.
+ */
+export interface CreateWhatsAppTemplateInput {
+  accountId: string;
+  name: string;
+  language: string;
+  category: 'marketing' | 'utility' | 'authentication';
+  bodyText: string;
+  status?: 'approved' | 'paused' | 'rejected';
+}
+
+export const whatsappTemplatesApi = {
+  list: (
+    query: { accountId?: string; status?: 'approved' | 'paused' | 'rejected' } = {},
+  ): Promise<WhatsAppTemplateRow[]> =>
+    apiFetch<WhatsAppTemplateRow[]>('/whatsapp/templates', { query }),
+  get: (id: string): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>(`/whatsapp/templates/${id}`),
+  create: (input: CreateWhatsAppTemplateInput): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>('/whatsapp/templates', { method: 'POST', body: input }),
+  update: (
+    id: string,
+    input: {
+      bodyText?: string;
+      category?: 'marketing' | 'utility' | 'authentication';
+      status?: 'approved' | 'paused' | 'rejected';
+    },
+  ): Promise<WhatsAppTemplateRow> =>
+    apiFetch<WhatsAppTemplateRow>(`/whatsapp/templates/${id}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/whatsapp/templates/${id}`, { method: 'DELETE' }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

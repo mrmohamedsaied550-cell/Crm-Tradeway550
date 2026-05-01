@@ -6,7 +6,9 @@ import type {
   ConnectionTestResult,
   InboundMessage,
   OutboundResult,
+  TemplateVariables,
   WhatsAppAccountConfig,
+  WhatsAppMediaKind,
   WhatsAppProvider,
 } from './whatsapp.provider';
 
@@ -197,17 +199,95 @@ export class MetaCloudProvider implements WhatsAppProvider {
       throw new Error(`whatsapp_send_failed:${res.status}`);
     }
 
-    const parsed = (await res.json()) as Record<string, unknown>;
-    const messages = parsed['messages'];
-    if (!Array.isArray(messages) || messages.length === 0) {
-      throw new Error('whatsapp_send_unexpected_response');
+    return parseSendResponse(res);
+  }
+
+  /**
+   * P2-12 — send a Meta-approved template. The Cloud API expects a
+   * `template` payload with `name`, `language`, and a single
+   * `components: [{ type: 'body', parameters: [...] }]` for the
+   * positional placeholders.
+   */
+  async sendTemplate(input: {
+    config: WhatsAppAccountConfig;
+    to: string;
+    templateName: string;
+    language: string;
+    variables: TemplateVariables;
+  }): Promise<OutboundResult> {
+    const { config, to, templateName, language, variables } = input;
+    const url = `${META_GRAPH_BASE}/${encodeURIComponent(config.phoneNumberId)}/messages`;
+    const components =
+      variables.length > 0
+        ? [
+            {
+              type: 'body',
+              parameters: variables.map((v) => ({ type: 'text', text: v })),
+            },
+          ]
+        : undefined;
+    const res = await this.fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: stripLeadingPlus(to),
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: language },
+          ...(components && { components }),
+        },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      this.logger.warn(
+        `MetaCloudProvider.sendTemplate failed: ${res.status} ${detail.slice(0, 200)}`,
+      );
+      throw new Error(`whatsapp_template_send_failed:${res.status}`);
     }
-    const first = messages[0] as Record<string, unknown>;
-    const id = typeof first['id'] === 'string' ? first['id'] : '';
-    if (id.length === 0) {
-      throw new Error('whatsapp_send_missing_message_id');
+    return parseSendResponse(res);
+  }
+
+  /**
+   * P2-12 — send media (image / document) by URL. Meta downloads
+   * the file from `mediaUrl` and forwards it; the operator must
+   * host it somewhere reachable from Meta's servers.
+   */
+  async sendMedia(input: {
+    config: WhatsAppAccountConfig;
+    to: string;
+    kind: WhatsAppMediaKind;
+    mediaUrl: string;
+    caption?: string;
+  }): Promise<OutboundResult> {
+    const { config, to, kind, mediaUrl, caption } = input;
+    const url = `${META_GRAPH_BASE}/${encodeURIComponent(config.phoneNumberId)}/messages`;
+    const mediaPayload: Record<string, string> = { link: mediaUrl };
+    if (caption !== undefined && caption.length > 0) mediaPayload.caption = caption;
+    const res = await this.fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: stripLeadingPlus(to),
+        type: kind,
+        [kind]: mediaPayload,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      this.logger.warn(`MetaCloudProvider.sendMedia failed: ${res.status} ${detail.slice(0, 200)}`);
+      throw new Error(`whatsapp_media_send_failed:${res.status}`);
     }
-    return { providerMessageId: id };
+    return parseSendResponse(res);
   }
 
   // ─────── Test connection (admin liveness check) ───────
@@ -266,4 +346,23 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 function stripLeadingPlus(phone: string): string {
   return phone.startsWith('+') ? phone.slice(1) : phone;
+}
+
+/**
+ * Shared response parser for Meta send-message endpoints. Every
+ * shape — text, template, image, document — returns
+ * `{ messages: [{ id }] }` on success.
+ */
+async function parseSendResponse(res: Awaited<ReturnType<FetchFn>>): Promise<OutboundResult> {
+  const parsed = (await res.json()) as Record<string, unknown>;
+  const messages = parsed['messages'];
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw new Error('whatsapp_send_unexpected_response');
+  }
+  const first = messages[0] as Record<string, unknown>;
+  const id = typeof first['id'] === 'string' ? first['id'] : '';
+  if (id.length === 0) {
+    throw new Error('whatsapp_send_missing_message_id');
+  }
+  return { providerMessageId: id };
 }

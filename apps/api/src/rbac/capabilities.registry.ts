@@ -63,13 +63,16 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'followup.write', description: 'Create / delete follow-ups' },
   { code: 'followup.complete', description: 'Mark a follow-up done' },
 
-  // WhatsApp (P2-01)
+  // WhatsApp (P2-01 + P2-12)
   { code: 'whatsapp.account.read', description: 'View WhatsApp accounts (no secrets)' },
   { code: 'whatsapp.account.write', description: 'Create / update / enable / disable accounts' },
   { code: 'whatsapp.conversation.read', description: 'View conversations + messages' },
   { code: 'whatsapp.message.send', description: 'Send a text message in a conversation' },
   { code: 'whatsapp.handover', description: 'Hand a conversation off to another agent' },
   { code: 'whatsapp.link.lead', description: 'Link a conversation to a lead' },
+  { code: 'whatsapp.template.read', description: 'View WhatsApp templates (picker dropdown)' },
+  { code: 'whatsapp.template.write', description: 'Create / update / delete WhatsApp templates' },
+  { code: 'whatsapp.media.send', description: 'Send image / document media in a conversation' },
 
   // Bonuses (P2-01)
   { code: 'bonus.read', description: 'View bonus rules' },

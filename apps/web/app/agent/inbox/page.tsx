@@ -2,18 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { ArrowLeft, Lock, MessagesSquare, Phone, Send } from 'lucide-react';
+import {
+  ArrowLeft,
+  Image as ImageIcon,
+  Lock,
+  MessageSquareDashed,
+  MessagesSquare,
+  Phone,
+  Send,
+} from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
+import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, conversationsApi, whatsappAccountsApi } from '@/lib/api';
+import { ApiError, conversationsApi, whatsappAccountsApi, whatsappTemplatesApi } from '@/lib/api';
 import type {
   ConversationStatus,
   WhatsAppAccount,
   WhatsAppConversation,
   WhatsAppMessage,
+  WhatsAppTemplateRow,
 } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
 
@@ -92,6 +103,19 @@ export default function InboxPage(): JSX.Element {
   const [accounts, setAccounts] = useState<WhatsAppAccount[]>([]);
   const [accountsError, setAccountsError] = useState<string | null>(null);
 
+  // ─────── P2-12 — templates + media composer state ───────
+  const [templates, setTemplates] = useState<WhatsAppTemplateRow[]>([]);
+  const [templateModalOpen, setTemplateModalOpen] = useState<boolean>(false);
+  const [pickedTemplateId, setPickedTemplateId] = useState<string>('');
+  const [templateVars, setTemplateVars] = useState<string[]>([]);
+  const [mediaModalOpen, setMediaModalOpen] = useState<boolean>(false);
+  const [mediaForm, setMediaForm] = useState<{
+    kind: 'image' | 'document';
+    mediaUrl: string;
+    mediaMimeType: string;
+    caption: string;
+  }>({ kind: 'image', mediaUrl: '', mediaMimeType: '', caption: '' });
+
   // ─────── Selection + chat state ───────
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
@@ -167,6 +191,23 @@ export default function InboxPage(): JSX.Element {
     else setMessages([]);
   }, [selectedId, reloadMessages]);
 
+  // P2-12 — load the template picker once. Filtered to the
+  // active conversation's account at use-time.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await whatsappTemplatesApi.list({ status: 'approved' });
+        if (!cancelled) setTemplates(list);
+      } catch {
+        // Templates picker is non-critical — silently degrade.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-scroll to bottom when messages change.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -187,6 +228,15 @@ export default function InboxPage(): JSX.Element {
   const hasFilters = Boolean(accountFilter || statusFilter || phoneFilter);
   const isClosed = selected?.status === 'closed';
 
+  // P2-12 — 24h customer-service window. The freeform composer is
+  // only enabled when the contact has replied within 24h; otherwise
+  // the agent must use a template.
+  const lastInbound = selected?.lastInboundAt ? new Date(selected.lastInboundAt) : null;
+  const windowOpen = !!lastInbound && now.getTime() - lastInbound.getTime() < 24 * 60 * 60 * 1000;
+  const windowAgeHrs = lastInbound
+    ? Math.floor((now.getTime() - lastInbound.getTime()) / (60 * 60 * 1000))
+    : null;
+
   async function onSend(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     if (!selectedId || !draft.trim() || isClosed) return;
@@ -196,6 +246,85 @@ export default function InboxPage(): JSX.Element {
       await conversationsApi.sendText(selectedId, draft.trim());
       setDraft('');
       // Refresh messages + list (so lastMessage* bubbles up the row).
+      await Promise.all([reloadMessages(selectedId), reloadList()]);
+    } catch (err) {
+      setSendError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // P2-12 — template + media send paths.
+
+  function openTemplatePicker(): void {
+    if (!selected) return;
+    // Filter to approved templates for the conversation's account.
+    const approved = templates.filter(
+      (t) => t.accountId === selected.accountId && t.status === 'approved',
+    );
+    if (approved.length === 0) {
+      setSendError(t('noTemplates'));
+      return;
+    }
+    setPickedTemplateId(approved[0]!.id);
+    setTemplateVars(new Array(approved[0]!.variableCount).fill(''));
+    setSendError(null);
+    setTemplateModalOpen(true);
+  }
+
+  function onPickTemplate(id: string): void {
+    const tpl = templates.find((row) => row.id === id);
+    setPickedTemplateId(id);
+    setTemplateVars(tpl ? new Array(tpl.variableCount).fill('') : []);
+  }
+
+  async function onSendTemplate(): Promise<void> {
+    if (!selectedId) return;
+    const tpl = templates.find((row) => row.id === pickedTemplateId);
+    if (!tpl) return;
+    if (templateVars.some((v) => v.trim().length === 0)) {
+      setSendError(t('templateVarsRequired'));
+      return;
+    }
+    setSending(true);
+    setSendError(null);
+    try {
+      await conversationsApi.sendTemplate(selectedId, {
+        templateName: tpl.name,
+        language: tpl.language,
+        variables: templateVars.map((v) => v.trim()),
+      });
+      setTemplateModalOpen(false);
+      await Promise.all([reloadMessages(selectedId), reloadList()]);
+    } catch (err) {
+      setSendError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function openMediaModal(): void {
+    setMediaForm({ kind: 'image', mediaUrl: '', mediaMimeType: '', caption: '' });
+    setSendError(null);
+    setMediaModalOpen(true);
+  }
+
+  async function onSendMedia(): Promise<void> {
+    if (!selectedId) return;
+    if (mediaForm.mediaUrl.trim().length === 0) {
+      setSendError(t('mediaUrlRequired'));
+      return;
+    }
+    setSending(true);
+    setSendError(null);
+    try {
+      await conversationsApi.sendMedia(selectedId, {
+        kind: mediaForm.kind,
+        mediaUrl: mediaForm.mediaUrl.trim(),
+        ...(mediaForm.mediaMimeType.trim() && { mediaMimeType: mediaForm.mediaMimeType.trim() }),
+        ...(mediaForm.caption.trim() && { caption: mediaForm.caption.trim() }),
+      });
+      setMediaModalOpen(false);
       await Promise.all([reloadMessages(selectedId), reloadList()]);
     } catch (err) {
       setSendError(err instanceof ApiError ? err.message : String(err));
@@ -488,14 +617,45 @@ export default function InboxPage(): JSX.Element {
                   className="flex flex-col gap-2 border-t border-surface-border p-3"
                 >
                   {sendError ? <Notice tone="error">{sendError}</Notice> : null}
+                  {/* P2-12 — window-state hint */}
+                  <div className="flex items-center justify-between text-xs">
+                    {windowOpen ? (
+                      <Badge tone="healthy">{t('windowOpen')}</Badge>
+                    ) : (
+                      <Badge tone="warning">
+                        {windowAgeHrs === null
+                          ? t('windowNever')
+                          : t('windowClosed', { hours: windowAgeHrs })}
+                      </Badge>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="ghost" size="sm" onClick={openTemplatePicker}>
+                        <MessageSquareDashed className="h-3.5 w-3.5" />
+                        {t('useTemplate')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={openMediaModal}
+                        disabled={!windowOpen}
+                        title={!windowOpen ? t('mediaWindowDisabled') : undefined}
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        {t('attachMedia')}
+                      </Button>
+                    </div>
+                  </div>
                   <div className="flex items-end gap-2">
                     <Textarea
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
-                      placeholder={t('composerPlaceholder')}
+                      placeholder={
+                        windowOpen ? t('composerPlaceholder') : t('composerPlaceholderClosed')
+                      }
                       rows={2}
                       maxLength={4096}
-                      disabled={sending}
+                      disabled={sending || !windowOpen}
                       className="flex-1"
                       onKeyDown={(e) => {
                         // Submit on Enter, newline on Shift+Enter — common chat affordance.
@@ -507,7 +667,12 @@ export default function InboxPage(): JSX.Element {
                         }
                       }}
                     />
-                    <Button type="submit" loading={sending} disabled={!draft.trim() || sending}>
+                    <Button
+                      type="submit"
+                      loading={sending}
+                      disabled={!draft.trim() || sending || !windowOpen}
+                      title={!windowOpen ? t('windowSendDisabled') : undefined}
+                    >
                       <Send className="h-3.5 w-3.5" aria-hidden="true" />
                       {sending ? t('sending') : t('send')}
                     </Button>
@@ -526,6 +691,112 @@ export default function InboxPage(): JSX.Element {
           )}
         </section>
       </div>
+
+      {/* P2-12 — template picker modal */}
+      <Modal
+        open={templateModalOpen}
+        title={t('templatePickerTitle')}
+        onClose={() => setTemplateModalOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setTemplateModalOpen(false)}>
+              {t('cancel')}
+            </Button>
+            <Button onClick={() => void onSendTemplate()} loading={sending}>
+              <Send className="h-3.5 w-3.5" />
+              {t('send')}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Field label={t('templateLabel')}>
+            <Select value={pickedTemplateId} onChange={(e) => onPickTemplate(e.target.value)}>
+              {templates
+                .filter((tpl) => selected && tpl.accountId === selected.accountId)
+                .filter((tpl) => tpl.status === 'approved')
+                .map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name} ({tpl.language})
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          {pickedTemplateId ? (
+            <p className="rounded-md border border-surface-border bg-surface px-3 py-2 text-xs text-ink-secondary">
+              {templates.find((tpl) => tpl.id === pickedTemplateId)?.bodyText}
+            </p>
+          ) : null}
+          {templateVars.map((v, i) => (
+            <Field key={i} label={t('templateVariableLabel', { n: i + 1 })} required>
+              <Input
+                value={v}
+                onChange={(e) => {
+                  const next = [...templateVars];
+                  next[i] = e.target.value;
+                  setTemplateVars(next);
+                }}
+                maxLength={1024}
+              />
+            </Field>
+          ))}
+        </div>
+      </Modal>
+
+      {/* P2-12 — media attach modal */}
+      <Modal
+        open={mediaModalOpen}
+        title={t('mediaModalTitle')}
+        onClose={() => setMediaModalOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setMediaModalOpen(false)}>
+              {t('cancel')}
+            </Button>
+            <Button onClick={() => void onSendMedia()} loading={sending}>
+              <Send className="h-3.5 w-3.5" />
+              {t('send')}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Field label={t('mediaKind')} required>
+            <Select
+              value={mediaForm.kind}
+              onChange={(e) =>
+                setMediaForm((f) => ({ ...f, kind: e.target.value as 'image' | 'document' }))
+              }
+            >
+              <option value="image">{t('mediaKindImage')}</option>
+              <option value="document">{t('mediaKindDocument')}</option>
+            </Select>
+          </Field>
+          <Field label={t('mediaUrl')} required>
+            <Input
+              value={mediaForm.mediaUrl}
+              onChange={(e) => setMediaForm((f) => ({ ...f, mediaUrl: e.target.value }))}
+              placeholder="https://..."
+              maxLength={2048}
+            />
+          </Field>
+          <Field label={t('mediaMimeType')}>
+            <Input
+              value={mediaForm.mediaMimeType}
+              onChange={(e) => setMediaForm((f) => ({ ...f, mediaMimeType: e.target.value }))}
+              placeholder="image/jpeg"
+              maxLength={120}
+            />
+          </Field>
+          <Field label={t('mediaCaption')}>
+            <Input
+              value={mediaForm.caption}
+              onChange={(e) => setMediaForm((f) => ({ ...f, caption: e.target.value }))}
+              maxLength={1024}
+            />
+          </Field>
+        </div>
+      </Modal>
     </div>
   );
 }

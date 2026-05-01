@@ -133,6 +133,7 @@ describe('rbac seed', () => {
       'users.disable',
       'users.reset',
       'whatsapp.account.write',
+      'whatsapp.template.write',
       'bonus.write',
       'competition.write',
       'meta.leadsource.write',

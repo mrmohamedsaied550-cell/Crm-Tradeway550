@@ -18,6 +18,7 @@ import {
   Award,
   Flag,
   MessagesSquare,
+  MessageSquareDashed,
   BarChart3,
   Settings,
   type LucideIcon,
@@ -40,6 +41,7 @@ interface NavItem {
     | 'bonuses'
     | 'competitions'
     | 'whatsapp'
+    | 'whatsappTemplates'
     | 'reports'
     | 'audit'
     | 'tenantSettings';
@@ -73,6 +75,12 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'whatsapp',
     icon: MessagesSquare,
     cap: 'whatsapp.conversation.read',
+  },
+  {
+    href: '/admin/whatsapp/templates',
+    labelKey: 'whatsappTemplates',
+    icon: MessageSquareDashed,
+    cap: 'whatsapp.template.read',
   },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },

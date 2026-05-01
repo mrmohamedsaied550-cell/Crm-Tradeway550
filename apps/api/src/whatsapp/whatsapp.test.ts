@@ -466,6 +466,32 @@ describe('whatsapp — service + persistence (C21)', () => {
   });
 
   it('sendText sends through the provider and persists an outbound message', async () => {
+    // P2-12 — open the 24h customer-service window for the
+    // outbound send: plant a conversation with lastInboundAt = now.
+    await withTenantRaw(tenantAId, async (tx) => {
+      const existing = await tx.whatsAppConversation.findFirst({
+        where: { accountId: accountAId, phone: '+201001112222' },
+        select: { id: true },
+      });
+      if (existing) {
+        await tx.whatsAppConversation.update({
+          where: { id: existing.id },
+          data: { lastInboundAt: new Date() },
+        });
+      } else {
+        await tx.whatsAppConversation.create({
+          data: {
+            tenantId: tenantAId,
+            accountId: accountAId,
+            phone: '+201001112222',
+            status: 'open',
+            lastMessageAt: new Date(),
+            lastMessageText: '',
+            lastInboundAt: new Date(),
+          },
+        });
+      }
+    });
     const out = await svc.sendText({
       tenantId: tenantAId,
       accountId: accountAId,
