@@ -43,6 +43,7 @@ model Tenant {
   roles            Role[]
   users            User[]
   sessions         UserSession[]
+  settings         TenantSettings?
   pipelines        Pipeline[]
   pipelineStages   PipelineStage[]
   leads            Lead[]
@@ -936,4 +937,39 @@ model MetaLeadSource {
   @@unique([tenantId, pageId, formId])
   @@index([tenantId, isActive])
   @@map("meta_lead_sources")
+}
+
+/// TenantSettings (P2-08) — one-per-tenant configuration row.
+///
+/// 1:1 with Tenant via `tenant_id` as the primary key. Carries
+/// runtime knobs that previously lived in env vars or were
+/// hardcoded:
+///
+///   - `timezone` (IANA, e.g. "Africa/Cairo") drives day-boundary
+///     calculations for `listDueToday` so an admin in Cairo and an
+///     admin in Casablanca see the right "today" without shifting
+///     the server clock.
+///
+///   - `slaMinutes` is the response-SLA window. Replaces the
+///     `LEAD_SLA_MINUTES` env var; the env var becomes the
+///     fallback used only when the row is missing.
+///
+///   - `defaultDialCode` (e.g. "+20", "+966") is prepended to bare
+///     local-format phone numbers in lead-creating flows so an
+///     admin can paste "01001234567" and get "+201001234567".
+///     The strict `normalizeE164` helper still rejects malformed
+///     input — the prefix is only applied when the input lacks a
+///     country code.
+///
+/// Tenant-scoped via FORCE'd RLS, same as the rest of the CRM.
+model TenantSettings {
+  tenantId        String   @id @map("tenant_id") @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  timezone        String   @default("Africa/Cairo")
+  slaMinutes      Int      @default(60) @map("sla_minutes")
+  defaultDialCode String   @default("+20") @map("default_dial_code")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("tenant_settings")
 }

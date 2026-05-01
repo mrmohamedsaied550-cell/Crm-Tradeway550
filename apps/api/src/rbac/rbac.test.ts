@@ -137,6 +137,7 @@ describe('rbac seed', () => {
       'competition.write',
       'meta.leadsource.write',
       'pipeline.write',
+      'tenant.settings.write',
     ]);
     for (const r of rows) {
       const codes = r.capabilities.map((rc) => rc.capability.code);

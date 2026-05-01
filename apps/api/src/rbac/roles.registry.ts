@@ -43,6 +43,7 @@ const READ_CRM: readonly CapabilityCode[] = [
   'competition.read',
   'report.read',
   'meta.leadsource.read',
+  'tenant.settings.read',
 ];
 
 const AGENT_ACTIONS: readonly CapabilityCode[] = [
@@ -105,6 +106,7 @@ export const ROLE_DEFINITIONS = [
       'audit.read',
       'roles.read',
       'capabilities.read',
+      'tenant.settings.write',
     ],
   },
   {
@@ -138,6 +140,7 @@ export const ROLE_DEFINITIONS = [
       'audit.read',
       'roles.read',
       'capabilities.read',
+      'tenant.settings.write',
     ],
   },
   {

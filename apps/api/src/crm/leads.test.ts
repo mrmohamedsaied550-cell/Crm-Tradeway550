@@ -26,8 +26,10 @@ import assert from 'node:assert/strict';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaClient } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { hashPassword } from '../identity/password.util';
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
@@ -69,8 +71,10 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     prismaSvc = new PrismaService();
     pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    const sla = new SlaService(prismaSvc, assignment);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla);
+    const audit = new AuditService(prismaSvc);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     // Provision a test tenant + a sales_agent role + a couple of users.

@@ -45,6 +45,7 @@ import type {
   Pipeline,
   PipelineStageRow,
   SendConversationMessageResult,
+  TenantSettingsRow,
   WhatsAppAccount,
   Team,
   UserStatus,
@@ -712,4 +713,20 @@ export const metaLeadSourcesApi = {
     apiFetch<MetaLeadSource>(`/meta-lead-sources/${id}`, { method: 'PATCH', body: input }),
   remove: (id: string): Promise<void> =>
     apiFetch<void>(`/meta-lead-sources/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Tenant settings (P2-08) — timezone / SLA window / default dial code.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface UpdateTenantSettingsInput {
+  timezone?: string;
+  slaMinutes?: number;
+  defaultDialCode?: string;
+}
+
+export const tenantSettingsApi = {
+  get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
+  update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
+    apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
 };

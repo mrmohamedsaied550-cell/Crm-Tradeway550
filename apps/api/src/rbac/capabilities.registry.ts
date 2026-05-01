@@ -86,6 +86,10 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'audit.read', description: 'View the audit log' },
   { code: 'roles.read', description: 'View roles' },
   { code: 'capabilities.read', description: 'View capabilities' },
+
+  // Tenant settings (P2-08)
+  { code: 'tenant.settings.read', description: 'View tenant-level settings' },
+  { code: 'tenant.settings.write', description: 'Update tenant-level settings' },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];

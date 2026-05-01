@@ -309,6 +309,22 @@ export interface WhatsAppAccount {
   updatedAt: string;
 }
 
+// ───── Tenant settings (P2-08) ─────
+
+/**
+ * Per-tenant runtime knobs. Drives SLA window, the default dial code
+ * for local-format phone input, and the timezone used by "due today"
+ * calculations on the agent workspace.
+ */
+export interface TenantSettingsRow {
+  tenantId: string;
+  timezone: string;
+  slaMinutes: number;
+  defaultDialCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ───── Pipelines (P2-07) ─────
 
 /**

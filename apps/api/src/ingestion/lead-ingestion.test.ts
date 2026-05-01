@@ -26,6 +26,7 @@ import { SlaService } from '../crm/sla.service';
 import { hashPassword } from '../identity/password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { LeadIngestionService } from './lead-ingestion.service';
 
 const TENANT_CODE = '__p2_06_ingestion__';
@@ -56,9 +57,17 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     prismaSvc = new PrismaService();
     const pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    const sla = new SlaService(prismaSvc, assignment);
     const audit = new AuditService(prismaSvc);
-    ingestion = new LeadIngestionService(prismaSvc, pipeline, assignment, sla, audit);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    ingestion = new LeadIngestionService(
+      prismaSvc,
+      pipeline,
+      assignment,
+      sla,
+      audit,
+      tenantSettings,
+    );
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },

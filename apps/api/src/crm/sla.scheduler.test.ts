@@ -16,8 +16,10 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
 import { LeadsService } from './leads.service';
 import { PipelineService } from './pipeline.service';
@@ -154,8 +156,10 @@ describe('crm — sla scheduler (C29)', () => {
 
     const pipelineSvc = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    slaSvc = new SlaService(prismaSvc, assignment);
-    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, assignment, slaSvc);
+    const audit = new AuditService(prismaSvc);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    slaSvc = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, assignment, slaSvc, tenantSettings);
     scheduler = new SlaSchedulerService(prismaSvc, slaSvc);
   });
 

@@ -19,6 +19,7 @@ import {
   Flag,
   MessagesSquare,
   BarChart3,
+  Settings,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -40,7 +41,8 @@ interface NavItem {
     | 'competitions'
     | 'whatsapp'
     | 'reports'
-    | 'audit';
+    | 'audit'
+    | 'tenantSettings';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -74,6 +76,12 @@ const ITEMS: readonly NavItem[] = [
   },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },
+  {
+    href: '/admin/tenant-settings',
+    labelKey: 'tenantSettings',
+    icon: Settings,
+    cap: 'tenant.settings.read',
+  },
 ];
 
 /**

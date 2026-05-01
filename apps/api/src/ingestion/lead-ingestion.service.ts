@@ -3,7 +3,8 @@ import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AssignmentService } from '../crm/assignment.service';
-import { normalizeE164 } from '../crm/phone.util';
+import { normalizeE164WithDefault } from '../crm/phone.util';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { DEFAULT_STAGE_CODE, type LeadSource } from '../crm/pipeline.registry';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
@@ -48,6 +49,7 @@ export class LeadIngestionService {
     private readonly assignment: AssignmentService,
     private readonly sla: SlaService,
     private readonly audit: AuditService,
+    private readonly tenantSettings: TenantSettingsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────
@@ -107,6 +109,7 @@ export class LeadIngestionService {
     }
 
     const stage = await this.pipeline.findByCodeOrThrow(DEFAULT_STAGE_CODE);
+    const settings = await this.tenantSettings.getCurrent();
     const errors: { row: number; reason: string }[] = [];
     let created = 0;
     let duplicates = 0;
@@ -125,6 +128,8 @@ export class LeadIngestionService {
           email: mapping.email ? (row[mapping.email] ?? '').trim() || null : null,
           source: dto.defaultSource,
           actorUserId,
+          defaultDialCode: settings.defaultDialCode,
+          slaMinutes: settings.slaMinutes,
         });
         if (result.kind === 'created') {
           created += 1;
@@ -217,11 +222,16 @@ export class LeadIngestionService {
           reason: `default pipeline stage "${DEFAULT_STAGE_CODE}" missing`,
         };
       }
+      // P2-08 — read tenant settings inside this same tx (the
+      // webhook path has no upstream tenant context).
+      const settings = await this.tenantSettings.getInTx(tx, input.tenantId);
 
       const r = await this.tryCreateLead(tx, {
         tenantId: input.tenantId,
         stageId: stage.id,
         stageIsTerminal: stage.isTerminal,
+        defaultDialCode: settings.defaultDialCode,
+        slaMinutes: settings.slaMinutes,
         name: input.name.trim(),
         phoneRaw: input.phoneRaw.trim(),
         email: input.email ? input.email.trim() || null : null,
@@ -266,6 +276,8 @@ export class LeadIngestionService {
       email: string | null;
       source: LeadSource;
       actorUserId: string | null;
+      defaultDialCode: string;
+      slaMinutes: number;
     },
   ): Promise<
     { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
@@ -279,7 +291,11 @@ export class LeadIngestionService {
 
     let phone: string;
     try {
-      phone = normalizeE164(input.phoneRaw);
+      // P2-08 — bare local-format phones get the tenant's default
+      // dial code prepended. CSV uploads from Egyptian operators
+      // routinely paste numbers as "01001234567"; we don't want to
+      // reject those.
+      phone = normalizeE164WithDefault(input.phoneRaw, input.defaultDialCode);
     } catch (err) {
       return { kind: 'error', reason: `invalid phone: ${(err as Error).message}` };
     }
@@ -304,7 +320,7 @@ export class LeadIngestionService {
     }
 
     const now = new Date();
-    const slaDueAt = input.stageIsTerminal ? null : this.sla.computeDueAt(now);
+    const slaDueAt = input.stageIsTerminal ? null : this.sla.computeDueAt(now, input.slaMinutes);
     const slaStatus = input.stageIsTerminal ? 'paused' : 'active';
 
     const lead = await tx.lead.create({

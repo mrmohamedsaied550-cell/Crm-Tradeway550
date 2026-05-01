@@ -6,29 +6,27 @@ import { LEAD_SOURCES, ALL_STAGE_CODES, ACTIVITY_TYPES } from './pipeline.regist
  *
  * Note on validation: the C10 spec called for class-validator, but the
  * existing convention from C6–C9 is zod via `nestjs-zod`. To keep the
- * codebase consistent we stay on zod here. Phone normalisation runs as a
- * `transform` so the controller receives an already-clean E.164 string;
- * the downstream service does not have to re-validate.
+ * codebase consistent we stay on zod here.
+ *
+ * P2-08 — phone normalisation moved from a strict zod `transform`
+ * to the service layer so `LeadsService.create` can apply the
+ * tenant's `defaultDialCode` to local-format input (e.g.
+ * "01001234567" → "+201001234567"). The DTO only sanity-checks the
+ * shape (length + permitted characters); rejection for malformed
+ * phones surfaces from the service as a 400 with a `lead.invalid_phone`
+ * code.
  */
 
-import { normalizeE164 } from './phone.util';
-
-const phoneE164 = z
+const phoneInput = z
   .string()
+  .trim()
   .min(6)
   .max(32)
-  .transform((v, ctx) => {
-    try {
-      return normalizeE164(v);
-    } catch (err) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error).message });
-      return z.NEVER;
-    }
-  });
+  .regex(/^[\d+\s\-()]+$/u, 'phone may only contain digits, spaces, dashes, parens, or +');
 
 export const CreateLeadSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  phone: phoneE164,
+  phone: phoneInput,
   email: z.string().trim().email().max(254).optional(),
   source: z.enum(LEAD_SOURCES).default('manual'),
   /** Optional override; defaults to the `new` stage if omitted. */
@@ -41,7 +39,7 @@ export type CreateLeadDto = z.infer<typeof CreateLeadSchema>;
 export const UpdateLeadSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
-    phone: phoneE164.optional(),
+    phone: phoneInput.optional(),
     email: z.string().trim().email().max(254).nullable().optional(),
     source: z.enum(LEAD_SOURCES).optional(),
   })

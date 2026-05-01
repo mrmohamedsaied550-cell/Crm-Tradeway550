@@ -18,8 +18,10 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { hashPassword } from '../identity/password.util';
 import { AssignmentService } from './assignment.service';
 import { CaptainsService } from './captains.service';
@@ -99,8 +101,10 @@ describe('crm — captain conversion + reads (C18)', () => {
     prismaSvc = new PrismaService();
     const pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
-    const sla = new SlaService(prismaSvc, assignment);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla);
+    const audit = new AuditService(prismaSvc);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
+    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     const tenant = await prisma.tenant.upsert({

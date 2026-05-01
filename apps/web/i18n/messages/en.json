@@ -47,7 +47,8 @@
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
       "reports": "Reports",
-      "audit": "Audit Log"
+      "audit": "Audit Log",
+      "tenantSettings": "Settings"
     },
     "authBar": {
       "notSignedIn": "You're not signed in. Sign in to access the admin API.",
@@ -307,6 +308,20 @@
       "moveBlocked": "Cannot drop on the same stage",
       "movedTo": "Moved to {stage}",
       "moveFailed": "Move failed"
+    },
+    "tenantSettings": {
+      "title": "Tenant settings",
+      "subtitle": "Timezone, SLA window, and default phone country code for the active tenant.",
+      "timezone": "Timezone",
+      "timezoneHint": "IANA name (e.g. \"Africa/Cairo\", \"Asia/Riyadh\").",
+      "slaMinutes": "SLA window (minutes)",
+      "slaMinutesHint": "Response-SLA window for new leads. 1–1440.",
+      "defaultDialCode": "Default dial code",
+      "defaultDialCodeHint": "E.164 country prefix (e.g. \"+20\"). Prepended to local-format phone numbers (\"01001234567\" → \"+201001234567\").",
+      "save": "Save",
+      "saved": "Settings saved.",
+      "loadFailed": "Failed to load settings.",
+      "saveFailed": "Failed to save settings."
     },
     "pipelineBuilder": {
       "title": "Pipeline Builder",
