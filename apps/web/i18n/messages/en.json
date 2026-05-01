@@ -437,6 +437,18 @@
       "title": "My Leads",
       "subtitle": "Leads currently assigned to you. Update stage, log a note, schedule the next action.",
       "open": "Open my leads",
+      "counters": {
+        "overdue": "overdue",
+        "dueToday": "due today"
+      },
+      "overdueSection": {
+        "title": "Overdue leads",
+        "dueLabel": "Was due"
+      },
+      "dueTodaySection": {
+        "title": "Due today",
+        "atLabel": "At"
+      },
       "noUser": "Sign in to see your assigned leads.",
       "emptyTitle": "No leads assigned to you yet",
       "emptyBody": "When a manager assigns leads to you, they'll appear here.",

@@ -284,6 +284,13 @@ export const leadsApi = {
       offset?: number;
     } = {},
   ): Promise<PaginatedResult<Lead>> => apiFetch<PaginatedResult<Lead>>('/leads', { query }),
+  /** C37 — leads whose pending follow-up is past its dueAt. Defaults
+   *  to the calling user; pass `mine: '0'` to broaden to all. */
+  overdue: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>
+    apiFetch<Lead[]>('/leads/overdue', { query }),
+  /** C37 — leads with a pending follow-up due today. */
+  dueToday: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>
+    apiFetch<Lead[]>('/leads/due-today', { query }),
   get: (id: string): Promise<Lead> => apiFetch<Lead>(`/leads/${id}`),
   create: (input: {
     name: string;

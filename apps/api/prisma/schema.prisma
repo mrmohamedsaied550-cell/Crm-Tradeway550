@@ -274,6 +274,18 @@ model Lead {
   slaStatus       String    @default("active") @map("sla_status")
   lastResponseAt  DateTime? @map("last_response_at") @db.Timestamptz(6)
 
+  /// Discipline tracking (C37).
+  /// `lastActivityAt` is the timestamp of the most recent activity row
+  /// of any type — denormalised from MAX(lead_activities.created_at)
+  /// so the agent inbox can sort / filter without joining.
+  /// `nextActionDueAt` is the dueAt of the soonest pending follow-up
+  /// (LeadFollowUp where completedAt IS NULL). The follow-ups service
+  /// keeps this in sync on insert / complete / delete. Used for the
+  /// /leads/overdue and /leads/due-today endpoints + the agent
+  /// workspace's red-amber counters.
+  lastActivityAt  DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  nextActionDueAt DateTime? @map("next_action_due_at") @db.Timestamptz(6)
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -288,6 +300,8 @@ model Lead {
   @@index([tenantId, createdAt])
   // Hot path for the SLA breach scanner: `WHERE tenant=? AND slaStatus='active' AND slaDueAt < now`.
   @@index([tenantId, slaStatus, slaDueAt])
+  // C37 — overdue / due-today scans by assignee + next action.
+  @@index([tenantId, assignedToId, nextActionDueAt])
   @@map("leads")
 }
 

@@ -154,6 +154,58 @@ export class LeadsService {
     });
   }
 
+  /**
+   * C37 — leads whose `nextActionDueAt` is in the past (and still
+   * non-null, i.e. there is a pending follow-up). Optionally filtered
+   * to a specific assignee — the agent workspace passes `me`.
+   */
+  async listOverdue(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+    const tenantId = requireTenantId();
+    const now = opts.now ?? new Date();
+    const where: Prisma.LeadWhereInput = {
+      nextActionDueAt: { lt: now },
+      ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
+    };
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.lead.findMany({
+        where,
+        orderBy: { nextActionDueAt: 'asc' },
+        take: opts.limit ?? 100,
+        include: {
+          stage: { select: { code: true, name: true, order: true, isTerminal: true } },
+          captain: { select: { id: true, onboardingStatus: true } },
+        },
+      }),
+    );
+  }
+
+  /**
+   * C37 — leads whose `nextActionDueAt` falls within today's wall-clock
+   * window (server local time). Optionally filtered to a specific
+   * assignee.
+   */
+  async listDueToday(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+    const tenantId = requireTenantId();
+    const now = opts.now ?? new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const where: Prisma.LeadWhereInput = {
+      nextActionDueAt: { gte: start, lte: end },
+      ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
+    };
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.lead.findMany({
+        where,
+        orderBy: { nextActionDueAt: 'asc' },
+        take: opts.limit ?? 100,
+        include: {
+          stage: { select: { code: true, name: true, order: true, isTerminal: true } },
+          captain: { select: { id: true, onboardingStatus: true } },
+        },
+      }),
+    );
+  }
+
   listActivities(leadId: string) {
     return this.prisma.withTenant(requireTenantId(), (tx) =>
       tx.leadActivity.findMany({
@@ -386,6 +438,12 @@ export class LeadsService {
           createdAt: true,
           createdById: true,
         },
+      });
+
+      // C37 — denormalise the latest activity timestamp onto the lead.
+      await tx.lead.update({
+        where: { id },
+        data: { lastActivityAt: created.createdAt },
       });
 
       // Agent-driven activity types reset the response-SLA window. We

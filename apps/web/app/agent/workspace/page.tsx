@@ -90,6 +90,8 @@ export default function AgentWorkspacePage(): JSX.Element {
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [followUps, setFollowUps] = useState<LeadFollowUp[]>([]);
+  const [overdue, setOverdue] = useState<Lead[]>([]);
+  const [dueToday, setDueToday] = useState<Lead[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -110,14 +112,18 @@ export default function AgentWorkspacePage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [page, st, mine] = await Promise.all([
+      const [page, st, mine, ovd, today] = await Promise.all([
         leadsApi.list({ assignedToId: meId, limit: 200 }),
         pipelineApi.listStages(),
         followUpsApi.mine({ status: 'pending', limit: 100 }),
+        leadsApi.overdue(),
+        leadsApi.dueToday(),
       ]);
       setRows(page.items);
       setStages(st);
       setFollowUps(mine);
+      setOverdue(ovd);
+      setDueToday(today);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -132,15 +138,19 @@ export default function AgentWorkspacePage(): JSX.Element {
   const stageOptions = useMemo(() => stages, [stages]);
 
   // Lead ids that have a pending overdue follow-up — used to highlight
-  // them in the worklist independent of slaStatus.
+  // them in the worklist independent of slaStatus. C37 — also unions
+  // the dedicated /leads/overdue feed so a backend-detected overdue
+  // lead lights up even if the matching follow-up isn't in the
+  // (capped) "my follow-ups" payload.
   const overdueLeadIds = useMemo(() => {
     const now = Date.now();
     const ids = new Set<string>();
     for (const f of followUps) {
       if (!f.completedAt && Date.parse(f.dueAt) < now) ids.add(f.leadId);
     }
+    for (const l of overdue) ids.add(l.id);
     return ids;
-  }, [followUps]);
+  }, [followUps, overdue]);
 
   function openUpdate(l: Lead): void {
     setForm({
@@ -285,12 +295,24 @@ export default function AgentWorkspacePage(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-4">
-      <header>
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-ink-primary">
-          <ClipboardList className="h-5 w-5 text-brand-700" aria-hidden="true" />
-          {t('title')}
-        </h1>
-        <p className="mt-1 text-sm text-ink-secondary">{t('subtitle')}</p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-semibold text-ink-primary">
+            <ClipboardList className="h-5 w-5 text-brand-700" aria-hidden="true" />
+            {t('title')}
+          </h1>
+          <p className="mt-1 text-sm text-ink-secondary">{t('subtitle')}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-status-breach/30 bg-status-breach/10 px-3 py-1 text-xs font-medium text-status-breach">
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+            {overdue.length} {t('counters.overdue')}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-status-warning/30 bg-status-warning/10 px-3 py-1 text-xs font-medium text-status-warning">
+            <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+            {dueToday.length} {t('counters.dueToday')}
+          </span>
+        </div>
       </header>
 
       {notice ? <Notice tone="success">{notice}</Notice> : null}
@@ -303,6 +325,89 @@ export default function AgentWorkspacePage(): JSX.Element {
             </Button>
           </div>
         </Notice>
+      ) : null}
+
+      {/* C37 — Overdue Leads (red) */}
+      {overdue.length > 0 ? (
+        <section className="rounded-lg border border-status-breach/30 bg-status-breach/5 shadow-card">
+          <header className="flex items-center justify-between gap-2 border-b border-status-breach/30 px-3 py-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-status-breach">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              {t('overdueSection.title')}
+              <Badge tone="breach">{overdue.length}</Badge>
+            </h2>
+          </header>
+          <ul className="divide-y divide-status-breach/20">
+            {overdue.map((l) => (
+              <li
+                key={l.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              >
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-medium text-ink-primary">{l.name}</span>
+                  <span className="flex items-center gap-1 text-xs text-ink-tertiary">
+                    <Phone className="h-3 w-3" aria-hidden="true" />
+                    <code className="font-mono">{l.phone}</code>
+                    <span className="ms-2">{l.stage.name}</span>
+                    {l.nextActionDueAt ? (
+                      <span className="ms-2 text-status-breach">
+                        {t('overdueSection.dueLabel')}{' '}
+                        {new Date(l.nextActionDueAt).toLocaleString()}
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => openUpdate(l)}>
+                  <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('actions.update')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* C37 — Due Today (amber) */}
+      {dueToday.length > 0 ? (
+        <section className="rounded-lg border border-status-warning/30 bg-status-warning/5 shadow-card">
+          <header className="flex items-center justify-between gap-2 border-b border-status-warning/30 px-3 py-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-status-warning">
+              <Calendar className="h-4 w-4" aria-hidden="true" />
+              {t('dueTodaySection.title')}
+              <Badge tone="warning">{dueToday.length}</Badge>
+            </h2>
+          </header>
+          <ul className="divide-y divide-status-warning/20">
+            {dueToday.map((l) => (
+              <li
+                key={l.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              >
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-medium text-ink-primary">{l.name}</span>
+                  <span className="flex items-center gap-1 text-xs text-ink-tertiary">
+                    <Phone className="h-3 w-3" aria-hidden="true" />
+                    <code className="font-mono">{l.phone}</code>
+                    <span className="ms-2">{l.stage.name}</span>
+                    {l.nextActionDueAt ? (
+                      <span className="ms-2 text-status-warning">
+                        {t('dueTodaySection.atLabel')}{' '}
+                        {new Date(l.nextActionDueAt).toLocaleTimeString([], {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => openUpdate(l)}>
+                  <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('actions.update')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {/* My Follow-ups (C36) */}

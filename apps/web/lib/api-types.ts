@@ -123,6 +123,10 @@ export interface Lead {
   slaDueAt: string | null;
   slaStatus: SlaStatus;
   lastResponseAt: string | null;
+  /** C37 — denormalised. */
+  lastActivityAt?: string | null;
+  /** C37 — soonest pending follow-up's dueAt; null when none. */
+  nextActionDueAt?: string | null;
   createdAt: string;
   updatedAt: string;
   captain?: Pick<Captain, 'id' | 'onboardingStatus'> | null;
