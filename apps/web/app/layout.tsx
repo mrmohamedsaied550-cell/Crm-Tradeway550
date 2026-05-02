@@ -5,6 +5,7 @@ import { getLocale, getMessages, getTranslations } from 'next-intl/server';
 import { htmlDirFor, type Locale } from '@/i18n/locale';
 import { Header } from '@/components/header';
 import { ServiceWorkerRegister } from '@/components/sw-register';
+import { ToastProvider } from '@/components/ui/toast';
 import '@/styles/globals.css';
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -54,11 +55,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang={locale} dir={dir}>
       <body className="min-h-full">
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <Header />
-          <main className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-6 sm:py-6">
-            {children}
-          </main>
-          <ServiceWorkerRegister />
+          {/*
+           * P3-06 — ToastProvider sits inside NextIntlClientProvider
+           * so toast strings can use translations, but outside Header /
+           * main so a toast survives a route change.
+           */}
+          <ToastProvider>
+            <Header />
+            <main className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-6 sm:py-6">
+              {children}
+            </main>
+            <ServiceWorkerRegister />
+          </ToastProvider>
         </NextIntlClientProvider>
       </body>
     </html>

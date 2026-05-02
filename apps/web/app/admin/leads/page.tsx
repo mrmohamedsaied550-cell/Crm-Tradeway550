@@ -12,6 +12,7 @@ import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, leadsApi, pipelineApi, usersApi } from '@/lib/api';
 import type {
   AdminUser,
@@ -89,6 +90,7 @@ function parseHeaderLine(line: string): string[] {
 export default function LeadsPage(): JSX.Element {
   const t = useTranslations('admin.leads');
   const tCommon = useTranslations('admin.common');
+  const { toast } = useToast();
 
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -218,14 +220,22 @@ export default function LeadsPage(): JSX.Element {
     });
   }, [rows]);
 
-  function bulkSummary(res: {
-    updated: string[];
-    failed: { id: string; message: string }[];
-  }): string {
+  // P3-06 — bulk results render via the global toaster instead of an
+  // inline Notice the operator has to scroll back up to see. Partial
+  // outcomes carry the first 3 failure messages in the toast body.
+  function reportBulk(res: { updated: string[]; failed: { id: string; message: string }[] }): void {
     if (res.failed.length === 0) {
-      return t('bulk.successAll', { n: res.updated.length });
+      toast({ tone: 'success', title: t('bulk.successAll', { n: res.updated.length }) });
+    } else {
+      toast({
+        tone: 'warning',
+        title: t('bulk.successPartial', { ok: res.updated.length, failed: res.failed.length }),
+        body: res.failed
+          .slice(0, 3)
+          .map((f) => f.message)
+          .join(' · '),
+      });
     }
-    return t('bulk.successPartial', { ok: res.updated.length, failed: res.failed.length });
   }
 
   async function onBulkAssign(): Promise<void> {
@@ -234,12 +244,12 @@ export default function LeadsPage(): JSX.Element {
     try {
       const assignedToId = bulkAssignTarget === '__unassign__' ? null : bulkAssignTarget || null;
       const res = await leadsApi.bulkAssign({ leadIds: [...selectedIds], assignedToId });
-      setNotice(bulkSummary(res));
+      reportBulk(res);
       setBulkAssignOpen(false);
       setSelectedIds(new Set());
       await reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
     } finally {
       setBulkSubmitting(false);
     }
@@ -253,12 +263,12 @@ export default function LeadsPage(): JSX.Element {
         leadIds: [...selectedIds],
         stageCode: bulkStageTarget,
       });
-      setNotice(bulkSummary(res));
+      reportBulk(res);
       setBulkStageOpen(false);
       setSelectedIds(new Set());
       await reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
     } finally {
       setBulkSubmitting(false);
     }
@@ -270,11 +280,11 @@ export default function LeadsPage(): JSX.Element {
     setBulkSubmitting(true);
     try {
       const res = await leadsApi.bulkDelete({ leadIds: [...selectedIds] });
-      setNotice(bulkSummary(res));
+      reportBulk(res);
       setSelectedIds(new Set());
       await reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
     } finally {
       setBulkSubmitting(false);
     }
@@ -727,6 +737,7 @@ export default function LeadsPage(): JSX.Element {
             rows={rows}
             keyOf={(r) => r.id}
             loading={loading}
+            skeletonRows={6}
             selection={{
               selectedIds,
               onChange: setSelectedIds,

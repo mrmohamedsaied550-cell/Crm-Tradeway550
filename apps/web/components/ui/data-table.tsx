@@ -1,6 +1,12 @@
 import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 
+/**
+ * P3-06 — number of skeleton rows to render while `loading=true`. The
+ * default keeps the legacy single-spinner behaviour; pages opt in by
+ * passing a number.
+ */
+
 export interface Column<T> {
   key: string;
   header: React.ReactNode;
@@ -29,6 +35,8 @@ export interface DataTableProps<T> {
   rows: ReadonlyArray<T>;
   keyOf: (row: T) => string;
   loading?: boolean;
+  /** P3-06 — render N skeleton rows while loading instead of a single spinner. */
+  skeletonRows?: number;
   emptyMessage?: string;
   /** Render extra cells to the right per row, e.g. action buttons. */
   rowActions?: (row: T) => React.ReactNode;
@@ -40,6 +48,7 @@ export function DataTable<T>({
   rows,
   keyOf,
   loading,
+  skeletonRows,
   emptyMessage = 'No records',
   rowActions,
   selection,
@@ -106,7 +115,35 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border">
-            {loading ? (
+            {loading && skeletonRows && skeletonRows > 0 ? (
+              // P3-06 — placeholder rows so the layout doesn't collapse to
+              // a single-line spinner. Width nudge per column makes the
+              // pattern look like real content.
+              Array.from({ length: skeletonRows }).map((_, i) => (
+                <tr key={`__skeleton_${i}`} aria-hidden="true">
+                  {selection ? (
+                    <td className="w-10 px-4 py-3 align-middle">
+                      <span className="block h-4 w-4 animate-pulse rounded bg-surface-border/60" />
+                    </td>
+                  ) : null}
+                  {columns.map((c, j) => (
+                    <td key={c.key} className="px-4 py-3 align-middle">
+                      <span
+                        className={cn(
+                          'block h-3 animate-pulse rounded bg-surface-border/60',
+                          j % 3 === 0 ? 'w-1/2' : j % 3 === 1 ? 'w-3/4' : 'w-1/3',
+                        )}
+                      />
+                    </td>
+                  ))}
+                  {rowActions ? (
+                    <td className="px-4 py-3 text-end">
+                      <span className="ms-auto inline-block h-3 w-12 animate-pulse rounded bg-surface-border/60" />
+                    </td>
+                  ) : null}
+                </tr>
+              ))
+            ) : loading ? (
               <tr>
                 <td colSpan={colCount} className="px-4 py-8 text-center text-ink-secondary">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
