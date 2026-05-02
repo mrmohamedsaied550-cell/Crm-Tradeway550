@@ -678,7 +678,9 @@
       },
       "actions": {
         "update": "Update",
-        "openDetail": "Open"
+        "openDetail": "Open",
+        "call": "Call",
+        "whatsapp": "WhatsApp"
       },
       "followUps": {
         "title": "My Follow-ups",

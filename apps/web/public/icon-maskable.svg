@@ -1,0 +1,9 @@
+<!-- Maskable icon: keep all art inside the safe zone (40% radius from
+     center) so platform launchers (Android adaptive, iOS, Windows)
+     can crop to a circle / squircle / square without clipping the
+     glyph. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1f3864"/>
+  <text x="256" y="312" font-family="-apple-system, system-ui, sans-serif" font-size="180"
+        font-weight="700" text-anchor="middle" fill="#ffffff">TW</text>
+</svg>

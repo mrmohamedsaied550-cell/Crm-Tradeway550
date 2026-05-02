@@ -678,7 +678,9 @@
       },
       "actions": {
         "update": "تحديث",
-        "openDetail": "فتح"
+        "openDetail": "فتح",
+        "call": "اتصال",
+        "whatsapp": "واتساب"
       },
       "followUps": {
         "title": "متابعاتي",
