@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 
 import { AgentCapacitiesService } from './capacities.service';
+import { DistributionController } from './distribution.controller';
 import { DistributionService } from './distribution.service';
 import { LeadRoutingLogService } from './routing-log.service';
 import { DistributionRulesService } from './rules.service';
@@ -13,11 +14,14 @@ import { DistributionRulesService } from './rules.service';
  * is small (one orchestrator + three repositories); keeping it
  * global mirrors NotificationsModule + RealtimeModule.
  *
- * Controllers land in A7. Until then this module is service-only —
- * no HTTP surface change for clients.
+ * Controllers (A7) live alongside the services — gated by
+ * CapabilityGuard on `distribution.read` / `.write`. The
+ * /leads/:id/routing-log route lives in the same controller for
+ * locality (it queries the same LeadRoutingLogService).
  */
 @Global()
 @Module({
+  controllers: [DistributionController],
   providers: [
     DistributionRulesService,
     AgentCapacitiesService,
