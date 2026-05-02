@@ -586,6 +586,29 @@ export const leadsApi = {
 };
 
 // ───────────────────────────────────────────────────────────────────────
+// P3-07 — tenant backup / export. Sensitive fields (access tokens,
+// password hashes) are stripped server-side; the response is still
+// considered HIGHLY sensitive — never log it.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface TenantBackupSummary {
+  exportedAt: string;
+  tenant: { id: string; code: string; name: string };
+  schemaVersion: number;
+  rowCap: number;
+  counts: Record<string, number>;
+}
+
+export const backupApi = {
+  /**
+   * Returns the full export envelope. The web side sums `counts` for
+   * the summary and offers the same payload as a Blob download.
+   */
+  exportTenant: (): Promise<TenantBackupSummary & { data: unknown }> =>
+    apiFetch<TenantBackupSummary & { data: unknown }>('/admin/backup/export'),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // CRM — captains (read-only) (C18)
 // ───────────────────────────────────────────────────────────────────────
 

@@ -49,7 +49,8 @@
       "whatsappTemplates": "WA Templates",
       "reports": "Reports",
       "audit": "Audit Log",
-      "tenantSettings": "Settings"
+      "tenantSettings": "Settings",
+      "backup": "Backup"
     },
     "authBar": {
       "notSignedIn": "You're not signed in. Sign in to access the admin API.",
@@ -373,6 +374,24 @@
       "deleteConfirm": "Delete this template?",
       "empty": "No templates yet.",
       "actions": "Actions"
+    },
+    "backup": {
+      "title": "Backup & export",
+      "subtitle": "Download a JSON snapshot of this tenant's CRM data.",
+      "cardTitle": "Tenant export",
+      "cardBody": "Includes leads, captains, follow-ups, conversations, bonuses and more — capped at 10,000 rows per table.",
+      "includes": {
+        "leads": "Leads + activities + follow-ups",
+        "captains": "Captains + documents + trip ledger",
+        "whatsapp": "WhatsApp accounts (no tokens), conversations, messages, templates",
+        "bonuses": "Bonus rules + accruals + competitions"
+      },
+      "stripped": "Sensitive fields are stripped: WhatsApp access tokens, user password hashes, app secrets, verify tokens.",
+      "downloadButton": "Download tenant export",
+      "downloaded": "Tenant export downloaded.",
+      "lastSummary": "{rows} rows · exported {at}",
+      "forbidden": "You don't have the tenant.export capability — ask an admin to grant it.",
+      "opsHint": "For a full database backup (all tenants, every column) use scripts/backup.sh — see scripts/README.md."
     },
     "tenantSettings": {
       "title": "Tenant settings",

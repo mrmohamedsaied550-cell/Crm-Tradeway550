@@ -96,6 +96,12 @@ export const CAPABILITY_DEFINITIONS = [
   // Tenant settings (P2-08)
   { code: 'tenant.settings.read', description: 'View tenant-level settings' },
   { code: 'tenant.settings.write', description: 'Update tenant-level settings' },
+
+  // Backup / export (P3-07) — operator-only export of the tenant's
+  // CRM rows as JSON. Sensitive fields (access tokens, password
+  // hashes) are stripped at the service boundary, but the dump is
+  // still considered HIGHLY sensitive — never grant this to agents.
+  { code: 'tenant.export', description: 'Download a JSON export of the tenant CRM data' },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];
