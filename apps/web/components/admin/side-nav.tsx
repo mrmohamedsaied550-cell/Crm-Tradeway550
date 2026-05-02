@@ -24,6 +24,7 @@ import {
   Database,
   BarChart3,
   Settings,
+  Route,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -50,6 +51,7 @@ interface NavItem {
     | 'audit'
     | 'tenantSettings'
     | 'calendar'
+    | 'distribution'
     | 'backup';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
@@ -100,6 +102,14 @@ const ITEMS: readonly NavItem[] = [
   // ops can see their team's follow-ups without bouncing into agent mode.
   { href: '/agent/calendar', labelKey: 'calendar', icon: Calendar, cap: 'followup.read' },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
+  // Phase 1A — A9: distribution-engine admin (rules / capacities / logs).
+  // Gated on `distribution.read` so agents never see it.
+  {
+    href: '/admin/distribution',
+    labelKey: 'distribution',
+    icon: Route,
+    cap: 'distribution.read',
+  },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },
   {
     href: '/admin/tenant-settings',

@@ -50,6 +50,7 @@
       "metaLeadSources": "Meta Sources",
       "calendar": "Calendar",
       "reports": "Reports",
+      "distribution": "Distribution",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
       "backup": "Backup"
@@ -399,6 +400,145 @@
         "mappingInvalid": "Field mapping must be valid JSON: an object of string → string.",
         "mappingMissingTargets": "Field mapping must define at least one entry pointing to \"name\" and one to \"phone\".",
         "verifyTokenRequired": "Verify token is required when creating a new source."
+      }
+    },
+    "distributionPage": {
+      "title": "Distribution Engine",
+      "subtitle": "Routing rules, per-agent capacity, and the routing-decision audit trail.",
+      "noAccess": "You don't have permission to view distribution settings.",
+      "tabs": {
+        "rules": "Rules",
+        "capacities": "Capacities",
+        "logs": "Routing logs"
+      },
+      "rules": {
+        "intro": "Rules are evaluated in priority order (lowest number wins). The first rule whose conditions match the lead picks the strategy.",
+        "newButton": "New rule",
+        "newTitle": "Create distribution rule",
+        "editTitle": "Edit distribution rule",
+        "edit": "Edit",
+        "matchesAll": "Matches every lead",
+        "statusActive": "Active",
+        "statusInactive": "Inactive",
+        "empty": "No distribution rules yet",
+        "emptyHint": "Add a rule to route specific lead sources, companies, or countries to a chosen team or agent.",
+        "created": "Rule created.",
+        "updated": "Rule updated.",
+        "deleted": "Rule deleted.",
+        "confirmDelete": "Delete the rule \"{name}\"?",
+        "cols": {
+          "priority": "Priority",
+          "name": "Name",
+          "conditions": "Conditions",
+          "strategy": "Strategy",
+          "status": "Status"
+        },
+        "field": {
+          "source": "source",
+          "company": "company",
+          "country": "country",
+          "team": "team"
+        },
+        "form": {
+          "name": "Name",
+          "namePlaceholder": "e.g. \"Egypt Meta leads → Activation team\"",
+          "priority": "Priority",
+          "priorityHint": "1 (highest) – 1000 (lowest). Default 100.",
+          "isActive": "Status",
+          "isActiveLabel": "Active",
+          "conditions": "Match conditions (all that are set must match)",
+          "conditionsHint": "Leave a field blank to match any value.",
+          "source": "Source",
+          "anySource": "Any source",
+          "company": "Company",
+          "anyCompany": "Any company",
+          "country": "Country",
+          "anyCountry": "Any country",
+          "team": "Target team",
+          "anyTeam": "Any team",
+          "strategySection": "Routing strategy",
+          "strategy": "Strategy",
+          "strategyHint": "How to pick an agent from the candidate pool.",
+          "targetUser": "Target user",
+          "targetUserHint": "Required when strategy is \"specific user\"."
+        },
+        "strategy": {
+          "specific_user": "Specific user",
+          "round_robin": "Round-robin",
+          "weighted": "Weighted (uses capacity weight)",
+          "capacity": "Least-busy (capacity-aware)"
+        },
+        "errors": {
+          "nameRequired": "Name is required.",
+          "priorityRange": "Priority must be between 1 and 1000.",
+          "targetUserRequired": "Target user is required when strategy is \"specific user\".",
+          "targetUserOnlyForSpecific": "Target user is only valid when strategy is \"specific user\"."
+        }
+      },
+      "capacities": {
+        "intro": "Per-agent capacity controls. Weight drives the weighted strategy; max active leads + availability + out-of-office gate every strategy.",
+        "edit": "Edit",
+        "editTitle": "Capacity — {name}",
+        "saved": "Capacity saved.",
+        "empty": "No active users to configure.",
+        "noCap": "No cap",
+        "available": "Available",
+        "unavailable": "Unavailable",
+        "cols": {
+          "user": "User",
+          "weight": "Weight",
+          "maxActive": "Max active",
+          "oof": "Out of office until",
+          "availability": "Availability"
+        },
+        "form": {
+          "weight": "Weight",
+          "weightHint": "0–100. Used by the weighted strategy.",
+          "maxActive": "Max active leads",
+          "maxActiveHint": "Leave empty for no cap. 0 means the agent is at capacity immediately.",
+          "maxActivePlaceholder": "(no cap)",
+          "oof": "Out of office until",
+          "oofHint": "Agent is excluded from routing until this time. Leave empty to clear.",
+          "isAvailable": "Available for new assignments"
+        },
+        "errors": {
+          "weightRange": "Weight must be between 0 and 100.",
+          "maxActiveRange": "Max active leads must be between 0 and 10,000.",
+          "oofInvalid": "Out-of-office time is not a valid date."
+        }
+      },
+      "logs": {
+        "intro": "Newest first. Filter by lead id and date to drill into a specific decision.",
+        "show": "Show",
+        "hide": "Hide",
+        "unassigned": "Unassigned",
+        "exclusionsTitle": "Excluded candidates",
+        "empty": "No routing decisions match the filters",
+        "emptyHint": "Try clearing filters or widening the date range.",
+        "filter": {
+          "leadId": "Lead id",
+          "leadIdPlaceholder": "uuid",
+          "from": "Decided from",
+          "limit": "Limit"
+        },
+        "cols": {
+          "decidedAt": "Decided at",
+          "lead": "Lead",
+          "strategy": "Strategy",
+          "assigned": "Assigned to",
+          "candidates": "Candidates",
+          "excluded": "Excluded"
+        },
+        "reasons": {
+          "not_eligible_role": "Not eligible (role)",
+          "inactive_user": "Inactive user",
+          "excluded_by_caller": "Excluded by caller",
+          "wrong_team": "Wrong team",
+          "unavailable": "Unavailable",
+          "out_of_office": "Out of office",
+          "outside_working_hours": "Outside working hours",
+          "at_capacity": "At capacity"
+        }
       }
     },
     "whatsappTemplates": {
