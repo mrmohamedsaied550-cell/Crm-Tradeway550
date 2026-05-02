@@ -473,3 +473,77 @@ export interface MetaLeadSource {
   createdAt: string;
   updatedAt: string;
 }
+
+// ───── Distribution Engine (Phase 1A — A8) ─────
+
+export type DistributionStrategyName = 'specific_user' | 'round_robin' | 'weighted' | 'capacity';
+
+export const ALL_DISTRIBUTION_STRATEGIES: readonly DistributionStrategyName[] = [
+  'specific_user',
+  'round_robin',
+  'weighted',
+  'capacity',
+] as const;
+
+/**
+ * Per-user reasons recorded in `lead_routing_logs.excluded_reasons`.
+ * Mirrors the `ExclusionReason` union on the API side; UI surfaces
+ * these strings in the routing-log row drilldown.
+ */
+export type DistributionExclusionReason =
+  | 'not_eligible_role'
+  | 'inactive_user'
+  | 'excluded_by_caller'
+  | 'wrong_team'
+  | 'unavailable'
+  | 'out_of_office'
+  | 'outside_working_hours'
+  | 'at_capacity';
+
+export interface DistributionRuleRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  isActive: boolean;
+  priority: number;
+  source: LeadSource | null;
+  companyId: string | null;
+  countryId: string | null;
+  targetTeamId: string | null;
+  strategy: DistributionStrategyName;
+  targetUserId: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentCapacityRow {
+  userId: string;
+  tenantId: string;
+  weight: number;
+  isAvailable: boolean;
+  outOfOfficeUntil: string | null;
+  maxActiveLeads: number | null;
+  /**
+   * Per-day { start: "HH:MM", end: "HH:MM" }. The candidate-filter
+   * implementation that consumes this lands in a follow-up; the
+   * column is stored + read-through as JSON today.
+   */
+  workingHours: Record<string, { start: string; end: string }> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadRoutingLogRow {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  ruleId: string | null;
+  strategy: DistributionStrategyName;
+  chosenUserId: string | null;
+  candidateCount: number;
+  excludedCount: number;
+  excludedReasons: Record<string, DistributionExclusionReason>;
+  decidedAt: string;
+  requestId: string | null;
+}

@@ -24,6 +24,7 @@ import {
 } from './auth';
 import type {
   AdminUser,
+  AgentCapacityRow,
   Captain,
   CaptainDocument,
   CaptainStatus,
@@ -31,9 +32,12 @@ import type {
   Company,
   ConversationStatus,
   Country,
+  DistributionRuleRow,
+  DistributionStrategyName,
   Lead,
   LeadActivity,
   LeadActivityType,
+  LeadRoutingLogRow,
   LeadSource,
   LeadStageCode,
   LoginResponse,
@@ -79,7 +83,7 @@ export class ApiError extends Error {
 }
 
 interface ApiFetchOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
   /** Override the Bearer token (used by the login flow itself). */
@@ -515,6 +519,13 @@ export const leadsApi = {
     apiFetch<Lead>(`/leads/${id}/stage`, { method: 'POST', body: { stageCode } }),
   listActivities: (id: string): Promise<LeadActivity[]> =>
     apiFetch<LeadActivity[]>(`/leads/${id}/activities`),
+  /**
+   * Phase 1A — A8: routing decisions recorded for this lead, newest
+   * first. Gated on `lead.read` server-side, so anyone with access to
+   * the lead detail can see why it was routed where it was.
+   */
+  routingLog: (id: string): Promise<LeadRoutingLogRow[]> =>
+    apiFetch<LeadRoutingLogRow[]>(`/leads/${id}/routing-log`),
   addActivity: (
     id: string,
     input: { type: Extract<LeadActivityType, 'note' | 'call'>; body: string },
@@ -1091,4 +1102,89 @@ export const tenantSettingsApi = {
   get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
   update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
     apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Distribution Engine (Phase 1A — A8)
+//
+// Admin-side surface for the rule engine that decides which agent a
+// lead is routed to. Three flat resources mirror the API:
+//   - rules       → CRUD over distribution_rules (priority order)
+//   - capacities  → upsert per-user capacity row (max active leads,
+//                   weight, availability, OOF, working hours)
+//   - logs        → read-only routing decisions (audit trail)
+//
+// `targetUserId` is REQUIRED when strategy='specific_user' and
+// FORBIDDEN otherwise — Zod enforces this server-side; the form layer
+// mirrors the same invariant for UX (PATCH re-validates against the
+// merged shape).
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateDistributionRuleInput {
+  name: string;
+  isActive?: boolean;
+  /** Lower = higher precedence; default 100. Server clamps to [1, 1000]. */
+  priority?: number;
+  source?: LeadSource | null;
+  companyId?: string | null;
+  countryId?: string | null;
+  targetTeamId?: string | null;
+  strategy: DistributionStrategyName;
+  /** Required when `strategy === 'specific_user'`. */
+  targetUserId?: string | null;
+}
+
+export type UpdateDistributionRuleInput = Partial<CreateDistributionRuleInput>;
+
+export interface UpsertAgentCapacityInput {
+  weight?: number;
+  isAvailable?: boolean;
+  /** ISO datetime; pass `null` to clear the OOF window. */
+  outOfOfficeUntil?: string | null;
+  /** `null` = no cap. */
+  maxActiveLeads?: number | null;
+  workingHours?: Record<string, { start: string; end: string }> | null;
+}
+
+export interface ListRoutingLogsQuery {
+  leadId?: string;
+  /** ISO datetime — return only logs decided at or after this point. */
+  from?: string;
+  /** Default 50, max 200. */
+  limit?: number;
+}
+
+export const distributionApi = {
+  rules: {
+    list: (): Promise<DistributionRuleRow[]> =>
+      apiFetch<DistributionRuleRow[]>('/distribution/rules'),
+    create: (input: CreateDistributionRuleInput): Promise<DistributionRuleRow> =>
+      apiFetch<DistributionRuleRow>('/distribution/rules', { method: 'POST', body: input }),
+    update: (id: string, input: UpdateDistributionRuleInput): Promise<DistributionRuleRow> =>
+      apiFetch<DistributionRuleRow>(`/distribution/rules/${id}`, {
+        method: 'PATCH',
+        body: input,
+      }),
+    remove: (id: string): Promise<void> =>
+      apiFetch<void>(`/distribution/rules/${id}`, { method: 'DELETE' }),
+  },
+  capacities: {
+    list: (): Promise<AgentCapacityRow[]> =>
+      apiFetch<AgentCapacityRow[]>('/distribution/capacities'),
+    upsert: (userId: string, input: UpsertAgentCapacityInput): Promise<AgentCapacityRow> =>
+      apiFetch<AgentCapacityRow>(`/distribution/capacities/${userId}`, {
+        method: 'PUT',
+        body: input,
+      }),
+  },
+  logs: {
+    list: (query: ListRoutingLogsQuery = {}): Promise<LeadRoutingLogRow[]> =>
+      apiFetch<LeadRoutingLogRow[]>('/distribution/logs', {
+        query: {
+          ...(query.leadId !== undefined && { leadId: query.leadId }),
+          ...(query.from !== undefined && { from: query.from }),
+          ...(query.limit !== undefined && { limit: query.limit }),
+        },
+      }),
+  },
 };
