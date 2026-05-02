@@ -454,7 +454,19 @@
       "save": "Save",
       "saved": "Settings saved.",
       "loadFailed": "Failed to load settings.",
-      "saveFailed": "Failed to save settings."
+      "saveFailed": "Failed to save settings.",
+      "distribution": {
+        "title": "Lead distribution rules",
+        "hint": "Route incoming leads of a specific source straight to a chosen agent. Anything without a rule falls back to round-robin.",
+        "add": "Add rule",
+        "remove": "Remove rule",
+        "empty": "No rules yet — every source is currently routed via round-robin.",
+        "source": "Source",
+        "assignee": "Assignee",
+        "fallback": "If a rule's agent is disabled or no longer eligible, auto-assign falls back to round-robin automatically.",
+        "allCovered": "Every source already has a rule.",
+        "noUsers": "Need at least one active user to add a rule."
+      }
     },
     "pipelineBuilder": {
       "title": "Pipeline Builder",

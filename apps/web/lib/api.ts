@@ -1083,6 +1083,8 @@ export interface UpdateTenantSettingsInput {
   timezone?: string;
   slaMinutes?: number;
   defaultDialCode?: string;
+  /** PL-3 — replace the rule list (omit to leave unchanged). */
+  distributionRules?: { source: LeadSource; assigneeUserId: string }[];
 }
 
 export const tenantSettingsApi = {

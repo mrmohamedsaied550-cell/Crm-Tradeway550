@@ -44,6 +44,7 @@ let prisma: PrismaClient;
 let prismaSvc: PrismaService;
 let pipeline: PipelineService;
 let leads: LeadsService;
+let tenantSettingsSvc: TenantSettingsService;
 let captains: CaptainsService;
 let tenantId: string;
 let actorUserId: string;
@@ -72,9 +73,9 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
     const audit = new AuditService(prismaSvc);
-    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
-    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
+    tenantSettingsSvc = new TenantSettingsService(prismaSvc, audit);
+    const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettingsSvc);
+    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettingsSvc);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     // Provision a test tenant + a sales_agent role + a couple of users.
@@ -414,6 +415,82 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
       !empty.items.some((l) => [a.id, b.id, c.id].includes(l.id)),
       'createdFrom in future must exclude all P303 leads',
     );
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PL-3 — distribution rules (source → user) take precedence over
+  // round-robin in autoAssign; round-robin is the fallback when no
+  // rule matches OR the rule's user is no longer eligible.
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('autoAssign honours a distribution rule for the lead source', async () => {
+    // Install a rule meta → assignee
+    await inTenant(() =>
+      tenantSettingsSvc.update(
+        {
+          distributionRules: [{ source: 'meta', assigneeUserId: assigneeUserId }],
+        },
+        actorUserId,
+      ),
+    );
+    // Lead with source=meta — auto-assign should land on the rule's user.
+    const lead = await inTenant(() =>
+      leads.create({ name: 'PL3 Rule Hit', phone: '+201006000001', source: 'meta' }, actorUserId),
+    );
+    const result = await inTenant(() => leads.autoAssign(lead.id, actorUserId));
+    assert.ok(result, 'autoAssign returned a lead');
+    assert.equal(result?.assignedToId, assigneeUserId);
+
+    // Activity should record strategy=rule
+    const acts = await inTenant(() => leads.listActivities(lead.id));
+    const auto = acts.find((a) => a.type === 'auto_assignment');
+    assert.ok(auto, 'auto_assignment activity present');
+    const payload = auto?.payload as { strategy?: string } | null;
+    assert.equal(payload?.strategy, 'rule');
+  });
+
+  it('autoAssign falls back to round-robin when no rule matches the source', async () => {
+    // Rules from previous test still apply (source=meta → assignee).
+    // Use a different source; round-robin should pick *some* eligible
+    // agent (excluding the current assignee, which is null here).
+    const lead = await inTenant(() =>
+      leads.create(
+        { name: 'PL3 RR Fallback', phone: '+201006000002', source: 'manual' },
+        actorUserId,
+      ),
+    );
+    const result = await inTenant(() => leads.autoAssign(lead.id, actorUserId));
+    assert.ok(result, 'autoAssign returned a lead');
+    assert.ok(result?.assignedToId, 'round-robin picked an assignee');
+    const acts = await inTenant(() => leads.listActivities(lead.id));
+    const auto = acts.find((a) => a.type === 'auto_assignment');
+    const payload = auto?.payload as { strategy?: string } | null;
+    assert.equal(payload?.strategy, 'round_robin');
+  });
+
+  it('autoAssign falls back to round-robin when the rule user is disabled', async () => {
+    // Plant a rule with a non-existent UUID — picker can't find an
+    // eligible user, fallback fires.
+    const fakeUuid = '00000000-0000-0000-0000-000000000abc';
+    await inTenant(() =>
+      tenantSettingsSvc.update(
+        { distributionRules: [{ source: 'tiktok', assigneeUserId: fakeUuid }] },
+        actorUserId,
+      ),
+    );
+    const lead = await inTenant(() =>
+      leads.create(
+        { name: 'PL3 Stale Rule', phone: '+201006000003', source: 'tiktok' },
+        actorUserId,
+      ),
+    );
+    const result = await inTenant(() => leads.autoAssign(lead.id, actorUserId));
+    assert.ok(result, 'autoAssign returned a lead');
+    assert.ok(result?.assignedToId, 'round-robin picked an assignee');
+    const acts = await inTenant(() => leads.listActivities(lead.id));
+    const auto = acts.find((a) => a.type === 'auto_assignment');
+    const payload = auto?.payload as { strategy?: string } | null;
+    assert.equal(payload?.strategy, 'round_robin');
   });
 
   // ─────────────────────────────────────────────────────────────────────

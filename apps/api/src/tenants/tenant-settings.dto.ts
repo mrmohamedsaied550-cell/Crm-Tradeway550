@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LEAD_SOURCES } from '../crm/pipeline.registry';
 
 /**
  * P2-08 — DTOs for the tenant-level settings row.
@@ -47,11 +48,44 @@ const slaMinutes = z.coerce
   .min(1)
   .max(24 * 60);
 
+/**
+ * PL-3 — distribution rule. One entry per source the operator wants
+ * to override. Multiple entries with the same source are NOT
+ * allowed (the schema rejects duplicates) so the lookup at
+ * auto-assign time is unambiguous.
+ */
+export const DistributionRuleSchema = z
+  .object({
+    source: z.enum(LEAD_SOURCES),
+    assigneeUserId: z.string().uuid(),
+  })
+  .strict();
+export type DistributionRule = z.infer<typeof DistributionRuleSchema>;
+
+const distributionRules = z
+  .array(DistributionRuleSchema)
+  .max(LEAD_SOURCES.length)
+  .superRefine((arr, ctx) => {
+    const seen = new Set<string>();
+    for (const r of arr) {
+      if (seen.has(r.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate rule for source "${r.source}"`,
+          path: ['source'],
+        });
+        return;
+      }
+      seen.add(r.source);
+    }
+  });
+
 export const UpdateTenantSettingsSchema = z
   .object({
     timezone: ianaTimezone.optional(),
     slaMinutes: slaMinutes.optional(),
     defaultDialCode: dialCode.optional(),
+    distributionRules: distributionRules.optional(),
   })
   .strict();
 export type UpdateTenantSettingsDto = z.infer<typeof UpdateTenantSettingsSchema>;

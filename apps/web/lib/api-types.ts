@@ -373,11 +373,23 @@ export interface WhatsAppAccount {
  * for local-format phone input, and the timezone used by "due today"
  * calculations on the agent workspace.
  */
+/**
+ * PL-3 — distribution rule. One per source the operator wants to
+ * route directly to a specific agent. The autoAssign path checks
+ * for a matching rule first; when the listed user is no longer
+ * eligible, autoAssign silently falls back to round-robin.
+ */
+export interface DistributionRule {
+  source: LeadSource;
+  assigneeUserId: string;
+}
+
 export interface TenantSettingsRow {
   tenantId: string;
   timezone: string;
   slaMinutes: number;
   defaultDialCode: string;
+  distributionRules: DistributionRule[];
   createdAt: string;
   updatedAt: string;
 }

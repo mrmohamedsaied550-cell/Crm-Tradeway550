@@ -1132,6 +1132,9 @@ model TenantSettings {
   timezone        String   @default("Africa/Cairo")
   slaMinutes      Int      @default(60) @map("sla_minutes")
   defaultDialCode String   @default("+20") @map("default_dial_code")
+  /// PL-3 — list of `{source, assigneeUserId}` overrides consulted by
+  /// LeadsService.autoAssign before falling back to round-robin.
+  distributionRules Json   @default("[]") @map("distribution_rules")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

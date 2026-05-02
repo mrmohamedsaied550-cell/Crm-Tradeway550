@@ -416,26 +416,81 @@ export class LeadsService {
     }
 
     const settings = await this.tenantSettings.getCurrent();
+
+    // PL-3 — distribution rule consultation. If a rule names a user
+    // for this lead's source AND that user is currently eligible
+    // (active, sales-facing role, NOT the lead's current assignee),
+    // route the lead straight to them. Otherwise fall through to
+    // round-robin. The "is the user still eligible" check uses the
+    // same role list the round-robin picker enforces, so the rule
+    // can never escalate beyond what the picker would accept.
+    const ruled = settings.distributionRules.find((r) => r.source === before.source);
+    const excludeForRR = before.assignedToId ? [before.assignedToId] : [];
+
     const result = await this.prisma.withTenant(tenantId, async (tx) => {
-      const pickedId = await this.assignment.assignLeadViaRoundRobin({
-        tx,
-        leadId: id,
-        tenantId,
-        // Don't pick the current assignee — auto-assign is meaningful
-        // either when the lead is unassigned or as a manual rotation.
-        excludeUserIds: before.assignedToId ? [before.assignedToId] : [],
-        activityType: 'auto_assignment',
-        actorUserId,
-        body: 'Lead auto-assigned via round-robin',
-        payload: {
-          event: 'auto_assignment',
-          fromUserId: before.assignedToId ?? null,
-          strategy: 'round_robin',
-        },
-      });
+      let pickedId: string | null = null;
+      let strategy: 'rule' | 'round_robin' = 'round_robin';
+
+      if (ruled && ruled.assigneeUserId !== before.assignedToId) {
+        const candidate = await tx.user.findFirst({
+          where: {
+            id: ruled.assigneeUserId,
+            status: 'active',
+            role: { code: { in: [...AssignmentService.ELIGIBLE_ROLE_CODES] } },
+          },
+          select: { id: true },
+        });
+        if (candidate) {
+          // Apply the rule directly. We mirror the round-robin path's
+          // side-effects (lead.assignedToId update + audit activity)
+          // so the timeline reads identically regardless of strategy.
+          await tx.lead.update({
+            where: { id },
+            data: { assignedToId: candidate.id },
+          });
+          await tx.leadActivity.create({
+            data: {
+              tenantId,
+              leadId: id,
+              type: 'auto_assignment',
+              body: `Lead auto-assigned via distribution rule (source=${before.source})`,
+              payload: {
+                event: 'auto_assignment',
+                fromUserId: before.assignedToId ?? null,
+                strategy: 'rule',
+                source: before.source,
+              } as Prisma.InputJsonValue,
+              createdById: actorUserId,
+            },
+          });
+          pickedId = candidate.id;
+          strategy = 'rule';
+        }
+        // If the rule's user is no longer eligible (disabled / role
+        // changed), silently fall back to round-robin below.
+      }
 
       if (!pickedId) {
-        return { lead: null, pickedId: null as string | null };
+        pickedId = await this.assignment.assignLeadViaRoundRobin({
+          tx,
+          leadId: id,
+          tenantId,
+          // Don't pick the current assignee — auto-assign is meaningful
+          // either when the lead is unassigned or as a manual rotation.
+          excludeUserIds: excludeForRR,
+          activityType: 'auto_assignment',
+          actorUserId,
+          body: 'Lead auto-assigned via round-robin',
+          payload: {
+            event: 'auto_assignment',
+            fromUserId: before.assignedToId ?? null,
+            strategy: 'round_robin',
+          },
+        });
+      }
+
+      if (!pickedId) {
+        return { lead: null, pickedId: null as string | null, strategy };
       }
 
       // Fresh SLA window for the new owner.
@@ -447,7 +502,7 @@ export class LeadsService {
         },
         include: { stage: true, captain: true },
       });
-      return { lead, pickedId };
+      return { lead, pickedId, strategy };
     });
 
     // P3-02 — push to the new owner.
