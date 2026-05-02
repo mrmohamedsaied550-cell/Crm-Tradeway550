@@ -198,6 +198,27 @@
       "sla": "SLA",
       "filterByStage": "Filter by stage",
       "search": "Search name / phone / email",
+      "advanced": {
+        "show": "Advanced filters",
+        "hide": "Hide advanced",
+        "source": "Source",
+        "sources": {
+          "manual": "Manual",
+          "meta": "Meta lead-gen",
+          "tiktok": "TikTok",
+          "whatsapp": "WhatsApp",
+          "import": "CSV import"
+        },
+        "sla": "SLA status",
+        "slaActive": "Active",
+        "slaBreached": "Breached",
+        "slaPaused": "Paused",
+        "assignee": "Assignee",
+        "unassigned": "Unassigned",
+        "createdFrom": "Created from",
+        "createdTo": "Created to",
+        "overdueOnly": "Only leads with an overdue follow-up"
+      },
       "openDetail": "Open",
       "unassigned": "Unassigned",
       "autoAssign": "Auto-assign",

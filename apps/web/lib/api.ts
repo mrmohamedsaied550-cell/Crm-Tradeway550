@@ -43,6 +43,7 @@ import type {
   RecordTripResult,
   RefreshResponse,
   RoleSummary,
+  SlaStatus,
   BonusAccrual,
   BonusAccrualStatus,
   BonusRule,
@@ -473,6 +474,14 @@ export const leadsApi = {
       stageCode?: LeadStageCode;
       assignedToId?: string;
       q?: string;
+      /** P3-03 — narrow by source / SLA / date / unassigned / overdue. */
+      source?: LeadSource;
+      slaStatus?: SlaStatus;
+      /** ISO-8601 timestamp; web sends day-precision (`yyyy-mm-ddT00:00:00Z`). */
+      createdFrom?: string;
+      createdTo?: string;
+      unassigned?: boolean;
+      hasOverdueFollowup?: boolean;
       limit?: number;
       offset?: number;
     } = {},

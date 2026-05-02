@@ -339,6 +339,83 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
   // (non-empty type + body, createdById === actor for actor-driven paths).
   // ─────────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────
+  // P3-03 — advanced search filters compose
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('list filters compose: source + slaStatus + unassigned + createdFrom/To', async () => {
+    // Three leads: one assigned manual, one unassigned import, one assigned manual older
+    const a = await inTenant(() =>
+      leads.create({ name: 'P303 Alice', phone: '+201003111001', source: 'manual' }, actorUserId),
+    );
+    await inTenant(() => leads.assign(a.id, assigneeUserId, actorUserId));
+
+    const b = await inTenant(() =>
+      leads.create({ name: 'P303 Bob', phone: '+201003111002', source: 'import' }, actorUserId),
+    );
+    // b stays unassigned
+
+    const c = await inTenant(() =>
+      leads.create({ name: 'P303 Cara', phone: '+201003111003', source: 'manual' }, actorUserId),
+    );
+    await inTenant(() => leads.assign(c.id, assigneeUserId, actorUserId));
+
+    // source=import → only Bob
+    const onlyBob = await inTenant(() => leads.list({ source: 'import', limit: 50, offset: 0 }));
+    assert.ok(
+      onlyBob.items.some((l) => l.id === b.id),
+      'import filter must include Bob',
+    );
+    assert.ok(
+      !onlyBob.items.some((l) => l.id === a.id || l.id === c.id),
+      'import filter must exclude manual leads',
+    );
+
+    // unassigned=true → only Bob (a + c are assigned)
+    const onlyUnassigned = await inTenant(() =>
+      leads.list({ unassigned: true, limit: 50, offset: 0 }),
+    );
+    assert.ok(
+      onlyUnassigned.items.some((l) => l.id === b.id),
+      'unassigned filter must include Bob',
+    );
+    assert.ok(
+      !onlyUnassigned.items.some((l) => l.id === a.id || l.id === c.id),
+      'unassigned filter must exclude assigned leads',
+    );
+
+    // assignedToId beats unassigned when both are passed (most-specific intent wins)
+    const explicitWins = await inTenant(() =>
+      leads.list({
+        assignedToId: assigneeUserId,
+        unassigned: true,
+        limit: 50,
+        offset: 0,
+      }),
+    );
+    assert.ok(
+      explicitWins.items.some((l) => l.id === a.id),
+      'explicit assignedToId must override unassigned=true',
+    );
+
+    // slaStatus=active matches all three (none breached / paused yet)
+    const active = await inTenant(() => leads.list({ slaStatus: 'active', limit: 100, offset: 0 }));
+    for (const id of [a.id, b.id, c.id]) {
+      assert.ok(
+        active.items.some((l) => l.id === id),
+        `slaStatus=active must include ${id}`,
+      );
+    }
+
+    // createdFrom in the future → empty
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const empty = await inTenant(() => leads.list({ createdFrom: future, limit: 50, offset: 0 }));
+    assert.ok(
+      !empty.items.some((l) => [a.id, b.id, c.id].includes(l.id)),
+      'createdFrom in future must exclude all P303 leads',
+    );
+  });
+
   it('every lead mutation emits an activity with type + body + actor', async () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'C20 Audit', phone: '+201002999000', source: 'manual' }, actorUserId),

@@ -101,9 +101,34 @@ export const ListLeadsQuerySchema = z
     assignedToId: z.string().uuid().optional(),
     /** Free-text match across name + phone + email. */
     q: z.string().trim().min(1).max(120).optional(),
+    /** P3-03 — narrow to a single source (manual / import / meta_lead / whatsapp / other). */
+    source: z.enum(LEAD_SOURCES).optional(),
+    /** P3-03 — narrow by SLA state (active / breached / paused). */
+    slaStatus: z.enum(['active', 'breached', 'paused'] as const).optional(),
+    /**
+     * P3-03 — created-at window. Both bounds are inclusive ISO-8601
+     * timestamps; either can be omitted. The web filter sends
+     * day-precision values (`yyyy-mm-ddT00:00:00Z`) so the boundary
+     * semantics match the picker the user sees.
+     */
+    createdFrom: z.string().datetime().optional(),
+    createdTo: z.string().datetime().optional(),
+    /** P3-03 — only leads with no current assignee. */
+    unassigned: z.coerce.boolean().optional(),
+    /**
+     * P3-03 — leads whose `nextActionDueAt` is in the past (i.e. a
+     * pending follow-up has slipped). Checked against the request's
+     * server time; tenant-timezone bounds aren't required because
+     * "in the past" is a single moment.
+     */
+    hasOverdueFollowup: z.coerce.boolean().optional(),
     /** Pagination — basic offset/limit; cursor pagination arrives later. */
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),
   })
-  .strict();
+  .strict()
+  .refine((v) => !v.createdFrom || !v.createdTo || v.createdFrom <= v.createdTo, {
+    message: 'createdFrom must be earlier than or equal to createdTo',
+    path: ['createdFrom'],
+  });
 export type ListLeadsQueryDto = z.infer<typeof ListLeadsQuerySchema>;

@@ -140,9 +140,34 @@ export class LeadsService {
       ? (await this.pipeline.findByCodeOrThrow(query.stageCode)).id
       : undefined;
 
+    // P3-03 — `assignedToId` and `unassigned` are mutually exclusive;
+    // when both are passed the explicit `assignedToId` wins (most
+    // specific intent). The fallback to `unassigned` only applies when
+    // the caller did NOT pass an id.
+    const assigneeFilter: Prisma.LeadWhereInput = query.assignedToId
+      ? { assignedToId: query.assignedToId }
+      : query.unassigned
+        ? { assignedToId: null }
+        : {};
+
+    // P3-03 — created-at window. Either bound may be missing; we only
+    // build the `gte` / `lte` keys when present so a half-open range
+    // works without a sentinel.
+    const createdAt: Prisma.DateTimeFilter | undefined =
+      query.createdFrom || query.createdTo
+        ? {
+            ...(query.createdFrom && { gte: new Date(query.createdFrom) }),
+            ...(query.createdTo && { lte: new Date(query.createdTo) }),
+          }
+        : undefined;
+
     const where: Prisma.LeadWhereInput = {
       ...(stageId && { stageId }),
-      ...(query.assignedToId && { assignedToId: query.assignedToId }),
+      ...assigneeFilter,
+      ...(query.source && { source: query.source }),
+      ...(query.slaStatus && { slaStatus: query.slaStatus }),
+      ...(query.hasOverdueFollowup && { nextActionDueAt: { lt: new Date() } }),
+      ...(createdAt && { createdAt }),
       ...(query.q && {
         OR: [
           { name: { contains: query.q, mode: 'insensitive' } },

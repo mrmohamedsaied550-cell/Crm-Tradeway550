@@ -198,6 +198,27 @@
       "sla": "اتفاقية المستوى",
       "filterByStage": "تصفية حسب المرحلة",
       "search": "بحث في الاسم / الهاتف / البريد",
+      "advanced": {
+        "show": "تصفية متقدمة",
+        "hide": "إخفاء التصفية المتقدمة",
+        "source": "المصدر",
+        "sources": {
+          "manual": "يدوي",
+          "meta": "Meta lead-gen",
+          "tiktok": "تيك توك",
+          "whatsapp": "واتساب",
+          "import": "استيراد CSV"
+        },
+        "sla": "حالة SLA",
+        "slaActive": "نشط",
+        "slaBreached": "مخروق",
+        "slaPaused": "متوقف",
+        "assignee": "المُسنَد إليه",
+        "unassigned": "غير مُسنَد",
+        "createdFrom": "تاريخ الإنشاء من",
+        "createdTo": "تاريخ الإنشاء إلى",
+        "overdueOnly": "العملاء بمتابعات متأخرة فقط"
+      },
       "openDetail": "فتح",
       "unassigned": "غير مُسنَد",
       "autoAssign": "إسناد تلقائي",

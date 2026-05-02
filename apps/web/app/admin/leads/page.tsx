@@ -99,6 +99,15 @@ export default function LeadsPage(): JSX.Element {
 
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
+  // P3-03 — advanced filters. Empty string means "any" (mapped to
+  // `undefined` on the wire so the API treats them as not-passed).
+  const [filterSource, setFilterSource] = useState<LeadSource | ''>('');
+  const [filterSla, setFilterSla] = useState<SlaStatus | ''>('');
+  const [filterAssignee, setFilterAssignee] = useState<string>(''); // userId or '__unassigned__'
+  const [filterCreatedFrom, setFilterCreatedFrom] = useState<string>(''); // yyyy-mm-dd
+  const [filterCreatedTo, setFilterCreatedTo] = useState<string>('');
+  const [filterOverdue, setFilterOverdue] = useState<boolean>(false);
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
 
   const [creating, setCreating] = useState<boolean>(false);
   const [form, setForm] = useState<CreateForm>(EMPTY_CREATE_FORM);
@@ -109,10 +118,33 @@ export default function LeadsPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
+      // P3-03 — assignee picker drives BOTH the explicit `assignedToId`
+      // path and the `unassigned` path. The sentinel `__unassigned__`
+      // means "leads with no owner".
+      const assignedToId =
+        filterAssignee && filterAssignee !== '__unassigned__' ? filterAssignee : undefined;
+      const unassigned = filterAssignee === '__unassigned__' ? true : undefined;
+      // Convert the date pickers (`yyyy-mm-dd`) to ISO timestamps. The
+      // `from` bound starts at 00:00 UTC of that day; the `to` bound
+      // ends at 23:59:59.999 UTC so the picker's "to" day is inclusive.
+      const createdFrom = filterCreatedFrom
+        ? new Date(`${filterCreatedFrom}T00:00:00.000Z`).toISOString()
+        : undefined;
+      const createdTo = filterCreatedTo
+        ? new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString()
+        : undefined;
+
       const [page, st, usrs] = await Promise.all([
         leadsApi.list({
           stageCode: filterStage || undefined,
           q: search.trim() || undefined,
+          source: filterSource || undefined,
+          slaStatus: filterSla || undefined,
+          assignedToId,
+          unassigned,
+          createdFrom,
+          createdTo,
+          hasOverdueFollowup: filterOverdue || undefined,
           limit: 100,
         }),
         pipelineApi.listStages(),
@@ -128,7 +160,38 @@ export default function LeadsPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [filterStage, search]);
+  }, [
+    filterStage,
+    search,
+    filterSource,
+    filterSla,
+    filterAssignee,
+    filterCreatedFrom,
+    filterCreatedTo,
+    filterOverdue,
+  ]);
+
+  /** P3-03 — true when ANY filter is non-empty. Drives the empty-state copy. */
+  const anyFilterActive: boolean =
+    Boolean(filterStage) ||
+    Boolean(search) ||
+    Boolean(filterSource) ||
+    Boolean(filterSla) ||
+    Boolean(filterAssignee) ||
+    Boolean(filterCreatedFrom) ||
+    Boolean(filterCreatedTo) ||
+    filterOverdue;
+
+  function clearFilters(): void {
+    setFilterStage('');
+    setSearch('');
+    setFilterSource('');
+    setFilterSla('');
+    setFilterAssignee('');
+    setFilterCreatedFrom('');
+    setFilterCreatedTo('');
+    setFilterOverdue(false);
+  }
 
   useEffect(() => {
     void reload();
@@ -387,6 +450,12 @@ export default function LeadsPage(): JSX.Element {
         }
       />
 
+      {/*
+       * P3-03 — primary filter row stays on screen at all times.
+       * The advanced panel (source / SLA / assignee / created-at /
+       * overdue) is collapsed by default to keep the page tidy and
+       * expanded on demand.
+       */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-full max-w-xs">
           <Field label={t('filterByStage')}>
@@ -408,7 +477,84 @@ export default function LeadsPage(): JSX.Element {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
           </Field>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+        </Button>
+        {anyFilterActive ? (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            {tCommon('clearFilters')}
+          </Button>
+        ) : null}
       </div>
+
+      {advancedOpen ? (
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
+          <Field label={t('advanced.source')}>
+            <Select
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="manual">{t('advanced.sources.manual')}</option>
+              <option value="meta">{t('advanced.sources.meta')}</option>
+              <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+              <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+              <option value="import">{t('advanced.sources.import')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.sla')}>
+            <Select
+              value={filterSla}
+              onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="active">{t('advanced.slaActive')}</option>
+              <option value="breached">{t('advanced.slaBreached')}</option>
+              <option value="paused">{t('advanced.slaPaused')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.assignee')}>
+            <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
+              <option value="">{tCommon('all')}</option>
+              <option value="__unassigned__">{t('advanced.unassigned')}</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t('advanced.createdFrom')}>
+            <Input
+              type="date"
+              value={filterCreatedFrom}
+              onChange={(e) => setFilterCreatedFrom(e.target.value)}
+              max={filterCreatedTo || undefined}
+            />
+          </Field>
+          <Field label={t('advanced.createdTo')}>
+            <Input
+              type="date"
+              value={filterCreatedTo}
+              onChange={(e) => setFilterCreatedTo(e.target.value)}
+              min={filterCreatedFrom || undefined}
+            />
+          </Field>
+          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+            <input
+              type="checkbox"
+              checked={filterOverdue}
+              onChange={(e) => setFilterOverdue(e.target.checked)}
+            />
+            {t('advanced.overdueOnly')}
+          </label>
+        </div>
+      ) : null}
 
       {error ? (
         <Notice tone="error">
@@ -424,18 +570,11 @@ export default function LeadsPage(): JSX.Element {
 
       {!loading && !error && rows.length === 0 ? (
         <EmptyState
-          title={filterStage || search ? t('emptyFiltered') : t('empty')}
-          body={filterStage || search ? t('emptyFilteredHint') : t('emptyHint')}
+          title={anyFilterActive ? t('emptyFiltered') : t('empty')}
+          body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
           action={
-            filterStage || search ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setFilterStage('');
-                  setSearch('');
-                }}
-              >
+            anyFilterActive ? (
+              <Button variant="secondary" size="sm" onClick={clearFilters}>
                 {tCommon('clearFilters')}
               </Button>
             ) : (
