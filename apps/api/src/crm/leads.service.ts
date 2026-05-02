@@ -16,7 +16,15 @@ import { normalizeE164WithDefault } from './phone.util';
 import { dayBoundsInTimezone } from './time.util';
 import { AssignmentService } from './assignment.service';
 import { SlaService } from './sla.service';
-import type { CreateLeadDto, UpdateLeadDto, AddActivityDto, ListLeadsQueryDto } from './leads.dto';
+import type {
+  CreateLeadDto,
+  UpdateLeadDto,
+  AddActivityDto,
+  ListLeadsQueryDto,
+  BulkAssignDto,
+  BulkMoveStageDto,
+  BulkDeleteDto,
+} from './leads.dto';
 
 /**
  * Lead lifecycle.
@@ -591,6 +599,64 @@ export class LeadsService {
     });
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // P3-05 — bulk actions
+  //
+  // Each bulk endpoint dispatches the existing single-id mutator per lead
+  // so the audit / activity / SLA / realtime emitter side-effects remain
+  // identical to the one-at-a-time path. The result envelope is
+  // `{ updated: string[], failed: { id, code, message }[] }` — the
+  // controller serialises both halves so a partial failure (one bad
+  // lead in the batch) doesn't poison the rest.
+  // ───────────────────────────────────────────────────────────────────────
+
+  async bulkAssign(dto: BulkAssignDto, actorUserId: string) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    if (dto.assignedToId !== null) {
+      // Validate the assignee once up-front so we don't spam the same
+      // 400 for every lead in the batch.
+      await this.assertUserInTenant(dto.assignedToId);
+    }
+    for (const id of dto.leadIds) {
+      try {
+        await this.assign(id, dto.assignedToId, actorUserId);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
+  async bulkMoveStage(dto: BulkMoveStageDto, actorUserId: string) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    for (const id of dto.leadIds) {
+      try {
+        await this.moveStage(id, dto.stageCode, actorUserId);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
+  async bulkDelete(dto: BulkDeleteDto) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    for (const id of dto.leadIds) {
+      try {
+        await this.delete(id);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
   private async assertUserInTenant(userId: string): Promise<void> {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, (tx) =>
@@ -609,4 +675,28 @@ export class LeadsService {
       });
     }
   }
+}
+
+/**
+ * P3-05 — narrow an arbitrary error into the bulk-result failure
+ * shape. Nest's HttpException carries `{ code, message }` in its
+ * response object; everything else falls back to the message.
+ */
+function toFailure(id: string, err: unknown): { id: string; code: string; message: string } {
+  const fallback = err instanceof Error ? err.message : String(err);
+  if (
+    err &&
+    typeof err === 'object' &&
+    'getResponse' in err &&
+    typeof (err as { getResponse: unknown }).getResponse === 'function'
+  ) {
+    const r = (err as { getResponse: () => unknown }).getResponse();
+    if (r && typeof r === 'object') {
+      const obj = r as Record<string, unknown>;
+      const code = typeof obj['code'] === 'string' ? obj['code'] : 'bulk.unknown';
+      const message = typeof obj['message'] === 'string' ? obj['message'] : fallback;
+      return { id, code, message };
+    }
+  }
+  return { id, code: 'bulk.unknown', message: fallback };
 }

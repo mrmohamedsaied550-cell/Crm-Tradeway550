@@ -114,6 +114,14 @@ export default function LeadsPage(): JSX.Element {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // P3-05 — bulk-action state.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [bulkAssignOpen, setBulkAssignOpen] = useState<boolean>(false);
+  const [bulkStageOpen, setBulkStageOpen] = useState<boolean>(false);
+  const [bulkAssignTarget, setBulkAssignTarget] = useState<string>(''); // userId or '__unassign__'
+  const [bulkStageTarget, setBulkStageTarget] = useState<LeadStageCode | ''>('');
+  const [bulkSubmitting, setBulkSubmitting] = useState<boolean>(false);
+
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
@@ -191,6 +199,85 @@ export default function LeadsPage(): JSX.Element {
     setFilterCreatedFrom('');
     setFilterCreatedTo('');
     setFilterOverdue(false);
+  }
+
+  // P3-05 — when the row set shrinks (filter change, deletion), prune
+  // ids that are no longer visible from the selection so the action
+  // bar count never lies. This is cheap; the visible set is bounded
+  // by the page limit.
+  useEffect(() => {
+    const visible = new Set(rows.map((r) => r.id));
+    setSelectedIds((prev) => {
+      let drift = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else drift = true;
+      }
+      return drift ? next : prev;
+    });
+  }, [rows]);
+
+  function bulkSummary(res: {
+    updated: string[];
+    failed: { id: string; message: string }[];
+  }): string {
+    if (res.failed.length === 0) {
+      return t('bulk.successAll', { n: res.updated.length });
+    }
+    return t('bulk.successPartial', { ok: res.updated.length, failed: res.failed.length });
+  }
+
+  async function onBulkAssign(): Promise<void> {
+    if (selectedIds.size === 0) return;
+    setBulkSubmitting(true);
+    try {
+      const assignedToId = bulkAssignTarget === '__unassign__' ? null : bulkAssignTarget || null;
+      const res = await leadsApi.bulkAssign({ leadIds: [...selectedIds], assignedToId });
+      setNotice(bulkSummary(res));
+      setBulkAssignOpen(false);
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
+
+  async function onBulkStage(): Promise<void> {
+    if (selectedIds.size === 0 || !bulkStageTarget) return;
+    setBulkSubmitting(true);
+    try {
+      const res = await leadsApi.bulkStage({
+        leadIds: [...selectedIds],
+        stageCode: bulkStageTarget,
+      });
+      setNotice(bulkSummary(res));
+      setBulkStageOpen(false);
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
+
+  async function onBulkDelete(): Promise<void> {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(t('bulk.confirmDelete', { n: selectedIds.size }))) return;
+    setBulkSubmitting(true);
+    try {
+      const res = await leadsApi.bulkDelete({ leadIds: [...selectedIds] });
+      setNotice(bulkSummary(res));
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBulkSubmitting(false);
+    }
   }
 
   useEffect(() => {
@@ -585,26 +672,147 @@ export default function LeadsPage(): JSX.Element {
           }
         />
       ) : (
-        <DataTable
-          columns={columns}
-          rows={rows}
-          keyOf={(r) => r.id}
-          loading={loading}
-          rowActions={(row) => (
-            <>
-              <Link
-                href={`/admin/leads/${row.id}`}
-                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-              >
-                {t('openDetail')}
-              </Link>
-              <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-                {tCommon('delete')}
-              </Button>
-            </>
-          )}
-        />
+        <>
+          {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
+          {selectedIds.size > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+              <span className="font-medium text-brand-800">
+                {t('bulk.selected', { n: selectedIds.size })}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setBulkAssignTarget('');
+                    setBulkAssignOpen(true);
+                  }}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.assign')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setBulkStageTarget('');
+                    setBulkStageOpen(true);
+                  }}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.stage')}
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void onBulkDelete()}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.delete')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedIds(new Set())}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.clear')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <DataTable
+            columns={columns}
+            rows={rows}
+            keyOf={(r) => r.id}
+            loading={loading}
+            selection={{
+              selectedIds,
+              onChange: setSelectedIds,
+              ariaLabel: t('bulk.selectRow'),
+            }}
+            rowActions={(row) => (
+              <>
+                <Link
+                  href={`/admin/leads/${row.id}`}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                >
+                  {t('openDetail')}
+                </Link>
+                <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                  {tCommon('delete')}
+                </Button>
+              </>
+            )}
+          />
+        </>
       )}
+
+      {/* P3-05 — bulk assign modal */}
+      <Modal
+        open={bulkAssignOpen}
+        title={t('bulk.assignModalTitle', { n: selectedIds.size })}
+        onClose={() => setBulkAssignOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkAssignOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={() => void onBulkAssign()} loading={bulkSubmitting}>
+              {tCommon('save')}
+            </Button>
+          </>
+        }
+      >
+        <Field label={t('bulk.assignee')} required>
+          <Select
+            value={bulkAssignTarget}
+            onChange={(e) => setBulkAssignTarget(e.target.value)}
+            required
+          >
+            <option value="">{t('bulk.pickAssignee')}</option>
+            <option value="__unassign__">{t('bulk.unassignAll')}</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
+
+      {/* P3-05 — bulk stage move modal */}
+      <Modal
+        open={bulkStageOpen}
+        title={t('bulk.stageModalTitle', { n: selectedIds.size })}
+        onClose={() => setBulkStageOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkStageOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={() => void onBulkStage()} loading={bulkSubmitting}>
+              {tCommon('save')}
+            </Button>
+          </>
+        }
+      >
+        <Field label={t('bulk.stageTarget')} required>
+          <Select
+            value={bulkStageTarget}
+            onChange={(e) => setBulkStageTarget(e.target.value as LeadStageCode | '')}
+            required
+          >
+            <option value="">{t('bulk.pickStage')}</option>
+            {stages.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
 
       <Modal
         open={importing}

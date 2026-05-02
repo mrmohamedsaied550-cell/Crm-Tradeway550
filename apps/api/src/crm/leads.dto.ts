@@ -132,3 +132,37 @@ export const ListLeadsQuerySchema = z
     path: ['createdFrom'],
   });
 export type ListLeadsQueryDto = z.infer<typeof ListLeadsQuerySchema>;
+
+// ───── P3-05 — Bulk actions ─────
+
+/**
+ * P3-05 — every bulk endpoint takes an array of lead ids capped at
+ * 100 per call. The cap keeps the inevitable "select all 1000 leads
+ * and click" workflow from melting the API: the UI paginates the
+ * call client-side and reports per-batch progress.
+ */
+const bulkLeadIds = z.array(z.string().uuid()).min(1).max(100);
+
+export const BulkAssignSchema = z
+  .object({
+    leadIds: bulkLeadIds,
+    /** Pass `null` to unassign the whole batch. */
+    assignedToId: z.string().uuid().nullable(),
+  })
+  .strict();
+export type BulkAssignDto = z.infer<typeof BulkAssignSchema>;
+
+export const BulkMoveStageSchema = z
+  .object({
+    leadIds: bulkLeadIds,
+    stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]),
+  })
+  .strict();
+export type BulkMoveStageDto = z.infer<typeof BulkMoveStageSchema>;
+
+export const BulkDeleteSchema = z
+  .object({
+    leadIds: bulkLeadIds,
+  })
+  .strict();
+export type BulkDeleteDto = z.infer<typeof BulkDeleteSchema>;

@@ -533,6 +533,40 @@ export const leadsApi = {
       method: 'POST',
       body: input,
     }),
+  /**
+   * P3-05 — bulk actions. Each endpoint accepts up to 100 lead ids
+   * per call and returns `{ updated, failed }`. The UI surfaces both
+   * halves so a partial outcome (e.g. one lead deleted in another
+   * tab during the batch) doesn't force a full retry.
+   */
+  bulkAssign: (input: {
+    leadIds: readonly string[];
+    assignedToId: string | null;
+  }): Promise<{
+    updated: string[];
+    failed: { id: string; code: string; message: string }[];
+  }> =>
+    apiFetch('/leads/bulk-assign', {
+      method: 'POST',
+      body: { leadIds: input.leadIds, assignedToId: input.assignedToId },
+    }),
+  bulkStage: (input: {
+    leadIds: readonly string[];
+    stageCode: LeadStageCode;
+  }): Promise<{
+    updated: string[];
+    failed: { id: string; code: string; message: string }[];
+  }> =>
+    apiFetch('/leads/bulk-stage', {
+      method: 'POST',
+      body: { leadIds: input.leadIds, stageCode: input.stageCode },
+    }),
+  bulkDelete: (input: {
+    leadIds: readonly string[];
+  }): Promise<{
+    updated: string[];
+    failed: { id: string; code: string; message: string }[];
+  }> => apiFetch('/leads/bulk-delete', { method: 'POST', body: { leadIds: input.leadIds } }),
   /** P2-06 — bulk CSV import. `csv` is the full file as text. */
   importCsv: (input: {
     csv: string;

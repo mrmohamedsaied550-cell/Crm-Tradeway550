@@ -416,6 +416,62 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     );
   });
 
+  // ─────────────────────────────────────────────────────────────────────
+  // P3-05 — bulk actions
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('bulkAssign updates the good ids and reports failures for the bad ones', async () => {
+    const a = await inTenant(() =>
+      leads.create({ name: 'P305 A', phone: '+201005000001', source: 'manual' }, actorUserId),
+    );
+    const b = await inTenant(() =>
+      leads.create({ name: 'P305 B', phone: '+201005000002', source: 'manual' }, actorUserId),
+    );
+    // Use a real lead id and a deliberately bogus one so we exercise the
+    // partial-failure path. The failed entry must NOT abort the whole batch.
+    const fakeUuid = '00000000-0000-0000-0000-000000000000';
+    const res = await inTenant(() =>
+      leads.bulkAssign(
+        { leadIds: [a.id, fakeUuid, b.id], assignedToId: assigneeUserId },
+        actorUserId,
+      ),
+    );
+    assert.deepEqual(res.updated.sort(), [a.id, b.id].sort());
+    assert.equal(res.failed.length, 1);
+    assert.equal(res.failed[0]?.id, fakeUuid);
+    // Both real leads now actually carry the new assignee.
+    const aFresh = await inTenant(() => leads.findByIdOrThrow(a.id));
+    const bFresh = await inTenant(() => leads.findByIdOrThrow(b.id));
+    assert.equal(aFresh.assignedToId, assigneeUserId);
+    assert.equal(bFresh.assignedToId, assigneeUserId);
+  });
+
+  it('bulkMoveStage moves every selected lead to the target stage', async () => {
+    const x = await inTenant(() =>
+      leads.create({ name: 'P305 X', phone: '+201005000003', source: 'manual' }, actorUserId),
+    );
+    const y = await inTenant(() =>
+      leads.create({ name: 'P305 Y', phone: '+201005000004', source: 'manual' }, actorUserId),
+    );
+    const res = await inTenant(() =>
+      leads.bulkMoveStage({ leadIds: [x.id, y.id], stageCode: 'contacted' }, actorUserId),
+    );
+    assert.equal(res.updated.length, 2);
+    assert.equal(res.failed.length, 0);
+    const xFresh = await inTenant(() => leads.findByIdOrThrow(x.id));
+    assert.equal(xFresh.stage.code, 'contacted');
+  });
+
+  it('bulkDelete removes every selected lead', async () => {
+    const z = await inTenant(() =>
+      leads.create({ name: 'P305 Z', phone: '+201005000005', source: 'manual' }, actorUserId),
+    );
+    const res = await inTenant(() => leads.bulkDelete({ leadIds: [z.id] }));
+    assert.deepEqual(res.updated, [z.id]);
+    assert.equal(res.failed.length, 0);
+    await assert.rejects(() => inTenant(() => leads.findByIdOrThrow(z.id)), /not found/i);
+  });
+
   it('every lead mutation emits an activity with type + body + actor', async () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'C20 Audit', phone: '+201002999000', source: 'manual' }, actorUserId),
