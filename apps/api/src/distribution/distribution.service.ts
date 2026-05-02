@@ -76,8 +76,12 @@ export class DistributionService {
     // Same namespace as AssignmentService used pre-cutover.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${DISTRIBUTION_LOCK_NAMESPACE}::int, hashtext(${ctx.tenantId}))`;
 
-    // 1. Match a rule (or fall back).
-    const rule = await this.rules.findMatchingRule(ctx, tx);
+    // 1. Match a rule (unless explicitly bypassed). Bypass is only
+    //    used by SLA breach reassignment today — see SlaService;
+    //    when bypassed, we always run the tenant default strategy
+    //    so the lead is routed to a fresh load-balanced agent rather
+    //    than back to the rule's target (who just failed SLA).
+    const rule = ctx.bypassRules ? null : await this.rules.findMatchingRule(ctx, tx);
     const strategyName: StrategyName = rule
       ? (rule.strategy as StrategyName)
       : await this.getDefaultStrategy(ctx.tenantId, tx);

@@ -2,14 +2,14 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
-import { AssignmentService } from '../crm/assignment.service';
+import { LeadsService } from '../crm/leads.service';
 import { normalizeE164WithDefault } from '../crm/phone.util';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { DEFAULT_STAGE_CODE, type LeadSource } from '../crm/pipeline.registry';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { requireTenantId } from '../tenants/tenant-context';
+import { requireTenantId, tenantContext } from '../tenants/tenant-context';
 import { CsvParseError, parseCsv } from './csv.util';
 import type { CsvImportDto } from './ingestion.dto';
 
@@ -46,7 +46,13 @@ export class LeadIngestionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
-    private readonly assignment: AssignmentService,
+    /**
+     * A5.5 — routing for ingested leads now goes through
+     * LeadsService.autoAssign which delegates to DistributionService.
+     * Source-based + company/country/team rules now apply to Meta
+     * webhook + CSV-imported leads identically to manual creation.
+     */
+    private readonly leads: LeadsService,
     private readonly sla: SlaService,
     private readonly audit: AuditService,
     private readonly tenantSettings: TenantSettingsService,
@@ -351,25 +357,45 @@ export class LeadIngestionService {
     return { kind: 'created', id: lead.id };
   }
 
-  /** Best-effort auto-assign — failures are logged and swallowed. */
+  /**
+   * Best-effort auto-assign — failures are logged and swallowed.
+   *
+   * A5.5 cutover: routing for ingested leads (CSV import + Meta
+   * webhook) now goes through LeadsService.autoAssign which
+   * delegates to DistributionService.route(). That means:
+   *
+   *   - Source / company / country / team rules apply to ingested
+   *     leads identically to manual /auto-assign — closing the
+   *     PL-3-era gap where ingestion bypassed the rule lookup.
+   *   - A `lead_routing_logs` row is written for every ingest
+   *     auto-assign attempt (including no-eligible cases).
+   *   - The activity payload carries the strategy that fired
+   *     (specific_user / round_robin / weighted / capacity) plus
+   *     the matched ruleId.
+   *
+   * The Meta webhook is unauthenticated and runs without an
+   * AsyncLocalStorage tenant context (the routing row lookup is the
+   * only "tenant resolution" the request gets). LeadsService.autoAssign
+   * uses requireTenantId() internally, so we wrap the call in
+   * tenantContext.run to set the scope synthetically. This is the
+   * same pattern lead.test.ts uses; it's safe to nest if the
+   * caller already has context (the inner scope wins).
+   */
   private async tryAutoAssign(
     tenantId: string,
     leadId: string,
     actorUserId: string | null,
   ): Promise<void> {
     try {
-      await this.prisma.withTenant(tenantId, async (tx) => {
-        await this.assignment.assignLeadViaRoundRobin({
-          tx,
-          leadId,
-          tenantId,
-          excludeUserIds: [],
-          activityType: 'auto_assignment',
-          actorUserId,
-          body: 'Lead auto-assigned at ingest via round-robin',
-          payload: { event: 'auto_assignment', strategy: 'round_robin', stage: 'ingest' },
-        });
-      });
+      await tenantContext.run(
+        // tenantCode is synthetic — autoAssign + DistributionService
+        // only consume tenantId from the context; tenantCode is here
+        // to satisfy the type contract.
+        { tenantId, tenantCode: '__ingest__', source: 'header' },
+        async () => {
+          await this.leads.autoAssign(leadId, actorUserId);
+        },
+      );
     } catch (err) {
       // Not fatal — the lead exists, an admin can assign manually.
       this.logger.warn(

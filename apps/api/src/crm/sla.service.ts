@@ -1,5 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { DistributionService } from '../distribution/distribution.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -54,6 +55,16 @@ export class SlaService {
     // P3-02 — optional so tests don't need to wire the realtime
     // module to exercise breach reassignment.
     @Optional() private readonly realtime?: RealtimeService,
+    /**
+     * A5.5 — when injected, breach reassignment runs through the
+     * Distribution Engine (with bypassRules=true so we don't send
+     * the lead back to the same target the rule already chose).
+     * @Optional so legacy test harnesses keep compiling; production
+     * always provides it via the @Global DistributionModule. When
+     * undefined, breach reassignment falls back to the legacy
+     * AssignmentService — same behaviour as pre-cutover.
+     */
+    @Optional() private readonly distribution?: DistributionService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -230,20 +241,78 @@ export class SlaService {
           };
         }
 
-        const pickedId = await this.assignment.assignLeadViaRoundRobin({
-          tx,
-          leadId: fresh.id,
-          tenantId,
-          excludeUserIds: [fromUserId],
-          activityType: 'sla_breach',
-          actorUserId,
-          body: `Auto-reassigned after SLA breach`,
-          payload: {
-            event: 'sla_reassignment',
-            fromUserId,
-            dueAt: fresh.slaDueAt.toISOString(),
-          },
-        });
+        // A5.5 — breach reassignment runs through DistributionService
+        // (with bypassRules=true so we don't route back to the same
+        // target the original rule already chose). The decision +
+        // its routing-log row land in the same tx as the lead update,
+        // so a partial commit is impossible.
+        //
+        // Falls back to the legacy AssignmentService when
+        // DistributionService is unavailable — keeps existing test
+        // harnesses that don't wire it green.
+        let pickedId: string | null;
+        if (this.distribution) {
+          const decision = await this.distribution.route(
+            {
+              tenantId,
+              leadId: fresh.id,
+              source: null, // breach reassignment ignores source
+              companyId: null,
+              countryId: null,
+              currentAssigneeId: fromUserId,
+              bypassRules: true,
+            },
+            tx,
+          );
+          pickedId = decision.chosenUserId;
+          if (pickedId) {
+            // Apply the decision: lead.assignedToId update +
+            // sla_breach activity row + last_assigned_at bump (drives
+            // the round_robin clock if that's the tenant default).
+            await tx.lead.update({
+              where: { id: fresh.id },
+              data: { assignedToId: pickedId },
+            });
+            await tx.leadActivity.create({
+              data: {
+                tenantId,
+                leadId: fresh.id,
+                type: 'sla_breach',
+                body: `Auto-reassigned after SLA breach`,
+                payload: {
+                  event: 'sla_reassignment',
+                  fromUserId,
+                  toUserId: pickedId,
+                  strategy: decision.strategy,
+                  ruleId: decision.ruleId,
+                  dueAt: fresh.slaDueAt.toISOString(),
+                } as Prisma.InputJsonValue,
+                createdById: actorUserId,
+              },
+            });
+            await tx.user.update({
+              where: { id: pickedId },
+              data: { lastAssignedAt: new Date() },
+            });
+          }
+        } else {
+          // Legacy fallback path — same as pre-A5.5 behaviour. Tests
+          // that don't wire DistributionService take this branch.
+          pickedId = await this.assignment.assignLeadViaRoundRobin({
+            tx,
+            leadId: fresh.id,
+            tenantId,
+            excludeUserIds: [fromUserId],
+            activityType: 'sla_breach',
+            actorUserId,
+            body: `Auto-reassigned after SLA breach`,
+            payload: {
+              event: 'sla_reassignment',
+              fromUserId,
+              dueAt: fresh.slaDueAt.toISOString(),
+            },
+          });
+        }
 
         if (pickedId) {
           // Successful reassignment — fresh SLA window for the new owner.

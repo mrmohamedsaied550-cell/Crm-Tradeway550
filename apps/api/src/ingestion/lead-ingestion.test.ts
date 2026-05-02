@@ -21,8 +21,13 @@ import { PrismaClient } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AssignmentService } from '../crm/assignment.service';
+import { LeadsService } from '../crm/leads.service';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
+import { AgentCapacitiesService } from '../distribution/capacities.service';
+import { DistributionService } from '../distribution/distribution.service';
+import { LeadRoutingLogService } from '../distribution/routing-log.service';
+import { DistributionRulesService } from '../distribution/rules.service';
 import { hashPassword } from '../identity/password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
@@ -60,14 +65,22 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    ingestion = new LeadIngestionService(
+    // A5.5 — ingestion now routes through LeadsService.autoAssign,
+    // which delegates to DistributionService. We wire the same dep
+    // graph leads.test.ts uses so the integration-test path is
+    // identical to production.
+    const rulesSvc = new DistributionRulesService(prismaSvc);
+    const capacitiesSvc = new AgentCapacitiesService(prismaSvc);
+    const routingLogSvc = new LeadRoutingLogService(prismaSvc);
+    const distribution = new DistributionService(
       prismaSvc,
-      pipeline,
-      assignment,
-      sla,
-      audit,
+      rulesSvc,
+      capacitiesSvc,
+      routingLogSvc,
       tenantSettings,
     );
+    const leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings, distribution);
+    ingestion = new LeadIngestionService(prismaSvc, pipeline, leads, sla, audit, tenantSettings);
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },
@@ -296,5 +309,168 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
       actorUserId: null,
     });
     assert.equal(result.kind, 'error');
+  });
+
+  // ─── A5.5 — distribution rules apply to ingested leads ───
+  // Pre-A5.5 the ingestion path called AssignmentService directly,
+  // bypassing rule consultation. After A5.5 ingestion routes through
+  // LeadsService.autoAssign → DistributionService.route, so source /
+  // company / country / team rules apply identically to manual
+  // /auto-assign. The next two tests prove that.
+
+  it('A5.5 — Meta-ingested lead honours a source-based distribution rule', async () => {
+    // Plant a specific_user rule for source=meta → agentUserId.
+    // Since agentUserId is the ONLY active sales agent in the test
+    // tenant, we wouldn't be able to distinguish "rule fired" from
+    // "default strategy fired" if we left it there. Add a SECOND
+    // sales agent so the routing decision becomes meaningful.
+    const hash = await hashPassword('Password@123', 4);
+    const role = await withTenantRaw(tenantId, (tx) =>
+      tx.role.findFirstOrThrow({ where: { code: 'sales_agent' } }),
+    );
+    const otherAgent = await withTenantRaw(tenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId,
+          email: '__a55_other@x',
+          name: 'Other',
+          passwordHash: hash,
+          roleId: role.id,
+        },
+      }),
+    );
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.create({
+        data: {
+          tenantId,
+          name: 'Test (A5.5): meta → otherAgent',
+          strategy: 'specific_user',
+          source: 'meta',
+          targetUserId: otherAgent.id,
+          updatedAt: new Date(),
+        },
+      }),
+    );
+
+    const ingested = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Routed-By-Rule',
+      phoneRaw: '+201001100700',
+      source: 'meta',
+      actorUserId: null,
+    });
+    assert.equal(ingested.kind, 'created');
+
+    // Lead must be assigned to otherAgent (the rule's target),
+    // NOT to agentUserId (the default-strategy winner).
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirstOrThrow({
+        where: { phone: '+201001100700' },
+        select: { id: true, assignedToId: true },
+      }),
+    );
+    assert.equal(
+      lead.assignedToId,
+      otherAgent.id,
+      'rule should route Meta-ingested lead to its target',
+    );
+
+    // Routing log row written with strategy='specific_user' + ruleId.
+    const logs = await withTenantRaw(tenantId, (tx) =>
+      tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+    );
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0]!.strategy, 'specific_user');
+    assert.equal(logs[0]!.chosenUserId, otherAgent.id);
+    assert.ok(logs[0]!.ruleId, 'log records the matched rule');
+
+    // Cleanup so subsequent tests aren't perturbed.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.deleteMany({
+        where: { name: 'Test (A5.5): meta → otherAgent' },
+      }),
+    );
+    await withTenantRaw(tenantId, (tx) =>
+      tx.user.delete({ where: { id: otherAgent.id } }).catch(() => null),
+    );
+  });
+
+  it('A5.5 — CSV-ingested lead writes a routing log row even when default strategy fires', async () => {
+    // No matching rule → tenant default strategy ('capacity') fires.
+    // The contract under test is that the log row IS written for
+    // every ingested lead — pre-A5.5 there was no log at all.
+    const csv = 'name,phone\nLogged,+201001100800\n';
+    await inTenant(() =>
+      ingestion.importCsv(
+        {
+          csv,
+          mapping: { name: 'name', phone: 'phone' },
+          defaultSource: 'import',
+          autoAssign: true,
+        },
+        actorUserId,
+      ),
+    );
+
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirstOrThrow({
+        where: { phone: '+201001100800' },
+        select: { id: true, assignedToId: true },
+      }),
+    );
+    assert.ok(lead.assignedToId, 'CSV-imported lead must be auto-assigned');
+
+    const logs = await withTenantRaw(tenantId, (tx) =>
+      tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+    );
+    assert.equal(logs.length, 1, 'exactly one routing log row per ingested auto-assign');
+    assert.equal(logs[0]!.ruleId, null, 'no rule matched');
+    assert.equal(logs[0]!.strategy, 'capacity', 'fallback strategy fires');
+    assert.equal(logs[0]!.chosenUserId, lead.assignedToId);
+  });
+
+  it('A5.5 — Meta-ingested lead leaves itself unassigned when no eligible agent exists', async () => {
+    // Disable every sales agent in the tenant. Ingestion must NOT
+    // throw; the lead lands but stays unassigned. The routing log
+    // records chosenUserId=null.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.user.updateMany({
+        where: { tenantId, role: { code: 'sales_agent' } },
+        data: { status: 'disabled' },
+      }),
+    );
+    try {
+      const result = await ingestion.ingestMetaPayload({
+        tenantId,
+        name: 'Stranded',
+        phoneRaw: '+201001100900',
+        source: 'meta',
+        actorUserId: null,
+      });
+      assert.equal(result.kind, 'created');
+
+      const lead = await withTenantRaw(tenantId, (tx) =>
+        tx.lead.findFirstOrThrow({
+          where: { phone: '+201001100900' },
+          select: { id: true, assignedToId: true },
+        }),
+      );
+      assert.equal(lead.assignedToId, null, 'no eligible agent → lead unassigned');
+
+      const logs = await withTenantRaw(tenantId, (tx) =>
+        tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+      );
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0]!.chosenUserId, null);
+      assert.equal(logs[0]!.candidateCount, 0, 'no surviving candidates');
+    } finally {
+      // Restore so subsequent tests have agents.
+      await withTenantRaw(tenantId, (tx) =>
+        tx.user.updateMany({
+          where: { tenantId, role: { code: 'sales_agent' } },
+          data: { status: 'active' },
+        }),
+      );
+    }
   });
 });

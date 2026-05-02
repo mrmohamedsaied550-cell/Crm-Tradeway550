@@ -59,6 +59,16 @@ export interface RoutingContext {
    * request can trace a decision back to its triggering call.
    */
   requestId?: string;
+  /**
+   * A5.5 — bypass the rule lookup entirely and route via the
+   * tenant default strategy. Used by SLA breach reassignment:
+   * when a lead breaches SLA, we don't want to send it back to
+   * the same agent the rule originally targeted (the rule
+   * already chose them and they failed). Setting this skips
+   * step 1 of the orchestrator pipeline; everything else
+   * (candidate filter, strategy pick, log write) is identical.
+   */
+  bypassRules?: boolean;
 }
 
 /**
