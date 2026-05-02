@@ -823,7 +823,35 @@
       "mediaMimeType": "MIME type (optional)",
       "mediaCaption": "Caption (optional)",
       "mediaUrlRequired": "Media URL is required.",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "handover": {
+        "cta": "Transfer",
+        "disabledClosed": "Conversation is closed — handover is disabled.",
+        "title": "Transfer this conversation",
+        "hint": "Reassigns the linked lead and writes an audit-trail entry.",
+        "newAssignee": "New assignee",
+        "pickAssignee": "Pick an agent…",
+        "modeLabel": "Transfer mode",
+        "modes": {
+          "full": {
+            "title": "Full transfer",
+            "body": "Keeps the chat open; lead reassigns to the new agent."
+          },
+          "clean": {
+            "title": "Clean handoff",
+            "body": "Closes the current conversation; the new agent starts fresh."
+          },
+          "summary": {
+            "title": "Summary",
+            "body": "Posts a handover note onto the lead so the new agent has context."
+          }
+        },
+        "summary": "Handover summary",
+        "summaryPlaceholder": "Outline what the new agent should know…",
+        "notify": "Notify the new agent (records intent in the audit log).",
+        "confirm": "Transfer",
+        "done": "Conversation transferred."
+      }
     }
   },
   "common": {
