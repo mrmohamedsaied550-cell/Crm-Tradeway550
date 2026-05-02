@@ -80,12 +80,21 @@ const distributionRules = z
     }
   });
 
+/**
+ * Phase 1A — fallback strategy for DistributionService.route() when
+ * no rule matches. 'specific_user' is intentionally excluded —
+ * specific_user requires a per-rule target, which is meaningless
+ * as a tenant-wide default.
+ */
+const defaultStrategy = z.enum(['capacity', 'round_robin', 'weighted'] as const);
+
 export const UpdateTenantSettingsSchema = z
   .object({
     timezone: ianaTimezone.optional(),
     slaMinutes: slaMinutes.optional(),
     defaultDialCode: dialCode.optional(),
     distributionRules: distributionRules.optional(),
+    defaultStrategy: defaultStrategy.optional(),
   })
   .strict();
 export type UpdateTenantSettingsDto = z.infer<typeof UpdateTenantSettingsSchema>;

@@ -18,6 +18,13 @@ export interface TenantSettings {
    * fallback value is `[]` so callers can iterate without a guard.
    */
   distributionRules: DistributionRule[];
+  /**
+   * Phase 1A — fallback strategy when DistributionService.route()
+   * finds no matching rule. One of: 'capacity' | 'round_robin' |
+   * 'weighted'. Defaults to 'capacity' so existing tenants behave
+   * identically to today's behaviour.
+   */
+  defaultStrategy: 'capacity' | 'round_robin' | 'weighted';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -142,6 +149,7 @@ export class TenantSettingsService {
           ...(dto.distributionRules !== undefined && {
             distributionRules: dto.distributionRules as Prisma.InputJsonValue,
           }),
+          ...(dto.defaultStrategy !== undefined && { defaultStrategy: dto.defaultStrategy }),
         },
         create: {
           tenantId,
@@ -151,6 +159,7 @@ export class TenantSettingsService {
           ...(dto.distributionRules !== undefined && {
             distributionRules: dto.distributionRules as Prisma.InputJsonValue,
           }),
+          ...(dto.defaultStrategy !== undefined && { defaultStrategy: dto.defaultStrategy }),
         },
       });
       await this.audit.writeInTx(tx, tenantId, {
@@ -175,6 +184,7 @@ export class TenantSettingsService {
     slaMinutes: number;
     defaultDialCode: string;
     distributionRules: unknown;
+    defaultStrategy: string;
     createdAt: Date;
     updatedAt: Date;
   }): TenantSettings {
@@ -184,6 +194,11 @@ export class TenantSettingsService {
       slaMinutes: row.slaMinutes,
       defaultDialCode: row.defaultDialCode,
       distributionRules: parseRules(row.distributionRules),
+      // Phase 1A — defensively narrow the text column to the typed
+      // union; an unknown value (e.g. legacy 'specific_user' typed
+      // by a hand-edit) silently falls back to 'capacity' so the
+      // engine has a sane default.
+      defaultStrategy: narrowDefaultStrategy(row.defaultStrategy),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -201,8 +216,15 @@ export class TenantSettingsService {
       slaMinutes: getSlaMinutes(),
       defaultDialCode: TenantSettingsService.FALLBACK_DIAL_CODE,
       distributionRules: [],
+      defaultStrategy: 'capacity',
       createdAt: now,
       updatedAt: now,
     };
   }
+}
+
+/** Narrow `tenant_settings.default_strategy` text into the typed union. */
+function narrowDefaultStrategy(raw: string): 'capacity' | 'round_robin' | 'weighted' {
+  if (raw === 'round_robin' || raw === 'weighted' || raw === 'capacity') return raw;
+  return 'capacity';
 }
