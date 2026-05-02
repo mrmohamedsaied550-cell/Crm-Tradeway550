@@ -597,6 +597,11 @@
       "saved": "Settings saved.",
       "loadFailed": "Failed to load settings.",
       "saveFailed": "Failed to save settings.",
+      "distributionMoved": {
+        "title": "Lead distribution moved",
+        "body": "Routing rules, per-agent capacity, and the routing-decision log now live on the dedicated Distribution page.",
+        "cta": "Open Distribution"
+      },
       "distribution": {
         "title": "Lead distribution rules",
         "hint": "Route incoming leads of a specific source straight to a chosen agent. Anything without a rule falls back to round-robin.",
