@@ -1,10 +1,17 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { decryptSecret } from '../common/crypto';
 import { normalizeE164 } from '../crm/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
 
@@ -97,7 +104,8 @@ export class WhatsAppService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly metaCloud: MetaCloudProvider,
-    private readonly notifications?: NotificationsService,
+    @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   /**
@@ -232,8 +240,9 @@ export class WhatsAppService {
     account: RoutedAccount,
     msg: InboundMessage,
   ): Promise<{ messageId: string; conversationId: string } | null> {
+    let result: { messageId: string; conversationId: string } | null = null;
     try {
-      return await this.prisma.withTenant(account.tenantId, async (tx) => {
+      result = await this.prisma.withTenant(account.tenantId, async (tx) => {
         const conversationId = await this.ensureOpenConversation(
           tx,
           account.tenantId,
@@ -281,6 +290,24 @@ export class WhatsAppService {
       }
       throw err;
     }
+
+    // P3-02 — fan out to every connected agent in the tenant. Inbound
+    // WhatsApp messages aren't owned by a single user, and any agent
+    // browsing the inbox should see the conversation row update live.
+    // Emitted post-commit so a client refetch always sees the new row.
+    if (result && this.realtime) {
+      try {
+        this.realtime.emitToTenant(account.tenantId, {
+          type: 'whatsapp.message',
+          conversationId: result.conversationId,
+          messageId: result.messageId,
+          direction: 'inbound',
+        });
+      } catch (err) {
+        this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
+      }
+    }
+    return result;
   }
 
   // ─────── Outbound send ───────

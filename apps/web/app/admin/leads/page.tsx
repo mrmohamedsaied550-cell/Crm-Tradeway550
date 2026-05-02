@@ -12,6 +12,7 @@ import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, leadsApi, pipelineApi, usersApi } from '@/lib/api';
 import type {
   AdminUser,
@@ -89,6 +90,7 @@ function parseHeaderLine(line: string): string[] {
 export default function LeadsPage(): JSX.Element {
   const t = useTranslations('admin.leads');
   const tCommon = useTranslations('admin.common');
+  const { toast } = useToast();
 
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -99,20 +101,60 @@ export default function LeadsPage(): JSX.Element {
 
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
+  // P3-03 — advanced filters. Empty string means "any" (mapped to
+  // `undefined` on the wire so the API treats them as not-passed).
+  const [filterSource, setFilterSource] = useState<LeadSource | ''>('');
+  const [filterSla, setFilterSla] = useState<SlaStatus | ''>('');
+  const [filterAssignee, setFilterAssignee] = useState<string>(''); // userId or '__unassigned__'
+  const [filterCreatedFrom, setFilterCreatedFrom] = useState<string>(''); // yyyy-mm-dd
+  const [filterCreatedTo, setFilterCreatedTo] = useState<string>('');
+  const [filterOverdue, setFilterOverdue] = useState<boolean>(false);
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
 
   const [creating, setCreating] = useState<boolean>(false);
   const [form, setForm] = useState<CreateForm>(EMPTY_CREATE_FORM);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // P3-05 — bulk-action state.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [bulkAssignOpen, setBulkAssignOpen] = useState<boolean>(false);
+  const [bulkStageOpen, setBulkStageOpen] = useState<boolean>(false);
+  const [bulkAssignTarget, setBulkAssignTarget] = useState<string>(''); // userId or '__unassign__'
+  const [bulkStageTarget, setBulkStageTarget] = useState<LeadStageCode | ''>('');
+  const [bulkSubmitting, setBulkSubmitting] = useState<boolean>(false);
+
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
+      // P3-03 — assignee picker drives BOTH the explicit `assignedToId`
+      // path and the `unassigned` path. The sentinel `__unassigned__`
+      // means "leads with no owner".
+      const assignedToId =
+        filterAssignee && filterAssignee !== '__unassigned__' ? filterAssignee : undefined;
+      const unassigned = filterAssignee === '__unassigned__' ? true : undefined;
+      // Convert the date pickers (`yyyy-mm-dd`) to ISO timestamps. The
+      // `from` bound starts at 00:00 UTC of that day; the `to` bound
+      // ends at 23:59:59.999 UTC so the picker's "to" day is inclusive.
+      const createdFrom = filterCreatedFrom
+        ? new Date(`${filterCreatedFrom}T00:00:00.000Z`).toISOString()
+        : undefined;
+      const createdTo = filterCreatedTo
+        ? new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString()
+        : undefined;
+
       const [page, st, usrs] = await Promise.all([
         leadsApi.list({
           stageCode: filterStage || undefined,
           q: search.trim() || undefined,
+          source: filterSource || undefined,
+          slaStatus: filterSla || undefined,
+          assignedToId,
+          unassigned,
+          createdFrom,
+          createdTo,
+          hasOverdueFollowup: filterOverdue || undefined,
           limit: 100,
         }),
         pipelineApi.listStages(),
@@ -128,7 +170,125 @@ export default function LeadsPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [filterStage, search]);
+  }, [
+    filterStage,
+    search,
+    filterSource,
+    filterSla,
+    filterAssignee,
+    filterCreatedFrom,
+    filterCreatedTo,
+    filterOverdue,
+  ]);
+
+  /** P3-03 — true when ANY filter is non-empty. Drives the empty-state copy. */
+  const anyFilterActive: boolean =
+    Boolean(filterStage) ||
+    Boolean(search) ||
+    Boolean(filterSource) ||
+    Boolean(filterSla) ||
+    Boolean(filterAssignee) ||
+    Boolean(filterCreatedFrom) ||
+    Boolean(filterCreatedTo) ||
+    filterOverdue;
+
+  function clearFilters(): void {
+    setFilterStage('');
+    setSearch('');
+    setFilterSource('');
+    setFilterSla('');
+    setFilterAssignee('');
+    setFilterCreatedFrom('');
+    setFilterCreatedTo('');
+    setFilterOverdue(false);
+  }
+
+  // P3-05 — when the row set shrinks (filter change, deletion), prune
+  // ids that are no longer visible from the selection so the action
+  // bar count never lies. This is cheap; the visible set is bounded
+  // by the page limit.
+  useEffect(() => {
+    const visible = new Set(rows.map((r) => r.id));
+    setSelectedIds((prev) => {
+      let drift = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else drift = true;
+      }
+      return drift ? next : prev;
+    });
+  }, [rows]);
+
+  // P3-06 — bulk results render via the global toaster instead of an
+  // inline Notice the operator has to scroll back up to see. Partial
+  // outcomes carry the first 3 failure messages in the toast body.
+  function reportBulk(res: { updated: string[]; failed: { id: string; message: string }[] }): void {
+    if (res.failed.length === 0) {
+      toast({ tone: 'success', title: t('bulk.successAll', { n: res.updated.length }) });
+    } else {
+      toast({
+        tone: 'warning',
+        title: t('bulk.successPartial', { ok: res.updated.length, failed: res.failed.length }),
+        body: res.failed
+          .slice(0, 3)
+          .map((f) => f.message)
+          .join(' · '),
+      });
+    }
+  }
+
+  async function onBulkAssign(): Promise<void> {
+    if (selectedIds.size === 0) return;
+    setBulkSubmitting(true);
+    try {
+      const assignedToId = bulkAssignTarget === '__unassign__' ? null : bulkAssignTarget || null;
+      const res = await leadsApi.bulkAssign({ leadIds: [...selectedIds], assignedToId });
+      reportBulk(res);
+      setBulkAssignOpen(false);
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
+
+  async function onBulkStage(): Promise<void> {
+    if (selectedIds.size === 0 || !bulkStageTarget) return;
+    setBulkSubmitting(true);
+    try {
+      const res = await leadsApi.bulkStage({
+        leadIds: [...selectedIds],
+        stageCode: bulkStageTarget,
+      });
+      reportBulk(res);
+      setBulkStageOpen(false);
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
+
+  async function onBulkDelete(): Promise<void> {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(t('bulk.confirmDelete', { n: selectedIds.size }))) return;
+    setBulkSubmitting(true);
+    try {
+      const res = await leadsApi.bulkDelete({ leadIds: [...selectedIds] });
+      reportBulk(res);
+      setSelectedIds(new Set());
+      await reload();
+    } catch (err) {
+      toast({ tone: 'error', title: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBulkSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     void reload();
@@ -387,6 +547,12 @@ export default function LeadsPage(): JSX.Element {
         }
       />
 
+      {/*
+       * P3-03 — primary filter row stays on screen at all times.
+       * The advanced panel (source / SLA / assignee / created-at /
+       * overdue) is collapsed by default to keep the page tidy and
+       * expanded on demand.
+       */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-full max-w-xs">
           <Field label={t('filterByStage')}>
@@ -408,7 +574,84 @@ export default function LeadsPage(): JSX.Element {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
           </Field>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+        </Button>
+        {anyFilterActive ? (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            {tCommon('clearFilters')}
+          </Button>
+        ) : null}
       </div>
+
+      {advancedOpen ? (
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
+          <Field label={t('advanced.source')}>
+            <Select
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="manual">{t('advanced.sources.manual')}</option>
+              <option value="meta">{t('advanced.sources.meta')}</option>
+              <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+              <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+              <option value="import">{t('advanced.sources.import')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.sla')}>
+            <Select
+              value={filterSla}
+              onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="active">{t('advanced.slaActive')}</option>
+              <option value="breached">{t('advanced.slaBreached')}</option>
+              <option value="paused">{t('advanced.slaPaused')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.assignee')}>
+            <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
+              <option value="">{tCommon('all')}</option>
+              <option value="__unassigned__">{t('advanced.unassigned')}</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t('advanced.createdFrom')}>
+            <Input
+              type="date"
+              value={filterCreatedFrom}
+              onChange={(e) => setFilterCreatedFrom(e.target.value)}
+              max={filterCreatedTo || undefined}
+            />
+          </Field>
+          <Field label={t('advanced.createdTo')}>
+            <Input
+              type="date"
+              value={filterCreatedTo}
+              onChange={(e) => setFilterCreatedTo(e.target.value)}
+              min={filterCreatedFrom || undefined}
+            />
+          </Field>
+          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+            <input
+              type="checkbox"
+              checked={filterOverdue}
+              onChange={(e) => setFilterOverdue(e.target.checked)}
+            />
+            {t('advanced.overdueOnly')}
+          </label>
+        </div>
+      ) : null}
 
       {error ? (
         <Notice tone="error">
@@ -424,18 +667,11 @@ export default function LeadsPage(): JSX.Element {
 
       {!loading && !error && rows.length === 0 ? (
         <EmptyState
-          title={filterStage || search ? t('emptyFiltered') : t('empty')}
-          body={filterStage || search ? t('emptyFilteredHint') : t('emptyHint')}
+          title={anyFilterActive ? t('emptyFiltered') : t('empty')}
+          body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
           action={
-            filterStage || search ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setFilterStage('');
-                  setSearch('');
-                }}
-              >
+            anyFilterActive ? (
+              <Button variant="secondary" size="sm" onClick={clearFilters}>
                 {tCommon('clearFilters')}
               </Button>
             ) : (
@@ -446,26 +682,148 @@ export default function LeadsPage(): JSX.Element {
           }
         />
       ) : (
-        <DataTable
-          columns={columns}
-          rows={rows}
-          keyOf={(r) => r.id}
-          loading={loading}
-          rowActions={(row) => (
-            <>
-              <Link
-                href={`/admin/leads/${row.id}`}
-                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-              >
-                {t('openDetail')}
-              </Link>
-              <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-                {tCommon('delete')}
-              </Button>
-            </>
-          )}
-        />
+        <>
+          {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
+          {selectedIds.size > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+              <span className="font-medium text-brand-800">
+                {t('bulk.selected', { n: selectedIds.size })}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setBulkAssignTarget('');
+                    setBulkAssignOpen(true);
+                  }}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.assign')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setBulkStageTarget('');
+                    setBulkStageOpen(true);
+                  }}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.stage')}
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void onBulkDelete()}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.delete')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedIds(new Set())}
+                  disabled={bulkSubmitting}
+                >
+                  {t('bulk.clear')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <DataTable
+            columns={columns}
+            rows={rows}
+            keyOf={(r) => r.id}
+            loading={loading}
+            skeletonRows={6}
+            selection={{
+              selectedIds,
+              onChange: setSelectedIds,
+              ariaLabel: t('bulk.selectRow'),
+            }}
+            rowActions={(row) => (
+              <>
+                <Link
+                  href={`/admin/leads/${row.id}`}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                >
+                  {t('openDetail')}
+                </Link>
+                <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                  {tCommon('delete')}
+                </Button>
+              </>
+            )}
+          />
+        </>
       )}
+
+      {/* P3-05 — bulk assign modal */}
+      <Modal
+        open={bulkAssignOpen}
+        title={t('bulk.assignModalTitle', { n: selectedIds.size })}
+        onClose={() => setBulkAssignOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkAssignOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={() => void onBulkAssign()} loading={bulkSubmitting}>
+              {tCommon('save')}
+            </Button>
+          </>
+        }
+      >
+        <Field label={t('bulk.assignee')} required>
+          <Select
+            value={bulkAssignTarget}
+            onChange={(e) => setBulkAssignTarget(e.target.value)}
+            required
+          >
+            <option value="">{t('bulk.pickAssignee')}</option>
+            <option value="__unassign__">{t('bulk.unassignAll')}</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
+
+      {/* P3-05 — bulk stage move modal */}
+      <Modal
+        open={bulkStageOpen}
+        title={t('bulk.stageModalTitle', { n: selectedIds.size })}
+        onClose={() => setBulkStageOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkStageOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button onClick={() => void onBulkStage()} loading={bulkSubmitting}>
+              {tCommon('save')}
+            </Button>
+          </>
+        }
+      >
+        <Field label={t('bulk.stageTarget')} required>
+          <Select
+            value={bulkStageTarget}
+            onChange={(e) => setBulkStageTarget(e.target.value as LeadStageCode | '')}
+            required
+          >
+            <option value="">{t('bulk.pickStage')}</option>
+            {stages.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
 
       <Modal
         open={importing}

@@ -32,3 +32,27 @@ export const ListMyFollowUpsQuerySchema = z
   })
   .strict();
 export type ListMyFollowUpsQueryDto = z.infer<typeof ListMyFollowUpsQuerySchema>;
+
+/**
+ * P3-04 — calendar query. The `from` / `to` window is half-open at
+ * the upper bound (matches `< to`) so the caller can pass the next
+ * month's first instant without double-counting. Capped at a
+ * generous 200 rows; calendar surfaces typically render at most a
+ * full month of follow-ups.
+ *
+ * `mine: '0'` opts a TL/admin into seeing every assignee in the
+ * tenant; the default keeps the result scoped to the calling user.
+ */
+export const CalendarFollowUpsQuerySchema = z
+  .object({
+    from: z.string().datetime(),
+    to: z.string().datetime(),
+    mine: z.enum(['0', '1']).default('1'),
+    limit: z.coerce.number().int().min(1).max(500).default(500),
+  })
+  .strict()
+  .refine((v) => v.from <= v.to, {
+    message: 'from must be earlier than or equal to to',
+    path: ['from'],
+  });
+export type CalendarFollowUpsQueryDto = z.infer<typeof CalendarFollowUpsQuerySchema>;

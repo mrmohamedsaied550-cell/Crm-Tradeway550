@@ -21,6 +21,8 @@ import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { IngestionModule } from './ingestion/ingestion.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { BackupModule } from './backup/backup.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -58,6 +60,8 @@ import { buildLoggerConfig } from './common/logger';
     AuditModule,
     NotificationsModule,
     IngestionModule,
+    RealtimeModule,
+    BackupModule,
     HealthModule,
   ],
   providers: [

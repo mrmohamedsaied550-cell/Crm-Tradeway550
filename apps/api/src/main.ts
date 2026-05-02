@@ -35,9 +35,14 @@ async function bootstrap(): Promise<void> {
 
   // Global API prefix; /health is intentionally root-level so platform health
   // probes (Railway's healthcheckPath: /health) hit it without an /api/v1
-  // dependency.
+  // dependency. P3-02 — `/realtime/stream` is also exempted so the SSE URL
+  // stays clean and the service worker's "never intercept /realtime/" rule
+  // can match by exact path prefix.
   app.setGlobalPrefix(API_GLOBAL_PREFIX, {
-    exclude: [{ path: 'health', method: RequestMethod.ALL }],
+    exclude: [
+      { path: 'health', method: RequestMethod.ALL },
+      { path: 'realtime/stream', method: RequestMethod.ALL },
+    ],
   });
 
   // Global validation: zod-backed pipe; transform = true coerces query/path

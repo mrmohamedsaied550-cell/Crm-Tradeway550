@@ -21,10 +21,15 @@ import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
 
 import { FollowUpsService } from './follow-ups.service';
-import { CreateFollowUpSchema, ListMyFollowUpsQuerySchema } from './follow-up.dto';
+import {
+  CalendarFollowUpsQuerySchema,
+  CreateFollowUpSchema,
+  ListMyFollowUpsQuerySchema,
+} from './follow-up.dto';
 
 class CreateFollowUpDto extends createZodDto(CreateFollowUpSchema) {}
 class ListMyFollowUpsQueryDto extends createZodDto(ListMyFollowUpsQuerySchema) {}
+class CalendarFollowUpsQueryDto extends createZodDto(CalendarFollowUpsQuerySchema) {}
 
 @ApiTags('follow-ups')
 @Controller()
@@ -37,6 +42,20 @@ export class FollowUpsController {
   @ApiOperation({ summary: "List the calling user's follow-ups (default: pending only)" })
   mine(@Query() query: ListMyFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.followUps.listMine(user.sub, query);
+  }
+
+  /**
+   * P3-04 — calendar feed. Returns every follow-up whose `dueAt` is
+   * inside `[from, to]` for the calling user; with `mine=0` the same
+   * capability lets a manager see the whole tenant's calendar (RLS
+   * keeps cross-tenant rows out either way). The endpoint is
+   * read-only and gated on `followup.read` like the other reads.
+   */
+  @Get('follow-ups/calendar')
+  @RequireCapability('followup.read')
+  @ApiOperation({ summary: 'List follow-ups in a date range (calendar feed)' })
+  calendar(@Query() query: CalendarFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.followUps.listInRange(user.sub, { ...query, allowAllAssignees: true });
   }
 
   @Get('leads/:leadId/follow-ups')

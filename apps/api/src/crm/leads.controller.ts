@@ -28,6 +28,9 @@ import { SlaService } from './sla.service';
 import {
   AddActivitySchema,
   AssignLeadSchema,
+  BulkAssignSchema,
+  BulkDeleteSchema,
+  BulkMoveStageSchema,
   ConvertLeadSchema,
   CreateLeadSchema,
   ListLeadsQuerySchema,
@@ -42,6 +45,9 @@ class MoveStageDto extends createZodDto(MoveStageSchema) {}
 class AddActivityDto extends createZodDto(AddActivitySchema) {}
 class ConvertLeadDto extends createZodDto(ConvertLeadSchema) {}
 class ListLeadsQueryDto extends createZodDto(ListLeadsQuerySchema) {}
+class BulkAssignDto extends createZodDto(BulkAssignSchema) {}
+class BulkMoveStageDto extends createZodDto(BulkMoveStageSchema) {}
+class BulkDeleteDto extends createZodDto(BulkDeleteSchema) {}
 
 /**
  * /api/v1/leads — full Lead lifecycle behind JwtAuthGuard.
@@ -200,5 +206,35 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.captains.convertFromLead(id, body, user.sub);
+  }
+
+  // ─── P3-05 — bulk actions ───
+  // Each endpoint accepts up to 100 lead ids per call (the schema
+  // enforces) and returns `{ updated, failed }` so the UI can show
+  // both halves of a partial outcome without making the operator
+  // re-issue the whole batch on a single bad row.
+
+  @Post('leads/bulk-assign')
+  @RequireCapability('lead.assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Assign or unassign multiple leads in one call' })
+  bulkAssign(@Body() body: BulkAssignDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.bulkAssign(body, user.sub);
+  }
+
+  @Post('leads/bulk-stage')
+  @RequireCapability('lead.stage.move')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Move multiple leads to the same pipeline stage' })
+  bulkStage(@Body() body: BulkMoveStageDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.bulkMoveStage(body, user.sub);
+  }
+
+  @Post('leads/bulk-delete')
+  @RequireCapability('lead.write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete multiple leads (and their activities) in one call' })
+  bulkDelete(@Body() body: BulkDeleteDto) {
+    return this.leads.bulkDelete(body);
   }
 }

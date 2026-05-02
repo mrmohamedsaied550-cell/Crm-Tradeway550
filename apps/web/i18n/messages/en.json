@@ -49,7 +49,8 @@
       "whatsappTemplates": "WA Templates",
       "reports": "Reports",
       "audit": "Audit Log",
-      "tenantSettings": "Settings"
+      "tenantSettings": "Settings",
+      "backup": "Backup"
     },
     "authBar": {
       "notSignedIn": "You're not signed in. Sign in to access the admin API.",
@@ -198,6 +199,45 @@
       "sla": "SLA",
       "filterByStage": "Filter by stage",
       "search": "Search name / phone / email",
+      "bulk": {
+        "selected": "{n} selected",
+        "selectRow": "Select lead",
+        "assign": "Assign",
+        "stage": "Move stage",
+        "delete": "Delete",
+        "clear": "Clear selection",
+        "confirmDelete": "Delete {n} leads? This cannot be undone.",
+        "successAll": "Bulk action: {n} updated.",
+        "successPartial": "Bulk action: {ok} updated, {failed} failed.",
+        "assignModalTitle": "Assign {n} leads",
+        "stageModalTitle": "Move {n} leads to a stage",
+        "assignee": "Assignee",
+        "pickAssignee": "Pick an assignee…",
+        "unassignAll": "Unassign all",
+        "stageTarget": "Target stage",
+        "pickStage": "Pick a stage…"
+      },
+      "advanced": {
+        "show": "Advanced filters",
+        "hide": "Hide advanced",
+        "source": "Source",
+        "sources": {
+          "manual": "Manual",
+          "meta": "Meta lead-gen",
+          "tiktok": "TikTok",
+          "whatsapp": "WhatsApp",
+          "import": "CSV import"
+        },
+        "sla": "SLA status",
+        "slaActive": "Active",
+        "slaBreached": "Breached",
+        "slaPaused": "Paused",
+        "assignee": "Assignee",
+        "unassigned": "Unassigned",
+        "createdFrom": "Created from",
+        "createdTo": "Created to",
+        "overdueOnly": "Only leads with an overdue follow-up"
+      },
       "openDetail": "Open",
       "unassigned": "Unassigned",
       "autoAssign": "Auto-assign",
@@ -334,6 +374,24 @@
       "deleteConfirm": "Delete this template?",
       "empty": "No templates yet.",
       "actions": "Actions"
+    },
+    "backup": {
+      "title": "Backup & export",
+      "subtitle": "Download a JSON snapshot of this tenant's CRM data.",
+      "cardTitle": "Tenant export",
+      "cardBody": "Includes leads, captains, follow-ups, conversations, bonuses and more — capped at 10,000 rows per table.",
+      "includes": {
+        "leads": "Leads + activities + follow-ups",
+        "captains": "Captains + documents + trip ledger",
+        "whatsapp": "WhatsApp accounts (no tokens), conversations, messages, templates",
+        "bonuses": "Bonus rules + accruals + competitions"
+      },
+      "stripped": "Sensitive fields are stripped: WhatsApp access tokens, user password hashes, app secrets, verify tokens.",
+      "downloadButton": "Download tenant export",
+      "downloaded": "Tenant export downloaded.",
+      "lastSummary": "{rows} rows · exported {at}",
+      "forbidden": "You don't have the tenant.export capability — ask an admin to grant it.",
+      "opsHint": "For a full database backup (all tenants, every column) use scripts/backup.sh — see scripts/README.md."
     },
     "tenantSettings": {
       "title": "Tenant settings",
@@ -639,6 +697,24 @@
       "heading": "Agent shell",
       "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
     },
+    "calendar": {
+      "title": "Follow-up calendar",
+      "subtitle": "Every scheduled call, WhatsApp and visit, laid out by day.",
+      "open": "Open calendar",
+      "prev": "Previous month",
+      "next": "Next month",
+      "today": "Today",
+      "allAssignees": "All assignees",
+      "more": "more",
+      "dayTitle": "{date}",
+      "pickADay": "Pick a day",
+      "pickADayHint": "Select a day on the grid to see its follow-ups.",
+      "emptyDay": "Nothing scheduled",
+      "emptyDayHint": "No follow-ups land on this day.",
+      "openLead": "Open lead",
+      "complete": "Complete",
+      "done": "Done"
+    },
     "workspace": {
       "title": "My Leads",
       "subtitle": "Leads currently assigned to you. Update stage, log a note, schedule the next action.",
@@ -678,7 +754,9 @@
       },
       "actions": {
         "update": "Update",
-        "openDetail": "Open"
+        "openDetail": "Open",
+        "call": "Call",
+        "whatsapp": "WhatsApp"
       },
       "followUps": {
         "title": "My Follow-ups",

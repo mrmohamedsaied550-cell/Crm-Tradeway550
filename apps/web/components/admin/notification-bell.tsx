@@ -6,15 +6,19 @@ import { Bell, Check, CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, notificationsApi, type NotificationRow } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 /**
  * P2-02 — notification bell.
  *
- * Polls `/notifications/unread-count` every 30 s. Clicking the bell
- * lazy-loads the list (unread first then newest 50), with single +
- * mark-all-read actions. Errors are silenced to console — the bell
- * gracefully degrades to no badge if the endpoint is unreachable.
+ * P3-02 — also subscribes to `notification.created` realtime events
+ * for instant unread-count updates. The 30-s poll stays as a
+ * fallback for environments where SSE can't reach the server.
+ *
+ * Clicking the bell lazy-loads the list (unread first then newest
+ * 50), with single + mark-all-read actions. Errors are silenced — the
+ * bell gracefully degrades to no badge if the endpoint is unreachable.
  *
  * The component renders nothing pre-hydration (no SSR mismatch).
  */
@@ -50,6 +54,22 @@ export function NotificationBell(): JSX.Element | null {
     const t = setInterval(() => void refreshCount(), POLL_MS);
     return () => clearInterval(t);
   }, [authed, refreshCount]);
+
+  // P3-02 — bump the count + refresh the list (if open) the moment a
+  // new notification lands. The poll above stays in place so we self-heal
+  // if SSE drops, but in the happy path the badge updates within ms.
+  useRealtime('notification.created', () => {
+    if (!authed) return;
+    setCount((c) => c + 1);
+    if (open) {
+      void notificationsApi
+        .list({ limit: 50 })
+        .then(setRows)
+        .catch(() => {
+          /* swallowed — next manual reopen will retry */
+        });
+    }
+  });
 
   async function onOpen(): Promise<void> {
     setOpen((o) => !o);

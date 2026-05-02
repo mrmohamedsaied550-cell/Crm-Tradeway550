@@ -3,9 +3,11 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PipelineService } from './pipeline.service';
@@ -14,7 +16,15 @@ import { normalizeE164WithDefault } from './phone.util';
 import { dayBoundsInTimezone } from './time.util';
 import { AssignmentService } from './assignment.service';
 import { SlaService } from './sla.service';
-import type { CreateLeadDto, UpdateLeadDto, AddActivityDto, ListLeadsQueryDto } from './leads.dto';
+import type {
+  CreateLeadDto,
+  UpdateLeadDto,
+  AddActivityDto,
+  ListLeadsQueryDto,
+  BulkAssignDto,
+  BulkMoveStageDto,
+  BulkDeleteDto,
+} from './leads.dto';
 
 /**
  * Lead lifecycle.
@@ -33,6 +43,7 @@ export class LeadsService {
     private readonly assignment: AssignmentService,
     private readonly sla: SlaService,
     private readonly tenantSettings: TenantSettingsService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -137,9 +148,34 @@ export class LeadsService {
       ? (await this.pipeline.findByCodeOrThrow(query.stageCode)).id
       : undefined;
 
+    // P3-03 — `assignedToId` and `unassigned` are mutually exclusive;
+    // when both are passed the explicit `assignedToId` wins (most
+    // specific intent). The fallback to `unassigned` only applies when
+    // the caller did NOT pass an id.
+    const assigneeFilter: Prisma.LeadWhereInput = query.assignedToId
+      ? { assignedToId: query.assignedToId }
+      : query.unassigned
+        ? { assignedToId: null }
+        : {};
+
+    // P3-03 — created-at window. Either bound may be missing; we only
+    // build the `gte` / `lte` keys when present so a half-open range
+    // works without a sentinel.
+    const createdAt: Prisma.DateTimeFilter | undefined =
+      query.createdFrom || query.createdTo
+        ? {
+            ...(query.createdFrom && { gte: new Date(query.createdFrom) }),
+            ...(query.createdTo && { lte: new Date(query.createdTo) }),
+          }
+        : undefined;
+
     const where: Prisma.LeadWhereInput = {
       ...(stageId && { stageId }),
-      ...(query.assignedToId && { assignedToId: query.assignedToId }),
+      ...assigneeFilter,
+      ...(query.source && { source: query.source }),
+      ...(query.slaStatus && { slaStatus: query.slaStatus }),
+      ...(query.hasOverdueFollowup && { nextActionDueAt: { lt: new Date() } }),
+      ...(createdAt && { createdAt }),
       ...(query.q && {
         OR: [
           { name: { contains: query.q, mode: 'insensitive' } },
@@ -312,12 +348,12 @@ export class LeadsService {
     }
 
     const settings = await this.tenantSettings.getCurrent();
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       // Reassignment counts as an SLA-resetting event so the new owner
       // gets a full window. We skip the reset when the lead is in a
       // terminal stage (SLA stays paused).
       const inTerminal = before.stage.isTerminal;
-      const updated = await tx.lead.update({
+      const row = await tx.lead.update({
         where: { id },
         data: {
           assignedToId: assigneeUserId,
@@ -341,8 +377,25 @@ export class LeadsService {
         },
         createdById: actorUserId,
       });
-      return updated;
+      return row;
     });
+
+    // P3-02 — push the new owner so their workspace lights up the
+    // lead immediately. Skipped on unassign (no recipient).
+    if (assigneeUserId && this.realtime) {
+      try {
+        this.realtime.emitToUser(tenantId, assigneeUserId, {
+          type: 'lead.assigned',
+          leadId: id,
+          toUserId: assigneeUserId,
+          fromUserId: before.assignedToId ?? null,
+          reason: 'manual',
+        });
+      } catch {
+        /* swallowed — best-effort push */
+      }
+    }
+    return updated;
   }
 
   /**
@@ -363,7 +416,7 @@ export class LeadsService {
     }
 
     const settings = await this.tenantSettings.getCurrent();
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
       const pickedId = await this.assignment.assignLeadViaRoundRobin({
         tx,
         leadId: id,
@@ -382,11 +435,11 @@ export class LeadsService {
       });
 
       if (!pickedId) {
-        return null;
+        return { lead: null, pickedId: null as string | null };
       }
 
       // Fresh SLA window for the new owner.
-      return tx.lead.update({
+      const lead = await tx.lead.update({
         where: { id },
         data: {
           slaDueAt: this.sla.computeDueAt(new Date(), settings.slaMinutes),
@@ -394,7 +447,24 @@ export class LeadsService {
         },
         include: { stage: true, captain: true },
       });
+      return { lead, pickedId };
     });
+
+    // P3-02 — push to the new owner.
+    if (result.pickedId && this.realtime) {
+      try {
+        this.realtime.emitToUser(tenantId, result.pickedId, {
+          type: 'lead.assigned',
+          leadId: id,
+          toUserId: result.pickedId,
+          fromUserId: before.assignedToId ?? null,
+          reason: 'auto',
+        });
+      } catch {
+        /* swallowed — best-effort push */
+      }
+    }
+    return result.lead;
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -529,6 +599,64 @@ export class LeadsService {
     });
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // P3-05 — bulk actions
+  //
+  // Each bulk endpoint dispatches the existing single-id mutator per lead
+  // so the audit / activity / SLA / realtime emitter side-effects remain
+  // identical to the one-at-a-time path. The result envelope is
+  // `{ updated: string[], failed: { id, code, message }[] }` — the
+  // controller serialises both halves so a partial failure (one bad
+  // lead in the batch) doesn't poison the rest.
+  // ───────────────────────────────────────────────────────────────────────
+
+  async bulkAssign(dto: BulkAssignDto, actorUserId: string) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    if (dto.assignedToId !== null) {
+      // Validate the assignee once up-front so we don't spam the same
+      // 400 for every lead in the batch.
+      await this.assertUserInTenant(dto.assignedToId);
+    }
+    for (const id of dto.leadIds) {
+      try {
+        await this.assign(id, dto.assignedToId, actorUserId);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
+  async bulkMoveStage(dto: BulkMoveStageDto, actorUserId: string) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    for (const id of dto.leadIds) {
+      try {
+        await this.moveStage(id, dto.stageCode, actorUserId);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
+  async bulkDelete(dto: BulkDeleteDto) {
+    const updated: string[] = [];
+    const failed: Array<{ id: string; code: string; message: string }> = [];
+    for (const id of dto.leadIds) {
+      try {
+        await this.delete(id);
+        updated.push(id);
+      } catch (err) {
+        failed.push(toFailure(id, err));
+      }
+    }
+    return { updated, failed };
+  }
+
   private async assertUserInTenant(userId: string): Promise<void> {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, (tx) =>
@@ -547,4 +675,28 @@ export class LeadsService {
       });
     }
   }
+}
+
+/**
+ * P3-05 — narrow an arbitrary error into the bulk-result failure
+ * shape. Nest's HttpException carries `{ code, message }` in its
+ * response object; everything else falls back to the message.
+ */
+function toFailure(id: string, err: unknown): { id: string; code: string; message: string } {
+  const fallback = err instanceof Error ? err.message : String(err);
+  if (
+    err &&
+    typeof err === 'object' &&
+    'getResponse' in err &&
+    typeof (err as { getResponse: unknown }).getResponse === 'function'
+  ) {
+    const r = (err as { getResponse: () => unknown }).getResponse();
+    if (r && typeof r === 'object') {
+      const obj = r as Record<string, unknown>;
+      const code = typeof obj['code'] === 'string' ? obj['code'] : 'bulk.unknown';
+      const message = typeof obj['message'] === 'string' ? obj['message'] : fallback;
+      return { id, code, message };
+    }
+  }
+  return { id, code: 'bulk.unknown', message: fallback };
 }

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Loader2,
+  MessageCircle,
   Phone,
   Wrench,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ import type {
   SlaStatus,
 } from '@/lib/api-types';
 import { getCachedMe } from '@/lib/auth';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -47,6 +49,20 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'breached') return 'breach';
   if (s === 'paused') return 'inactive';
   return 'healthy';
+}
+
+/**
+ * P3-01 — `tel:` and WhatsApp deep-link helpers. Both targets work
+ * from a mobile browser tap and from a desktop browser (the OS
+ * routes the protocol). The phone is stored as E.164 already so
+ * we can use it verbatim; `wa.me` strips the leading `+`.
+ */
+function telHref(phoneE164: string): string {
+  return `tel:${phoneE164}`;
+}
+function whatsappHref(phoneE164: string): string {
+  const digits = phoneE164.startsWith('+') ? phoneE164.slice(1) : phoneE164;
+  return `https://wa.me/${digits}`;
 }
 
 interface UpdateFormState {
@@ -134,6 +150,16 @@ export default function AgentWorkspacePage(): JSX.Element {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // P3-02 — refresh the worklist when the API tells us this user just
+  // got a new lead assigned (manual / round-robin / SLA reassignment).
+  // The reload is cheap; no debounce needed because the server only
+  // emits when something actually changed.
+  useRealtime('lead.assigned', (event) => {
+    if (!meId) return;
+    if (event.toUserId !== meId) return;
+    void reload();
+  });
 
   const stageOptions = useMemo(() => stages, [stages]);
 
@@ -256,6 +282,24 @@ export default function AgentWorkspacePage(): JSX.Element {
       header: t('cols.actions'),
       render: (l) => (
         <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={telHref(l.phone)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
+            title={t('actions.call')}
+            aria-label={t('actions.call')}
+          >
+            <Phone className="h-4 w-4" aria-hidden="true" />
+          </a>
+          <a
+            href={whatsappHref(l.phone)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
+            title={t('actions.whatsapp')}
+            aria-label={t('actions.whatsapp')}
+          >
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          </a>
           <Button variant="secondary" size="sm" onClick={() => openUpdate(l)}>
             <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
             {t('actions.update')}
@@ -492,7 +536,93 @@ export default function AgentWorkspacePage(): JSX.Element {
           body={t('emptyBody')}
         />
       ) : (
-        <DataTable<Lead> rows={rows} columns={columns} keyOf={(l) => l.id} />
+        <>
+          {/*
+           * P3-01 — sm and up: existing DataTable.
+           * Below sm: stacked cards. The card layout puts the most
+           * important call-to-action buttons (call / WhatsApp /
+           * update) on a single row of 44px-min tap targets so
+           * agents can act with one thumb.
+           */}
+          <div className="hidden sm:block">
+            <DataTable<Lead> rows={rows} columns={columns} keyOf={(l) => l.id} />
+          </div>
+          <ul className="flex flex-col gap-2 sm:hidden">
+            {rows.map((l) => (
+              <li
+                key={l.id}
+                className={cn(
+                  'flex flex-col gap-2 rounded-lg border bg-surface-card p-3 shadow-card',
+                  overdueLeadIds.has(l.id)
+                    ? 'border-status-breach/40 bg-status-breach/5'
+                    : 'border-surface-border',
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 flex-col leading-tight">
+                    <span className="flex items-center gap-1.5">
+                      {overdueLeadIds.has(l.id) ? (
+                        <AlertTriangle
+                          className="h-3.5 w-3.5 shrink-0 text-status-breach"
+                          aria-label={t('overdueIndicator')}
+                        />
+                      ) : null}
+                      <span className="truncate text-sm font-semibold text-ink-primary">
+                        {l.name}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-ink-tertiary">
+                      <Phone className="h-3 w-3" aria-hidden="true" />
+                      <code className="font-mono">{l.phone}</code>
+                    </span>
+                  </div>
+                  <Badge tone={slaTone(l.slaStatus)}>{l.slaStatus}</Badge>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-ink-secondary">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface px-2 py-0.5">
+                    {l.stage.name}
+                  </span>
+                  <span className="uppercase tracking-wide">{l.source}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={telHref(l.phone)}
+                    className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
+                    aria-label={t('actions.call')}
+                  >
+                    <Phone className="h-4 w-4" aria-hidden="true" />
+                    {t('actions.call')}
+                  </a>
+                  <a
+                    href={whatsappHref(l.phone)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
+                    aria-label={t('actions.whatsapp')}
+                  >
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                    {t('actions.whatsapp')}
+                  </a>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-11 flex-1"
+                    onClick={() => openUpdate(l)}
+                  >
+                    <Wrench className="h-4 w-4" aria-hidden="true" />
+                    {t('actions.update')}
+                  </Button>
+                </div>
+                <Link
+                  href={`/admin/leads/${l.id}`}
+                  className="self-end text-xs font-medium text-brand-700 hover:text-brand-800"
+                >
+                  {t('actions.openDetail')} →
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       <Modal

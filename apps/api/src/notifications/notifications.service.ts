@@ -1,7 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 /**
@@ -19,7 +20,16 @@ import { requireTenantId } from '../tenants/tenant-context';
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * RealtimeService is `@Optional` so unit tests that build a thin
+   * NotificationsService without the full DI graph still work — the
+   * realtime push is a fire-and-forget enhancement on top of the
+   * persisted row.
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly realtime?: RealtimeService,
+  ) {}
 
   async createInTx(
     tx: Prisma.TransactionClient,
@@ -32,7 +42,7 @@ export class NotificationsService {
       payload?: Prisma.InputJsonValue;
     },
   ): Promise<void> {
-    await tx.notification.create({
+    const row = await tx.notification.create({
       data: {
         tenantId,
         recipientUserId: input.recipientUserId,
@@ -41,7 +51,24 @@ export class NotificationsService {
         body: input.body ?? null,
         ...(input.payload !== undefined && { payload: input.payload }),
       },
+      select: { id: true },
     });
+    // P3-02 — push the new notification id to the recipient's open
+    // SSE connections. The client uses it as a hint to refetch the
+    // notifications inbox + unread-count over REST. Emit AFTER the
+    // insert so the client never sees a stale list when it refetches.
+    // Wrap in try/catch so a misbehaving sink can never poison the
+    // outer transaction commit.
+    try {
+      this.realtime?.emitToUser(tenantId, input.recipientUserId, {
+        type: 'notification.created',
+        notificationId: row.id,
+        recipientUserId: input.recipientUserId,
+        kind: input.kind,
+      });
+    } catch (err) {
+      this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
+    }
   }
 
   /** Best-effort write outside a transaction. Failures are swallowed. */

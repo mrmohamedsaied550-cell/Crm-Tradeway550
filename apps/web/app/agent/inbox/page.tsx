@@ -26,6 +26,7 @@ import type {
   WhatsAppMessage,
   WhatsAppTemplateRow,
 } from '@/lib/api-types';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -212,6 +213,19 @@ export default function InboxPage(): JSX.Element {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length]);
+
+  // P3-02 — live updates. On every `whatsapp.message`:
+  //   - always refresh the conversation list (lastMessageAt + preview),
+  //   - if the event is for the currently-open conversation, refresh
+  //     its messages too.
+  // The list also keeps refreshing on a 30-s poll elsewhere if SSE is
+  // unreachable, so this hook is purely a latency optimisation.
+  useRealtime('whatsapp.message', (event) => {
+    void reloadList();
+    if (selectedId && event.conversationId === selectedId) {
+      void reloadMessages(selectedId);
+    }
+  });
 
   const selected = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,
@@ -466,11 +480,16 @@ export default function InboxPage(): JSX.Element {
                   const account = accountById.get(c.accountId);
                   return (
                     <li key={c.id}>
+                      {/*
+                       * P3-01 — use min-h-14 to give every row a 56px
+                       * tap target without distorting the visual
+                       * spacing on dense desktop screens.
+                       */}
                       <button
                         type="button"
                         onClick={() => onSelect(c.id)}
                         className={cn(
-                          'flex w-full flex-col items-start gap-0.5 px-3 py-2.5 text-start transition-colors',
+                          'flex w-full min-h-14 flex-col items-start gap-0.5 px-3 py-2.5 text-start transition-colors',
                           selectedId === c.id ? 'bg-brand-50' : 'hover:bg-brand-50/50',
                         )}
                       >
@@ -522,13 +541,18 @@ export default function InboxPage(): JSX.Element {
             <>
               {/* Header */}
               <div className="flex items-center gap-2 border-b border-surface-border px-3 py-2">
+                {/*
+                 * P3-01 — bump the mobile back button to a 44×44 tap
+                 * target. Anything smaller is hard to hit on a phone
+                 * held one-handed.
+                 */}
                 <button
                   type="button"
                   onClick={onDeselect}
-                  className="inline-flex items-center justify-center rounded-md p-1.5 text-ink-secondary hover:bg-brand-50 hover:text-brand-700 md:hidden"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-md text-ink-secondary hover:bg-brand-50 hover:text-brand-700 md:hidden"
                   aria-label={t('back')}
                 >
-                  <ArrowLeft className="h-4 w-4" />
+                  <ArrowLeft className="h-5 w-5" />
                 </button>
                 <div className="flex flex-col leading-tight">
                   <span className="flex items-center gap-1.5 text-sm font-medium text-ink-primary">
@@ -672,6 +696,7 @@ export default function InboxPage(): JSX.Element {
                       loading={sending}
                       disabled={!draft.trim() || sending || !windowOpen}
                       title={!windowOpen ? t('windowSendDisabled') : undefined}
+                      className="h-11 sm:h-9"
                     >
                       <Send className="h-3.5 w-3.5" aria-hidden="true" />
                       {sending ? t('sending') : t('send')}
