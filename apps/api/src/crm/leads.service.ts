@@ -8,13 +8,14 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { DistributionService } from '../distribution/distribution.service';
+import type { RoutingContext } from '../distribution/distribution.types';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PipelineService } from './pipeline.service';
 import { DEFAULT_STAGE_CODE, isSlaResetting, type ActivityType } from './pipeline.registry';
 import { normalizeE164WithDefault } from './phone.util';
 import { dayBoundsInTimezone } from './time.util';
-import { AssignmentService } from './assignment.service';
 import { SlaService } from './sla.service';
 import type {
   CreateLeadDto,
@@ -40,9 +41,21 @@ export class LeadsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
-    private readonly assignment: AssignmentService,
     private readonly sla: SlaService,
     private readonly tenantSettings: TenantSettingsService,
+    /**
+     * Phase 1A — A5 cutover. autoAssign() routes through this façade
+     * instead of consulting the legacy PL-3 JSONB column. AssignmentService
+     * dependency was removed — SLA breach + ingestion still use it
+     * directly via their own injection (cutover for those paths
+     * lands in a follow-up).
+     *
+     * @Optional so the existing test fixtures that built LeadsService
+     * pre-Phase-1A continue to compile. Tests that exercise
+     * autoAssign() MUST pass DistributionService — autoAssign throws
+     * a clear error when it's missing.
+     */
+    @Optional() private readonly distribution?: DistributionService,
     @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
@@ -399,12 +412,44 @@ export class LeadsService {
   }
 
   /**
-   * Auto-assign a lead via the round-robin AssignmentService. Returns the
-   * updated lead, or null when no eligible agent is available. Writes an
-   * `auto_assignment` activity and resets the SLA window for the new
-   * owner. No-op if the lead is already assigned to the picked agent.
+   * Auto-assign a lead via the Phase-1A distribution engine.
+   *
+   * Flow (post A5 cutover):
+   *   1. DistributionService.route() finds the matching rule (source ×
+   *      company × country), or falls back to the tenant's
+   *      default_strategy when none matches.
+   *   2. The candidate filter pipeline excludes the current assignee
+   *      and any user that fails availability / capacity / OOF /
+   *      team-membership checks (see candidate-filter.ts for the
+   *      exact ordering).
+   *   3. The chosen strategy (specific_user / round_robin / weighted /
+   *      capacity) picks one survivor.
+   *   4. A lead_routing_logs row is written by the orchestrator
+   *      INSIDE the same transaction — atomic with the lead update,
+   *      and ALWAYS written even when no eligible agent exists.
+   *   5. If a winner was picked, this method applies the decision:
+   *      lead.assignedToId update + activity row + SLA reset +
+   *      users.last_assigned_at bump (powers true round-robin).
+   *
+   * Returns the updated Lead, or null when no eligible agent exists
+   * (the lead is left unassigned and an audit row records why).
+   *
+   * Backward compatibility:
+   *   - The HTTP route POST /leads/:id/auto-assign is unchanged.
+   *   - The activity payload still carries `event='auto_assignment'`
+   *     and `strategy=...` — the strategy NAME changed
+   *     ('rule' → 'specific_user', 'round_robin' kept) but the field
+   *     name + presence is preserved.
+   *   - Source-based routing still works: the same source→user
+   *     intent is now expressed by a row in `distribution_rules`
+   *     (migration 0027 backfilled the legacy JSONB rules).
    */
   async autoAssign(id: string, actorUserId: string | null = null) {
+    if (!this.distribution) {
+      throw new Error(
+        'LeadsService.autoAssign requires DistributionService — wire it via DistributionModule (or pass it explicitly in tests).',
+      );
+    }
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
 
@@ -417,83 +462,74 @@ export class LeadsService {
 
     const settings = await this.tenantSettings.getCurrent();
 
-    // PL-3 — distribution rule consultation. If a rule names a user
-    // for this lead's source AND that user is currently eligible
-    // (active, sales-facing role, NOT the lead's current assignee),
-    // route the lead straight to them. Otherwise fall through to
-    // round-robin. The "is the user still eligible" check uses the
-    // same role list the round-robin picker enforces, so the rule
-    // can never escalate beyond what the picker would accept.
-    const ruled = settings.distributionRules.find((r) => r.source === before.source);
-    const excludeForRR = before.assignedToId ? [before.assignedToId] : [];
+    // Build the routing context for the engine. companyId / countryId
+    // are looked up via the lead's stage → pipeline → company/country.
+    // The lookup is a single tx-scoped read.
+    const routeCtx: RoutingContext = {
+      tenantId,
+      leadId: id,
+      source: before.source,
+      companyId: null,
+      countryId: null,
+      currentAssigneeId: before.assignedToId ?? null,
+    };
 
     const result = await this.prisma.withTenant(tenantId, async (tx) => {
-      let pickedId: string | null = null;
-      let strategy: 'rule' | 'round_robin' = 'round_robin';
+      // Resolve company / country from the lead's pipeline. NOT all
+      // pipelines have these set (manual create with the default
+      // pipeline), in which case the rule matcher treats them as
+      // wildcards via NULL.
+      const stageRow = await tx.pipelineStage.findUnique({
+        where: { id: before.stageId },
+        select: { pipeline: { select: { companyId: true, countryId: true } } },
+      });
+      routeCtx.companyId = stageRow?.pipeline?.companyId ?? null;
+      routeCtx.countryId = stageRow?.pipeline?.countryId ?? null;
 
-      if (ruled && ruled.assigneeUserId !== before.assignedToId) {
-        const candidate = await tx.user.findFirst({
-          where: {
-            id: ruled.assigneeUserId,
-            status: 'active',
-            role: { code: { in: [...AssignmentService.ELIGIBLE_ROLE_CODES] } },
-          },
-          select: { id: true },
-        });
-        if (candidate) {
-          // Apply the rule directly. We mirror the round-robin path's
-          // side-effects (lead.assignedToId update + audit activity)
-          // so the timeline reads identically regardless of strategy.
-          await tx.lead.update({
-            where: { id },
-            data: { assignedToId: candidate.id },
-          });
-          await tx.leadActivity.create({
-            data: {
-              tenantId,
-              leadId: id,
-              type: 'auto_assignment',
-              body: `Lead auto-assigned via distribution rule (source=${before.source})`,
-              payload: {
-                event: 'auto_assignment',
-                fromUserId: before.assignedToId ?? null,
-                strategy: 'rule',
-                source: before.source,
-              } as Prisma.InputJsonValue,
-              createdById: actorUserId,
-            },
-          });
-          pickedId = candidate.id;
-          strategy = 'rule';
-        }
-        // If the rule's user is no longer eligible (disabled / role
-        // changed), silently fall back to round-robin below.
+      // 1. Run the engine — writes lead_routing_logs row in this tx.
+      const decision = await this.distribution!.route(routeCtx, tx);
+
+      if (!decision.chosenUserId) {
+        // No eligible agent. Lead stays as-is. The log row is
+        // already persisted; the operator sees the exclusion
+        // reasons in /admin/distribution → Routing log.
+        return { lead: null, decision };
       }
 
-      if (!pickedId) {
-        pickedId = await this.assignment.assignLeadViaRoundRobin({
-          tx,
-          leadId: id,
+      const pickedId = decision.chosenUserId;
+
+      // 2. Apply the decision: lead.assignedToId + activity + SLA
+      //    reset + last_assigned_at bump (the round_robin clock).
+      await tx.lead.update({
+        where: { id },
+        data: { assignedToId: pickedId },
+      });
+      await tx.leadActivity.create({
+        data: {
           tenantId,
-          // Don't pick the current assignee — auto-assign is meaningful
-          // either when the lead is unassigned or as a manual rotation.
-          excludeUserIds: excludeForRR,
-          activityType: 'auto_assignment',
-          actorUserId,
-          body: 'Lead auto-assigned via round-robin',
+          leadId: id,
+          type: 'auto_assignment',
+          body: `Lead auto-assigned via ${decision.strategy}`,
           payload: {
             event: 'auto_assignment',
             fromUserId: before.assignedToId ?? null,
-            strategy: 'round_robin',
-          },
-        });
-      }
+            strategy: decision.strategy,
+            ruleId: decision.ruleId,
+            source: before.source,
+          } as Prisma.InputJsonValue,
+          createdById: actorUserId,
+        },
+      });
+      // Bump users.last_assigned_at so the next round_robin call sees
+      // the rotation advance. Cheap unconditional update — even
+      // strategies that don't consume the field benefit from accurate
+      // bookkeeping (so a future strategy switch works correctly).
+      await tx.user.update({
+        where: { id: pickedId },
+        data: { lastAssignedAt: new Date() },
+      });
 
-      if (!pickedId) {
-        return { lead: null, pickedId: null as string | null, strategy };
-      }
-
-      // Fresh SLA window for the new owner.
+      // 3. Fresh SLA window for the new owner.
       const lead = await tx.lead.update({
         where: { id },
         data: {
@@ -502,16 +538,16 @@ export class LeadsService {
         },
         include: { stage: true, captain: true },
       });
-      return { lead, pickedId, strategy };
+      return { lead, decision };
     });
 
-    // P3-02 — push to the new owner.
-    if (result.pickedId && this.realtime) {
+    // P3-02 — push to the new owner (best-effort; never blocks).
+    if (result.decision.chosenUserId && this.realtime) {
       try {
-        this.realtime.emitToUser(tenantId, result.pickedId, {
+        this.realtime.emitToUser(tenantId, result.decision.chosenUserId, {
           type: 'lead.assigned',
           leadId: id,
-          toUserId: result.pickedId,
+          toUserId: result.decision.chosenUserId,
           fromUserId: before.assignedToId ?? null,
           reason: 'auto',
         });

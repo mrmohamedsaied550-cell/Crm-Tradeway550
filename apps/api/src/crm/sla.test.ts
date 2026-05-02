@@ -123,7 +123,10 @@ describe('crm — response-SLA engine (C11)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
+    // A5 — LeadsService no longer takes AssignmentService directly;
+    // SLA tests don't exercise autoAssign, so DistributionService is
+    // omitted here too.
+    leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     const tenant = await prisma.tenant.upsert({

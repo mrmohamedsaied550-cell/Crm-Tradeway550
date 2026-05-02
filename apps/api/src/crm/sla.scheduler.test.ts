@@ -159,7 +159,10 @@ describe('crm — sla scheduler (C29)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     slaSvc = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, assignment, slaSvc, tenantSettings);
+    // A5 — LeadsService no longer takes AssignmentService directly;
+    // routing is delegated to DistributionService (not exercised by
+    // this scheduler test, so omitted).
+    leadsSvc = new LeadsService(prismaSvc, pipelineSvc, slaSvc, tenantSettings);
     scheduler = new SlaSchedulerService(prismaSvc, slaSvc);
   });
 

@@ -11,6 +11,14 @@ import { DistributionRulesService } from './rules.service';
 import { getStrategy } from './strategies';
 
 /**
+ * Stable namespace key for distribution advisory locks. Identical to
+ * the value AssignmentService used pre-cutover (C29) so a rolling
+ * deploy with both code paths active doesn't double-lock the same
+ * tenant under different namespaces.
+ */
+const DISTRIBUTION_LOCK_NAMESPACE = 91924245;
+
+/**
  * Phase 1A — A4: the distribution engine façade.
  *
  * One public method: `route(ctx, tx)` returns the routing decision
@@ -60,6 +68,14 @@ export class DistributionService {
     ctx: RoutingContext,
     tx: Prisma.TransactionClient,
   ): Promise<RoutingDecision> {
+    // Per-tenant advisory lock — held until the surrounding tx commits.
+    // Without it, two concurrent route() calls within the same tenant
+    // can both see "Alice has the lowest load" and both pick Alice,
+    // wrecking the distribution. The lock serialises route() within
+    // a tenant; concurrent routes for different tenants run in parallel.
+    // Same namespace as AssignmentService used pre-cutover.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${DISTRIBUTION_LOCK_NAMESPACE}::int, hashtext(${ctx.tenantId}))`;
+
     // 1. Match a rule (or fall back).
     const rule = await this.rules.findMatchingRule(ctx, tx);
     const strategyName: StrategyName = rule
