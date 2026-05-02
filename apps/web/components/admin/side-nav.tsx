@@ -19,6 +19,9 @@ import {
   Flag,
   MessagesSquare,
   MessageSquareDashed,
+  Megaphone,
+  Calendar,
+  Database,
   BarChart3,
   Settings,
   type LucideIcon,
@@ -42,9 +45,12 @@ interface NavItem {
     | 'competitions'
     | 'whatsapp'
     | 'whatsappTemplates'
+    | 'metaLeadSources'
     | 'reports'
     | 'audit'
-    | 'tenantSettings';
+    | 'tenantSettings'
+    | 'calendar'
+    | 'backup';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -82,6 +88,17 @@ const ITEMS: readonly NavItem[] = [
     icon: MessageSquareDashed,
     cap: 'whatsapp.template.read',
   },
+  // PL-2 + PL-4 — Meta lead-ad sources admin page (was backend-only).
+  {
+    href: '/admin/meta-lead-sources',
+    labelKey: 'metaLeadSources',
+    icon: Megaphone,
+    cap: 'meta.leadsource.read',
+  },
+  // PL-4 — Calendar lives at /agent/calendar but is useful to managers
+  // too; we link to the same surface from the admin sidebar so TLs and
+  // ops can see their team's follow-ups without bouncing into agent mode.
+  { href: '/agent/calendar', labelKey: 'calendar', icon: Calendar, cap: 'followup.read' },
   { href: '/admin/reports', labelKey: 'reports', icon: BarChart3, cap: 'report.read' },
   { href: '/admin/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit.read' },
   {
@@ -90,6 +107,10 @@ const ITEMS: readonly NavItem[] = [
     icon: Settings,
     cap: 'tenant.settings.read',
   },
+  // PL-4 — backup page (P3-07) was reachable only via direct URL.
+  // Capability is `tenant.export` (super_admin / ops_manager /
+  // account_manager only) so agents never see it.
+  { href: '/admin/backup', labelKey: 'backup', icon: Database, cap: 'tenant.export' },
 ];
 
 /**
