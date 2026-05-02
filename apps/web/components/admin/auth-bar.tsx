@@ -15,6 +15,7 @@ import {
   setCachedMe,
   type MeCache,
 } from '@/lib/auth';
+import { closeRealtime } from '@/lib/realtime';
 
 /**
  * Admin auth bar.
@@ -80,6 +81,10 @@ export function AuthBar(): JSX.Element {
   }, []);
 
   function onSignOut(): void {
+    // P3-02 — close the realtime channel so the next user that signs in
+    // doesn't reuse the previous user's stream (which is about to start
+    // returning 401s).
+    closeRealtime();
     clearAuth();
     setMe(null);
     setHasToken(false);

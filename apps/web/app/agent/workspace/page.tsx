@@ -31,6 +31,7 @@ import type {
   SlaStatus,
 } from '@/lib/api-types';
 import { getCachedMe } from '@/lib/auth';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -149,6 +150,16 @@ export default function AgentWorkspacePage(): JSX.Element {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // P3-02 — refresh the worklist when the API tells us this user just
+  // got a new lead assigned (manual / round-robin / SLA reassignment).
+  // The reload is cheap; no debounce needed because the server only
+  // emits when something actually changed.
+  useRealtime('lead.assigned', (event) => {
+    if (!meId) return;
+    if (event.toUserId !== meId) return;
+    void reload();
+  });
 
   const stageOptions = useMemo(() => stages, [stages]);
 

@@ -26,6 +26,7 @@ import type {
   WhatsAppMessage,
   WhatsAppTemplateRow,
 } from '@/lib/api-types';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 /**
@@ -212,6 +213,19 @@ export default function InboxPage(): JSX.Element {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length]);
+
+  // P3-02 — live updates. On every `whatsapp.message`:
+  //   - always refresh the conversation list (lastMessageAt + preview),
+  //   - if the event is for the currently-open conversation, refresh
+  //     its messages too.
+  // The list also keeps refreshing on a 30-s poll elsewhere if SSE is
+  // unreachable, so this hook is purely a latency optimisation.
+  useRealtime('whatsapp.message', (event) => {
+    void reloadList();
+    if (selectedId && event.conversationId === selectedId) {
+      void reloadMessages(selectedId);
+    }
+  });
 
   const selected = useMemo(
     () => conversations.find((c) => c.id === selectedId) ?? null,

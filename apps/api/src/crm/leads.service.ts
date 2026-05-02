@@ -3,9 +3,11 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PipelineService } from './pipeline.service';
@@ -33,6 +35,7 @@ export class LeadsService {
     private readonly assignment: AssignmentService,
     private readonly sla: SlaService,
     private readonly tenantSettings: TenantSettingsService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -312,12 +315,12 @@ export class LeadsService {
     }
 
     const settings = await this.tenantSettings.getCurrent();
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       // Reassignment counts as an SLA-resetting event so the new owner
       // gets a full window. We skip the reset when the lead is in a
       // terminal stage (SLA stays paused).
       const inTerminal = before.stage.isTerminal;
-      const updated = await tx.lead.update({
+      const row = await tx.lead.update({
         where: { id },
         data: {
           assignedToId: assigneeUserId,
@@ -341,8 +344,25 @@ export class LeadsService {
         },
         createdById: actorUserId,
       });
-      return updated;
+      return row;
     });
+
+    // P3-02 — push the new owner so their workspace lights up the
+    // lead immediately. Skipped on unassign (no recipient).
+    if (assigneeUserId && this.realtime) {
+      try {
+        this.realtime.emitToUser(tenantId, assigneeUserId, {
+          type: 'lead.assigned',
+          leadId: id,
+          toUserId: assigneeUserId,
+          fromUserId: before.assignedToId ?? null,
+          reason: 'manual',
+        });
+      } catch {
+        /* swallowed — best-effort push */
+      }
+    }
+    return updated;
   }
 
   /**
@@ -363,7 +383,7 @@ export class LeadsService {
     }
 
     const settings = await this.tenantSettings.getCurrent();
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const result = await this.prisma.withTenant(tenantId, async (tx) => {
       const pickedId = await this.assignment.assignLeadViaRoundRobin({
         tx,
         leadId: id,
@@ -382,11 +402,11 @@ export class LeadsService {
       });
 
       if (!pickedId) {
-        return null;
+        return { lead: null, pickedId: null as string | null };
       }
 
       // Fresh SLA window for the new owner.
-      return tx.lead.update({
+      const lead = await tx.lead.update({
         where: { id },
         data: {
           slaDueAt: this.sla.computeDueAt(new Date(), settings.slaMinutes),
@@ -394,7 +414,24 @@ export class LeadsService {
         },
         include: { stage: true, captain: true },
       });
+      return { lead, pickedId };
     });
+
+    // P3-02 — push to the new owner.
+    if (result.pickedId && this.realtime) {
+      try {
+        this.realtime.emitToUser(tenantId, result.pickedId, {
+          type: 'lead.assigned',
+          leadId: id,
+          toUserId: result.pickedId,
+          fromUserId: before.assignedToId ?? null,
+          reason: 'auto',
+        });
+      } catch {
+        /* swallowed — best-effort push */
+      }
+    }
+    return result.lead;
   }
 
   // ───────────────────────────────────────────────────────────────────────

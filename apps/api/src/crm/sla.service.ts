@@ -2,6 +2,7 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
@@ -50,6 +51,9 @@ export class SlaService {
     // also wiring TenantSettingsService. Production wiring always
     // supplies it via the global TenantsModule.
     @Optional() private readonly tenantSettings?: TenantSettingsService,
+    // P3-02 — optional so tests don't need to wire the realtime
+    // module to exercise breach reassignment.
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -295,7 +299,28 @@ export class SlaService {
         };
       });
 
-      if (result) results.push(result);
+      if (result) {
+        results.push(result);
+        // P3-02 — fire a `lead.assigned` event for successful breach
+        // reassignments so the new owner's workspace lights up the
+        // lead immediately. Notifications already emit a separate
+        // `notification.created` for the bell — this one is for the
+        // leads list itself. Skipped on no_eligible_agent /
+        // unassigned_breached because nothing changed for any user.
+        if (this.realtime && result.outcome === 'reassigned' && result.toUserId) {
+          try {
+            this.realtime.emitToUser(tenantId, result.toUserId, {
+              type: 'lead.assigned',
+              leadId: result.leadId,
+              toUserId: result.toUserId,
+              fromUserId: result.fromUserId,
+              reason: 'sla_breach',
+            });
+          } catch {
+            /* swallowed — best-effort push */
+          }
+        }
+      }
     }
 
     if (results.length > 0) {
