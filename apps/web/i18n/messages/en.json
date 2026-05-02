@@ -350,6 +350,55 @@
       "movedTo": "Moved to {stage}",
       "moveFailed": "Move failed"
     },
+    "metaLeadSources": {
+      "title": "Meta lead sources",
+      "subtitle": "Map Meta lead-ad pages and forms onto CRM lead fields. The public webhook reads this list at ingest time.",
+      "webhookHint": "Point the Meta lead-gen webhook at /api/v1/webhooks/meta/leadgen — each Page must use the verify token configured below.",
+      "newButton": "New source",
+      "newTitle": "New Meta lead source",
+      "editTitle": "Edit Meta lead source",
+      "edit": "Edit",
+      "empty": "No Meta lead sources yet",
+      "emptyHint": "Add one for each Meta Page (and optionally a single form) so inbound leads land in the CRM.",
+      "created": "Meta lead source created.",
+      "updated": "Meta lead source updated.",
+      "deleted": "Meta lead source deleted.",
+      "confirmDelete": "Delete \"{name}\"? Inbound leads from this Page will stop ingesting.",
+      "cols": {
+        "name": "Name",
+        "pageIdLabel": "Page",
+        "formIdLabel": "Form",
+        "source": "Lead source",
+        "mapping": "Mapping",
+        "mappingFields": "fields",
+        "status": "Status",
+        "active": "Active",
+        "inactive": "Inactive"
+      },
+      "form": {
+        "displayName": "Display name",
+        "displayNamePlaceholder": "Egypt — Captain acquisition page",
+        "pageId": "Meta Page ID",
+        "pageIdHint": "Numeric ID from the Page's About → Page Transparency.",
+        "formId": "Meta Form ID (optional)",
+        "formIdHint": "Restrict to one form on the page; leave empty to accept all forms.",
+        "verifyToken": "Verify token",
+        "verifyTokenHint": "Random shared secret you also paste into Meta's webhook config.",
+        "verifyTokenEditHint": "Leave blank to keep the current token.",
+        "appSecret": "App secret (optional)",
+        "appSecretHint": "When set, the webhook signature is verified with HMAC-SHA256.",
+        "appSecretEditHint": "Leave blank to keep the current secret.",
+        "defaultSource": "Default lead source label",
+        "fieldMapping": "Field mapping (JSON)",
+        "fieldMappingHint": "Maps Meta field names → CRM lead fields. Required targets: name, phone. Optional: email.",
+        "isActive": "Active — receive new leads"
+      },
+      "errors": {
+        "mappingInvalid": "Field mapping must be valid JSON: an object of string → string.",
+        "mappingMissingTargets": "Field mapping must define at least one entry pointing to \"name\" and one to \"phone\".",
+        "verifyTokenRequired": "Verify token is required when creating a new source."
+      }
+    },
     "whatsappTemplates": {
       "title": "WhatsApp templates",
       "subtitle": "Meta-approved templates the agent picker uses to start or re-open conversations.",

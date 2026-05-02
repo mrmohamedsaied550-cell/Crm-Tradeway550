@@ -350,6 +350,55 @@
       "movedTo": "تم النقل إلى {stage}",
       "moveFailed": "فشل النقل"
     },
+    "metaLeadSources": {
+      "title": "مصادر إعلانات Meta",
+      "subtitle": "ربط صفحات ونماذج Meta بحقول العميل في CRM. يقرأ الـ webhook العام من هذه القائمة عند الاستيعاب.",
+      "webhookHint": "وجّه webhook الخاص بـ Meta lead-gen إلى /api/v1/webhooks/meta/leadgen — كل صفحة يجب أن تستخدم رمز التحقق المُعرَّف هنا.",
+      "newButton": "مصدر جديد",
+      "newTitle": "مصدر Meta جديد",
+      "editTitle": "تعديل مصدر Meta",
+      "edit": "تعديل",
+      "empty": "لا توجد مصادر Meta بعد",
+      "emptyHint": "أضف مصدراً لكل صفحة Meta (واختياري نموذج محدد) لتصل العملاء إلى CRM.",
+      "created": "تم إنشاء مصدر Meta.",
+      "updated": "تم تحديث مصدر Meta.",
+      "deleted": "تم حذف مصدر Meta.",
+      "confirmDelete": "حذف \"{name}\"؟ ستتوقف العملاء الجدد من هذه الصفحة.",
+      "cols": {
+        "name": "الاسم",
+        "pageIdLabel": "الصفحة",
+        "formIdLabel": "النموذج",
+        "source": "مصدر العميل",
+        "mapping": "الربط",
+        "mappingFields": "حقل",
+        "status": "الحالة",
+        "active": "نشط",
+        "inactive": "متوقف"
+      },
+      "form": {
+        "displayName": "الاسم المعروض",
+        "displayNamePlaceholder": "مصر — صفحة جذب الكباتن",
+        "pageId": "معرّف صفحة Meta",
+        "pageIdHint": "المعرّف الرقمي من About → Page Transparency للصفحة.",
+        "formId": "معرّف نموذج Meta (اختياري)",
+        "formIdHint": "حصر النشاط في نموذج واحد؛ اتركه فارغاً لقبول جميع النماذج.",
+        "verifyToken": "رمز التحقق",
+        "verifyTokenHint": "سرّ مشترك تضعه أيضاً في إعدادات webhook على Meta.",
+        "verifyTokenEditHint": "اترك فارغاً للإبقاء على الرمز الحالي.",
+        "appSecret": "App secret (اختياري)",
+        "appSecretHint": "عند التعيين يتم التحقق من توقيع الـ webhook بـ HMAC-SHA256.",
+        "appSecretEditHint": "اترك فارغاً للإبقاء على السر الحالي.",
+        "defaultSource": "تصنيف مصدر العميل الافتراضي",
+        "fieldMapping": "ربط الحقول (JSON)",
+        "fieldMappingHint": "يربط حقول Meta بحقول العميل في CRM. الأهداف المطلوبة: name وphone. اختياري: email.",
+        "isActive": "نشط — استقبال العملاء الجدد"
+      },
+      "errors": {
+        "mappingInvalid": "ربط الحقول يجب أن يكون JSON صالح بصيغة كائن نصّي → نصّي.",
+        "mappingMissingTargets": "يجب أن يحدّد ربط الحقول مدخلاً واحداً على الأقل يشير إلى \"name\" وآخر إلى \"phone\".",
+        "verifyTokenRequired": "رمز التحقق مطلوب عند إنشاء مصدر جديد."
+      }
+    },
     "whatsappTemplates": {
       "title": "قوالب واتساب",
       "subtitle": "القوالب المعتمدة من Meta التي يستخدمها الوكيل لبدء أو إعادة فتح المحادثات.",
