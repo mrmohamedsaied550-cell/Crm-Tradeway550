@@ -660,6 +660,24 @@
       "heading": "Agent shell",
       "body": "C4 ships only the surface. The WhatsApp Inbox, Lead detail, and Performance views land in Phase 1.5 (W1–W12)."
     },
+    "calendar": {
+      "title": "Follow-up calendar",
+      "subtitle": "Every scheduled call, WhatsApp and visit, laid out by day.",
+      "open": "Open calendar",
+      "prev": "Previous month",
+      "next": "Next month",
+      "today": "Today",
+      "allAssignees": "All assignees",
+      "more": "more",
+      "dayTitle": "{date}",
+      "pickADay": "Pick a day",
+      "pickADayHint": "Select a day on the grid to see its follow-ups.",
+      "emptyDay": "Nothing scheduled",
+      "emptyDayHint": "No follow-ups land on this day.",
+      "openLead": "Open lead",
+      "complete": "Complete",
+      "done": "Done"
+    },
     "workspace": {
       "title": "My Leads",
       "subtitle": "Leads currently assigned to you. Update stage, log a note, schedule the next action.",

@@ -954,6 +954,17 @@ export const followUpsApi = {
   mine: (
     query: { status?: 'pending' | 'overdue' | 'done' | 'all'; limit?: number } = {},
   ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/mine', { query }),
+  /**
+   * P3-04 — calendar feed. `from` and `to` are ISO datetimes; `mine`
+   * defaults to '1' (caller only). The web calendar passes the
+   * month-grid bounds as the window.
+   */
+  calendar: (query: {
+    from: string;
+    to: string;
+    mine?: '0' | '1';
+    limit?: number;
+  }): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/calendar', { query }),
   listForLead: (leadId: string): Promise<LeadFollowUp[]> =>
     apiFetch<LeadFollowUp[]>(`/leads/${leadId}/follow-ups`),
   create: (leadId: string, input: CreateFollowUpInput): Promise<LeadFollowUp> =>

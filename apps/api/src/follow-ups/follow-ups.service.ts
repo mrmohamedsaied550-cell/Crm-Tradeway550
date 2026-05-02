@@ -5,7 +5,11 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
-import type { CreateFollowUpDto, ListMyFollowUpsQueryDto } from './follow-up.dto';
+import type {
+  CalendarFollowUpsQueryDto,
+  CreateFollowUpDto,
+  ListMyFollowUpsQueryDto,
+} from './follow-up.dto';
 
 @Injectable()
 export class FollowUpsService {
@@ -53,6 +57,35 @@ export class FollowUpsService {
         orderBy: [{ completedAt: 'asc' }, { dueAt: 'asc' }],
       });
     });
+  }
+
+  /**
+   * P3-04 — month/week calendar feed. Returns every follow-up
+   * (pending OR completed) inside `[from, to]` for the calling user
+   * by default, or for the entire tenant when the caller requested
+   * `mine='0'` (the controller already gated that on a manage
+   * capability). Joins the lead's name + phone so the calendar can
+   * label each event without an extra round-trip.
+   */
+  async listInRange(
+    callingUserId: string,
+    query: CalendarFollowUpsQueryDto & { allowAllAssignees: boolean },
+  ) {
+    const tenantId = requireTenantId();
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    const restrictToCaller = query.mine === '1' || !query.allowAllAssignees;
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.leadFollowUp.findMany({
+        where: {
+          dueAt: { gte: from, lte: to },
+          ...(restrictToCaller && { assignedToId: callingUserId }),
+        },
+        orderBy: [{ dueAt: 'asc' }],
+        take: query.limit,
+        include: { lead: { select: { id: true, name: true, phone: true } } },
+      }),
+    );
   }
 
   async listMine(userId: string, query: ListMyFollowUpsQueryDto) {
