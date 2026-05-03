@@ -38,7 +38,14 @@ export class PipelineService {
       return tx.pipelineStage.findMany({
         where: { pipelineId },
         orderBy: { order: 'asc' },
-        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          terminalKind: true,
+        },
       });
     });
   }
@@ -59,7 +66,14 @@ export class PipelineService {
       const pipelineId = await this.findDefaultPipelineIdInTx(tx);
       return tx.pipelineStage.findUnique({
         where: { pipelineId_code: { pipelineId, code } },
-        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          terminalKind: true,
+        },
       });
     });
     if (!row) {

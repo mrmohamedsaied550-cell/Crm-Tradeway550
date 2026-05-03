@@ -38,6 +38,14 @@ export const UpdatePipelineSchema = z
   .strict();
 export type UpdatePipelineDto = z.infer<typeof UpdatePipelineSchema>;
 
+/**
+ * Phase A — A6: stages can declare a `terminalKind` (won / lost /
+ * none). Drives `Lead.lifecycleState` on stage moves. Service
+ * enforces: only terminal stages may have a non-null terminalKind;
+ * passing terminalKind on a non-terminal stage is a 400.
+ */
+const terminalKind = z.enum(['won', 'lost']).nullable();
+
 export const CreateStageSchema = z
   .object({
     code,
@@ -45,6 +53,7 @@ export const CreateStageSchema = z
     /** Optional explicit order; service appends to the end if omitted. */
     order: z.number().int().min(0).max(100_000).optional(),
     isTerminal: z.boolean().default(false),
+    terminalKind: terminalKind.optional(),
   })
   .strict();
 export type CreateStageDto = z.infer<typeof CreateStageSchema>;
@@ -53,6 +62,7 @@ export const UpdateStageSchema = z
   .object({
     name: name.optional(),
     isTerminal: z.boolean().optional(),
+    terminalKind: terminalKind.optional(),
   })
   .strict();
 export type UpdateStageDto = z.infer<typeof UpdateStageSchema>;

@@ -25,15 +25,26 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select, Textarea } from '@/components/ui/input';
+import { LifecycleBadge } from '@/components/ui/lifecycle-badge';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, leadsApi, pipelineApi, pipelinesApi, teamsApi, usersApi } from '@/lib/api';
+import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
+import {
+  ApiError,
+  leadsApi,
+  lostReasonsApi,
+  pipelineApi,
+  pipelinesApi,
+  teamsApi,
+  usersApi,
+} from '@/lib/api';
 import type {
   AdminUser,
   Lead,
   LeadActivity,
   LeadActivityType,
   LeadStageCode,
+  LostReason,
   PipelineStage,
   SlaStatus,
   Team,
@@ -135,6 +146,9 @@ export default function LeadDetailPage(): JSX.Element {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  // Phase A — A6: lost reasons cached for label resolution + the
+  // lost-reason modal's picker (passed in to skip its own fetch).
+  const [lostReasons, setLostReasons] = useState<LostReason[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -152,18 +166,29 @@ export default function LeadDetailPage(): JSX.Element {
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [stageMenuOpen, setStageMenuOpen] = useState<boolean>(false);
 
+  // Phase A — A6: lost-reason modal state. The modal opens whenever
+  // the agent picks a stage with `terminalKind === 'lost'`; the
+  // pending stage is held here so the moveStage call can fire after
+  // the modal returns the chosen reason.
+  const [lostModalOpen, setLostModalOpen] = useState<boolean>(false);
+  const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
+
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const [l, acts, usrs, tms] = await Promise.all([
+      const [l, acts, usrs, tms, lr] = await Promise.all([
         leadsApi.get(id),
         leadsApi.listActivities(id),
         usersApi
           .list({ limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
         teamsApi.list().catch(() => [] as Team[]),
+        // Phase A — A6: lost reasons cached on the page so the
+        // "Lost reason" panel can resolve labels without a per-render
+        // fetch + the modal can re-use the same list.
+        lostReasonsApi.listActive().catch(() => [] as LostReason[]),
       ]);
       // Phase 1B — load stages from the LEAD'S OWN pipeline, not the
       // tenant default. Custom pipelines define their own stages;
@@ -178,6 +203,7 @@ export default function LeadDetailPage(): JSX.Element {
       setStages(st);
       setUsers(usrs.items);
       setTeams(tms);
+      setLostReasons(lr);
       setAssigneeId(l.assignedToId ?? '');
       setStageCode(l.stage.code);
     } catch (err) {
@@ -194,6 +220,9 @@ export default function LeadDetailPage(): JSX.Element {
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const teamById = useMemo(() => new Map(teams.map((tm) => [tm.id, tm])), [teams]);
   const stageByCode = useMemo(() => new Map(stages.map((s) => [s.code, s])), [stages]);
+  // Phase A — A6: id → reason lookup for the "Lost reason" panel on
+  // the profile card. Cheap O(1) reads inside render.
+  const lostReasonsById = useMemo(() => new Map(lostReasons.map((r) => [r.id, r])), [lostReasons]);
   const activeUsers = useMemo(() => users.filter((u) => u.status === 'active'), [users]);
 
   const stageLabel = useCallback(
@@ -229,16 +258,37 @@ export default function LeadDetailPage(): JSX.Element {
     }
   }
 
-  async function onMoveStage(): Promise<void> {
-    if (!lead || !stageCode) return;
-    // Phase 1B — prefer the stage UUID; we have the full row from the
-    // pipeline-stages query. Falls back to code if the row isn't found
-    // (shouldn't happen in practice but keeps the flow resilient).
-    const target = stageByCode.get(stageCode);
+  /**
+   * Phase A — A6: shared move helper. If the target stage's
+   * `terminalKind === 'lost'`, opens the lost-reason modal and
+   * defers the API call until the agent picks a reason. Otherwise
+   * fires moveStage immediately. `lostExtras` carries the reason
+   * payload on the second pass; first-pass calls omit it.
+   */
+  async function performMoveStage(
+    targetStageCode: string,
+    lostExtras?: LostReasonResult,
+  ): Promise<void> {
+    if (!lead) return;
+    const target = stageByCode.get(targetStageCode);
+    // Lost-stage gating: only intercept the FIRST call (no
+    // lostExtras yet). The second call carries lostExtras and goes
+    // straight through.
+    if (target?.terminalKind === 'lost' && !lostExtras) {
+      setPendingLostStageId(target.id);
+      setLostModalOpen(true);
+      return;
+    }
     setActionPending('stage');
     setError(null);
     try {
-      await leadsApi.moveStage(lead.id, target ? { pipelineStageId: target.id } : { stageCode });
+      await leadsApi.moveStage(lead.id, {
+        ...(target ? { pipelineStageId: target.id } : { stageCode: targetStageCode }),
+        ...(lostExtras && {
+          lostReasonId: lostExtras.lostReasonId,
+          ...(lostExtras.lostNote && { lostNote: lostExtras.lostNote }),
+        }),
+      });
       setNotice(tCommon('saved'));
       await reload();
     } catch (err) {
@@ -246,6 +296,11 @@ export default function LeadDetailPage(): JSX.Element {
     } finally {
       setActionPending(null);
     }
+  }
+
+  async function onMoveStage(): Promise<void> {
+    if (!stageCode) return;
+    await performMoveStage(stageCode);
   }
 
   /**
@@ -258,21 +313,31 @@ export default function LeadDetailPage(): JSX.Element {
     if (!lead || code === lead.stage.code) return;
     setStageMenuOpen(false);
     setStageCode(code);
-    setActionPending('stage');
-    setError(null);
-    const target = stageByCode.get(code);
-    try {
-      await leadsApi.moveStage(
-        lead.id,
-        target ? { pipelineStageId: target.id } : { stageCode: code },
-      );
-      setNotice(tCommon('saved'));
-      await reload();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setActionPending(null);
-    }
+    await performMoveStage(code);
+  }
+
+  /**
+   * Phase A — A6: called by the lost-reason modal once the agent
+   * picks a reason. Replays the stage move with the reason payload.
+   */
+  async function onLostReasonConfirm(result: LostReasonResult): Promise<void> {
+    const stageId = pendingLostStageId;
+    if (!stageId) return;
+    // Find the matching stage by id (the helper expects a code).
+    const target = stages.find((s) => s.id === stageId);
+    if (!target) return;
+    setLostModalOpen(false);
+    setPendingLostStageId(null);
+    await performMoveStage(target.code, result);
+  }
+
+  function onLostReasonCancel(): void {
+    setLostModalOpen(false);
+    setPendingLostStageId(null);
+    // Restore the sidebar dropdown to the lead's actual current
+    // stage so the user isn't stuck with the lost stage selected
+    // but no move performed.
+    if (lead) setStageCode(lead.stage.code);
   }
 
   /**
@@ -384,6 +449,12 @@ export default function LeadDetailPage(): JSX.Element {
         title={lead.name}
         actions={
           <div className="flex items-center gap-2">
+            {/* Phase A — A6: lifecycle classifier sits next to stage
+                + SLA so a glance tells you "this lead is open / won
+                / lost / archived". Using the standalone badge means
+                future surfaces (Kanban card, list row) can drop it
+                in without re-deriving the tone. */}
+            <LifecycleBadge state={lead.lifecycleState} />
             <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
             <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
             {isConverted ? (
@@ -512,6 +583,27 @@ export default function LeadDetailPage(): JSX.Element {
             <span className="text-sm text-ink-tertiary">{tDetail('captainNotYet')}</span>
           )}
         </ProfileField>
+
+        {/* Phase A — A6: surface the lost reason + optional note when
+            the lead is in the lost lifecycle. The reason name comes
+            from the lookup map; the note is free text the agent left
+            at the time of the move. */}
+        {lead.lifecycleState === 'lost' && lead.lostReasonId ? (
+          <ProfileField label={tDetail('lostReasonLabel')}>
+            <div className="flex flex-col leading-tight">
+              <span className="text-sm font-medium text-ink-primary">
+                {lostReasonsById.get(lead.lostReasonId)
+                  ? locale === 'ar'
+                    ? lostReasonsById.get(lead.lostReasonId)!.labelAr
+                    : lostReasonsById.get(lead.lostReasonId)!.labelEn
+                  : '—'}
+              </span>
+              {lead.lostNote ? (
+                <span className="mt-0.5 text-xs text-ink-tertiary">{lead.lostNote}</span>
+              ) : null}
+            </div>
+          </ProfileField>
+        ) : null}
 
         <ProfileField label={tDetail('createdLabel')}>
           <span className="text-sm text-ink-secondary">{createdAtRelative}</span>
@@ -693,6 +785,18 @@ export default function LeadDetailPage(): JSX.Element {
           </section>
         </aside>
       </div>
+
+      {/* Phase A — A6: lost-reason modal. Opens when the agent
+          picks a stage with terminalKind='lost'. The modal returns
+          { lostReasonId, lostNote? } via onConfirm; we replay the
+          stage move with that payload. */}
+      <LostReasonModal
+        open={lostModalOpen}
+        leadName={lead.name}
+        reasons={lostReasons}
+        onConfirm={onLostReasonConfirm}
+        onClose={onLostReasonCancel}
+      />
     </div>
   );
 }

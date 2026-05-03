@@ -88,7 +88,14 @@ export class PipelinesController {
       const stages = await tx.pipelineStage.findMany({
         where: { pipelineId: pipeline.id },
         orderBy: { order: 'asc' },
-        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          terminalKind: true,
+        },
       });
       return { pipeline, stages };
     });
@@ -109,7 +116,14 @@ export class PipelinesController {
       tx.pipelineStage.findMany({
         where: { pipelineId: id },
         orderBy: { order: 'asc' },
-        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          terminalKind: true,
+        },
       }),
     );
   }

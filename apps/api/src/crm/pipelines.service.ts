@@ -230,6 +230,17 @@ export class PipelinesService {
               _max: { order: true },
             })
           )._max.order ?? 0) + 10;
+        // Phase A — A6: terminalKind only valid on terminal stages.
+        // Reject non-null terminalKind on a non-terminal stage so the
+        // schema invariant ("a non-terminal stage cannot be 'won' or
+        // 'lost'") is enforced at every write site.
+        const terminalKind = dto.terminalKind === undefined ? null : dto.terminalKind;
+        if (!dto.isTerminal && terminalKind !== null) {
+          throw new BadRequestException({
+            code: 'pipeline.stage.terminal_kind_requires_terminal',
+            message: 'terminalKind can only be set on a terminal stage (isTerminal=true)',
+          });
+        }
         const stage = await tx.pipelineStage.create({
           data: {
             tenantId,
@@ -238,6 +249,7 @@ export class PipelinesService {
             name: dto.name,
             order,
             isTerminal: dto.isTerminal,
+            terminalKind,
           },
         });
         await this.audit.writeInTx(tx, tenantId, {
@@ -293,11 +305,28 @@ export class PipelinesService {
           message: `Stage ${stageId} not found in pipeline ${pipelineId}`,
         });
       }
+      // Phase A — A6: same invariant as create. The merged shape
+      // (existing + patch) must be: terminalKind=null OR
+      // isTerminal=true. When the patch flips isTerminal=false,
+      // any existing or incoming terminalKind is forced to null.
+      const mergedIsTerminal = dto.isTerminal ?? before.isTerminal;
+      const mergedTerminalKind =
+        dto.terminalKind !== undefined ? dto.terminalKind : before.terminalKind;
+      if (!mergedIsTerminal && mergedTerminalKind !== null) {
+        throw new BadRequestException({
+          code: 'pipeline.stage.terminal_kind_requires_terminal',
+          message: 'terminalKind can only be set on a terminal stage (isTerminal=true)',
+        });
+      }
       const updated = await tx.pipelineStage.update({
         where: { id: stageId },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
           ...(dto.isTerminal !== undefined && { isTerminal: dto.isTerminal }),
+          ...(dto.terminalKind !== undefined && { terminalKind: dto.terminalKind }),
+          // If the patch made the stage non-terminal, defensively
+          // null out terminalKind even if the caller didn't pass it.
+          ...(dto.isTerminal === false && dto.terminalKind === undefined && { terminalKind: null }),
         },
       });
       await this.audit.writeInTx(tx, tenantId, {

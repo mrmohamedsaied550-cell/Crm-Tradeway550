@@ -76,6 +76,13 @@ export interface PipelineStage {
   name: string;
   order: number;
   isTerminal: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Drives `Lead.lifecycleState` on stage moves. Returned by every
+   * stage-lookup endpoint (resolve / stagesOf / list) so the lead
+   * detail page can detect lost-stage moves and prompt for a reason.
+   */
+  terminalKind: 'won' | 'lost' | null;
 }
 
 /**
@@ -215,6 +222,15 @@ export interface Lead {
    * very old rows that pre-date A1.
    */
   attribution: AttributionPayload | null;
+  /**
+   * Phase A — lifecycle classifier derived from the lead's current
+   * stage's `terminalKind`. Single source of truth for "is this lead
+   * in the funnel, won, lost, or archived?"
+   */
+  lifecycleState: LeadLifecycleState;
+  /** Phase A — required when lifecycleState='lost'. */
+  lostReasonId: string | null;
+  lostNote: string | null;
   /**
    * Phase 1B — explicit (company × country) scope on the lead.
    * Both nullable: when missing the lead runs on the tenant default
@@ -537,9 +553,36 @@ export interface PipelineStageRow {
   name: string;
   order: number;
   isTerminal: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Drives `Lead.lifecycleState` on stage moves. NULL on
+   * non-terminal stages and on terminal stages that are neither
+   * (admin-configurable via Pipeline Builder).
+   */
+  terminalKind: 'won' | 'lost' | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Phase A — A6: per-tenant rejection-reason catalogue. Populated by
+ * the seed; admins edit via /admin/lost-reasons. The 'other' code is
+ * protected from deactivation.
+ */
+export interface LostReason {
+  id: string;
+  tenantId: string;
+  code: string;
+  labelEn: string;
+  labelAr: string;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Phase A — A6: lead lifecycle classifier. Computed from stage.terminalKind. */
+export type LeadLifecycleState = 'open' | 'won' | 'lost' | 'archived';
 
 // ───── Meta lead-ad sources (P2-06) ─────
 

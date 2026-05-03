@@ -55,15 +55,26 @@ export default function PipelineBuilderPage(): JSX.Element {
     code: string;
     name: string;
     isTerminal: boolean;
-  }>({ code: '', name: '', isTerminal: false });
+    /**
+     * Phase A — A6: terminalKind ∈ { 'won', 'lost', null }. Server
+     * rejects non-null when isTerminal=false; the UI mirrors the
+     * invariant by clearing the field whenever isTerminal flips off.
+     */
+    terminalKind: '' | 'won' | 'lost';
+  }>({ code: '', name: '', isTerminal: false, terminalKind: '' });
   const [stageErr, setStageErr] = useState<string | null>(null);
   const [savingStage, setSavingStage] = useState<boolean>(false);
 
   // Inline-edit state for an existing stage.
   const [editingStageId, setEditingStageId] = useState<string | null>(null);
-  const [editStageForm, setEditStageForm] = useState<{ name: string; isTerminal: boolean }>({
+  const [editStageForm, setEditStageForm] = useState<{
+    name: string;
+    isTerminal: boolean;
+    terminalKind: '' | 'won' | 'lost';
+  }>({
     name: '',
     isTerminal: false,
+    terminalKind: '',
   });
 
   // Inline-edit state for the pipeline name itself.
@@ -194,7 +205,7 @@ export default function PipelineBuilderPage(): JSX.Element {
   // ─────── stage CRUD ───────
 
   function openAddStage(): void {
-    setStageForm({ code: '', name: '', isTerminal: false });
+    setStageForm({ code: '', name: '', isTerminal: false, terminalKind: '' });
     setStageErr(null);
     setStageDialog(true);
   }
@@ -209,6 +220,13 @@ export default function PipelineBuilderPage(): JSX.Element {
         code: stageForm.code.trim(),
         name: stageForm.name.trim(),
         isTerminal: stageForm.isTerminal,
+        // Phase A — A6: only forward terminalKind on terminal stages.
+        // Sending a non-null value for a non-terminal stage would be
+        // rejected server-side; the form already clears the field
+        // when the checkbox flips off, but the guard is cheap.
+        ...(stageForm.isTerminal && stageForm.terminalKind
+          ? { terminalKind: stageForm.terminalKind }
+          : {}),
       });
       setStageDialog(false);
       setNotice(tCommon('created'));
@@ -222,7 +240,11 @@ export default function PipelineBuilderPage(): JSX.Element {
 
   function openEditStage(stage: PipelineStageRow): void {
     setEditingStageId(stage.id);
-    setEditStageForm({ name: stage.name, isTerminal: stage.isTerminal });
+    setEditStageForm({
+      name: stage.name,
+      isTerminal: stage.isTerminal,
+      terminalKind: stage.terminalKind ?? '',
+    });
   }
 
   async function onSaveStage(stageId: string): Promise<void> {
@@ -231,6 +253,11 @@ export default function PipelineBuilderPage(): JSX.Element {
       await pipelinesApi.updateStage(detail.id, stageId, {
         name: editStageForm.name.trim(),
         isTerminal: editStageForm.isTerminal,
+        // Phase A — A6: explicit terminalKind write-through.
+        // When isTerminal flips off in the patch, send `null` to
+        // clear any existing classifier so the server invariant
+        // (non-terminal ⇒ terminalKind null) holds.
+        terminalKind: editStageForm.isTerminal ? editStageForm.terminalKind || null : null,
       });
       setEditingStageId(null);
       setNotice(tCommon('saved'));
@@ -447,11 +474,37 @@ export default function PipelineBuilderPage(): JSX.Element {
                                     setEditStageForm((f) => ({
                                       ...f,
                                       isTerminal: e.target.checked,
+                                      // Reset terminalKind when the
+                                      // stage stops being terminal so
+                                      // we don't send a stale value.
+                                      terminalKind: e.target.checked ? f.terminalKind : '',
                                     }))
                                   }
                                 />
                                 {t('stageTerminal')}
                               </label>
+                              {/* Phase A — A6: terminalKind picker.
+                                  Only meaningful on terminal stages,
+                                  so it's hidden when the checkbox is
+                                  off. None / won / lost are the
+                                  three values the server accepts. */}
+                              {editStageForm.isTerminal ? (
+                                <select
+                                  value={editStageForm.terminalKind}
+                                  onChange={(e) =>
+                                    setEditStageForm((f) => ({
+                                      ...f,
+                                      terminalKind: e.target.value as '' | 'won' | 'lost',
+                                    }))
+                                  }
+                                  className="h-8 rounded-md border border-surface-border bg-surface-card px-2 text-xs text-ink-primary"
+                                  aria-label={t('stageTerminalKind')}
+                                >
+                                  <option value="">— {t('stageTerminalKindNone')}</option>
+                                  <option value="won">{t('stageTerminalKindWon')}</option>
+                                  <option value="lost">{t('stageTerminalKindLost')}</option>
+                                </select>
+                              ) : null}
                               <Button size="sm" onClick={() => void onSaveStage(stage.id)}>
                                 {t('save')}
                               </Button>
@@ -473,6 +526,15 @@ export default function PipelineBuilderPage(): JSX.Element {
                               </span>
                               {stage.isTerminal ? (
                                 <Badge tone="inactive">{t('stageTerminal')}</Badge>
+                              ) : null}
+                              {/* Phase A — A6: surface the lifecycle
+                                  classifier so admins can see at a
+                                  glance which terminal stage means
+                                  what. 'won' / 'lost' / nothing. */}
+                              {stage.terminalKind === 'won' ? (
+                                <Badge tone="healthy">{t('stageTerminalKindWon')}</Badge>
+                              ) : stage.terminalKind === 'lost' ? (
+                                <Badge tone="breach">{t('stageTerminalKindLost')}</Badge>
                               ) : null}
                               <Button
                                 size="sm"
@@ -618,10 +680,41 @@ export default function PipelineBuilderPage(): JSX.Element {
             <input
               type="checkbox"
               checked={stageForm.isTerminal}
-              onChange={(e) => setStageForm((f) => ({ ...f, isTerminal: e.target.checked }))}
+              onChange={(e) =>
+                setStageForm((f) => ({
+                  ...f,
+                  isTerminal: e.target.checked,
+                  // Clear terminalKind when the stage stops being
+                  // terminal so the submit doesn't ship a stale
+                  // value that the server would reject.
+                  terminalKind: e.target.checked ? f.terminalKind : '',
+                }))
+              }
             />
             {t('stageTerminal')}
           </label>
+          {/* Phase A — A6: terminalKind picker. Hidden until the
+              stage is marked terminal. None = no lifecycle effect on
+              move; won = lifecycle becomes 'won'; lost = lifecycle
+              becomes 'lost' (and the lost-reason modal fires). */}
+          {stageForm.isTerminal ? (
+            <Field label={t('stageTerminalKind')} hint={t('stageTerminalKindHint')}>
+              <select
+                value={stageForm.terminalKind}
+                onChange={(e) =>
+                  setStageForm((f) => ({
+                    ...f,
+                    terminalKind: e.target.value as '' | 'won' | 'lost',
+                  }))
+                }
+                className="block h-9 w-full rounded-md border border-surface-border bg-surface-card px-3 text-sm text-ink-primary"
+              >
+                <option value="">— {t('stageTerminalKindNone')}</option>
+                <option value="won">{t('stageTerminalKindWon')}</option>
+                <option value="lost">{t('stageTerminalKindLost')}</option>
+              </select>
+            </Field>
+          ) : null}
         </form>
       </Modal>
     </div>

@@ -51,6 +51,7 @@
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
+      "lostReasons": "Lost reasons",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
       "backup": "Backup"
@@ -186,6 +187,25 @@
     "leads": {
       "title": "Leads",
       "subtitle": "Prospective captains in the funnel.",
+      "lifecycle": {
+        "open": "Open",
+        "won": "Won",
+        "lost": "Lost",
+        "archived": "Archived"
+      },
+      "lostReasonModal": {
+        "title": "Mark as lost",
+        "titleNamed": "Mark {name} as lost",
+        "intro": "Pick a rejection reason. This is recorded with the stage change so reports can break down lost leads by cause.",
+        "reason": "Reason",
+        "note": "Note (optional)",
+        "noteHint": "A short context line shown on the lead detail page.",
+        "notePlaceholder": "e.g. spouse owns the car",
+        "confirm": "Mark as lost",
+        "errors": {
+          "reasonRequired": "Please pick a reason."
+        }
+      },
       "lens": {
         "pipeline": "Pipeline",
         "default": "default",
@@ -316,6 +336,7 @@
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
+        "lostReasonLabel": "Lost reason",
         "viewCaptain": "View captain →",
         "quickActions": {
           "call": "Call",
@@ -564,6 +585,47 @@
         }
       }
     },
+    "lostReasons": {
+      "title": "Lost reasons",
+      "subtitle": "The catalogue of rejection reasons agents can pick when marking a lead as lost.",
+      "intro": "Codes are immutable once created. Labels and ordering can be changed any time. The 'other' reason is protected and always visible to agents.",
+      "noAccess": "You don't have permission to view lost reasons.",
+      "newButton": "New reason",
+      "newTitle": "New lost reason",
+      "editTitle": "Edit lost reason",
+      "edit": "Edit",
+      "deactivate": "Deactivate",
+      "activate": "Activate",
+      "protected": "Protected",
+      "created": "Reason created.",
+      "updated": "Reason updated.",
+      "empty": "No lost reasons configured",
+      "emptyHint": "The seed installs 7 reasons per tenant. If this list is empty something has been deleted manually — re-create at least one.",
+      "cols": {
+        "order": "#",
+        "code": "Code",
+        "labelEn": "Label (EN)",
+        "labelAr": "Label (AR)",
+        "status": "Status"
+      },
+      "form": {
+        "code": "Code",
+        "codeHint": "Lowercase snake_case. Permanent — choose carefully.",
+        "labelEn": "Label (English)",
+        "labelAr": "Label (Arabic)",
+        "displayOrder": "Order",
+        "displayOrderHint": "Lower numbers appear first in the agent picker.",
+        "isActive": "Status",
+        "isActiveLabel": "Active"
+      },
+      "errors": {
+        "codeRequired": "Code is required.",
+        "codeShape": "Code must be lowercase snake_case (a-z, 0-9, _).",
+        "labelsRequired": "Both English and Arabic labels are required.",
+        "orderInvalid": "Order must be a non-negative number.",
+        "cannotDeactivateProtected": "The 'other' reason is protected and cannot be deactivated."
+      }
+    },
     "whatsappTemplates": {
       "title": "WhatsApp templates",
       "subtitle": "Meta-approved templates the agent picker uses to start or re-open conversations.",
@@ -665,6 +727,11 @@
       "stageName": "Display name",
       "stageOrder": "Order",
       "stageTerminal": "Terminal (excluded from active KPIs)",
+      "stageTerminalKind": "Lifecycle outcome",
+      "stageTerminalKindHint": "Decides whether this terminal stage marks the lead as Won or Lost. Leave as None for archive-style stages.",
+      "stageTerminalKindNone": "None",
+      "stageTerminalKindWon": "Won",
+      "stageTerminalKindLost": "Lost",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "deleteStageConfirm": "Delete this stage?",

@@ -40,6 +40,7 @@ import type {
   LeadRoutingLogRow,
   LeadSource,
   LeadStageCode,
+  LostReason,
   LoginResponse,
   MeUser,
   PaginatedResult,
@@ -442,6 +443,12 @@ export interface CreatePipelineStageInput {
   name: string;
   order?: number;
   isTerminal?: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Only valid when `isTerminal` is true; the server rejects
+   * otherwise with `pipeline.stage.terminal_kind_requires_terminal`.
+   */
+  terminalKind?: 'won' | 'lost' | null;
 }
 
 export const pipelinesApi = {
@@ -490,7 +497,7 @@ export const pipelinesApi = {
   updateStage: (
     id: string,
     stageId: string,
-    input: { name?: string; isTerminal?: boolean },
+    input: { name?: string; isTerminal?: boolean; terminalKind?: 'won' | 'lost' | null },
   ): Promise<PipelineStageRow> =>
     apiFetch<PipelineStageRow>(`/pipelines/${id}/stages/${stageId}`, {
       method: 'PATCH',
@@ -1272,6 +1279,36 @@ export const tenantSettingsApi = {
   get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
   update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
     apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Phase A — A6: per-tenant lost-reason catalogue.
+//
+// Two access tiers: agents read the active list via /lost-reasons
+// (used by the lost-stage modal); admins manage via /admin/lost-reasons.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateLostReasonInput {
+  code: string;
+  labelEn: string;
+  labelAr: string;
+  isActive?: boolean;
+  displayOrder?: number;
+}
+
+export type UpdateLostReasonInput = Partial<
+  Pick<CreateLostReasonInput, 'labelEn' | 'labelAr' | 'isActive' | 'displayOrder'>
+>;
+
+export const lostReasonsApi = {
+  /** Active reasons in display order — for the lost-stage agent picker. */
+  listActive: (): Promise<LostReason[]> => apiFetch<LostReason[]>('/lost-reasons'),
+  /** All reasons (admin) — includes inactive. */
+  listAll: (): Promise<LostReason[]> => apiFetch<LostReason[]>('/admin/lost-reasons'),
+  create: (input: CreateLostReasonInput): Promise<LostReason> =>
+    apiFetch<LostReason>('/admin/lost-reasons', { method: 'POST', body: input }),
+  update: (id: string, input: UpdateLostReasonInput): Promise<LostReason> =>
+    apiFetch<LostReason>(`/admin/lost-reasons/${id}`, { method: 'PATCH', body: input }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

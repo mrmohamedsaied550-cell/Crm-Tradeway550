@@ -25,6 +25,7 @@ import {
   BarChart3,
   Settings,
   Route,
+  XCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -52,6 +53,7 @@ interface NavItem {
     | 'tenantSettings'
     | 'calendar'
     | 'distribution'
+    | 'lostReasons'
     | 'backup';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
@@ -115,6 +117,15 @@ const ITEMS: readonly NavItem[] = [
     href: '/admin/tenant-settings',
     labelKey: 'tenantSettings',
     icon: Settings,
+    cap: 'tenant.settings.read',
+  },
+  // Phase A — A6: per-tenant lost-reason catalogue. Same capability
+  // as the rest of tenant-level settings; admins manage which reasons
+  // appear in the agent's lost-stage modal.
+  {
+    href: '/admin/lost-reasons',
+    labelKey: 'lostReasons',
+    icon: XCircle,
     cap: 'tenant.settings.read',
   },
   // PL-4 — backup page (P3-07) was reachable only via direct URL.

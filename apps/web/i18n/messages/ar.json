@@ -51,6 +51,7 @@
       "calendar": "التقويم",
       "reports": "التقارير",
       "distribution": "التوزيع",
+      "lostReasons": "أسباب الخسارة",
       "audit": "سجلّ التدقيق",
       "tenantSettings": "الإعدادات",
       "backup": "النسخ الاحتياطي"
@@ -186,6 +187,25 @@
     "leads": {
       "title": "العملاء المحتملون",
       "subtitle": "الكباتن المحتملون داخل القمع.",
+      "lifecycle": {
+        "open": "مفتوح",
+        "won": "فاز",
+        "lost": "خسر",
+        "archived": "مؤرشف"
+      },
+      "lostReasonModal": {
+        "title": "وضع كمفقود",
+        "titleNamed": "وضع {name} كمفقود",
+        "intro": "اختر سبب الرفض. يُسجَّل مع تغيير المرحلة لتفصيل التقارير حسب السبب.",
+        "reason": "السبب",
+        "note": "ملاحظة (اختياري)",
+        "noteHint": "سطر سياق قصير يظهر في صفحة تفاصيل العميل.",
+        "notePlaceholder": "مثلاً: الزوج/الزوجة يملك السيارة",
+        "confirm": "وضع كمفقود",
+        "errors": {
+          "reasonRequired": "يرجى اختيار سبب."
+        }
+      },
       "lens": {
         "pipeline": "خط الأنابيب",
         "default": "افتراضي",
@@ -316,6 +336,7 @@
         "captainOnboarding": "كابتن · {status}",
         "captainNotYet": "لم يتم التحويل بعد",
         "captainLost": "تم وضعه كمفقود",
+        "lostReasonLabel": "سبب الخسارة",
         "viewCaptain": "عرض الكابتن ←",
         "quickActions": {
           "call": "اتصال",
@@ -564,6 +585,47 @@
         }
       }
     },
+    "lostReasons": {
+      "title": "أسباب الخسارة",
+      "subtitle": "قائمة أسباب الرفض التي يختار منها الوكلاء عند وضع العميل كمفقود.",
+      "intro": "الأكواد ثابتة بعد الإنشاء. يمكن تعديل التسميات والترتيب في أي وقت. سبب 'أخرى' محمي وظاهر دائماً للوكلاء.",
+      "noAccess": "لا تملك صلاحية عرض أسباب الخسارة.",
+      "newButton": "سبب جديد",
+      "newTitle": "سبب خسارة جديد",
+      "editTitle": "تعديل سبب الخسارة",
+      "edit": "تعديل",
+      "deactivate": "تعطيل",
+      "activate": "تفعيل",
+      "protected": "محمي",
+      "created": "تم إنشاء السبب.",
+      "updated": "تم تحديث السبب.",
+      "empty": "لا توجد أسباب خسارة معدّة",
+      "emptyHint": "البذرة تثبّت 7 أسباب لكل مستأجر. إن كانت القائمة فارغة فقد تم حذفها يدوياً — أنشئ سبباً واحداً على الأقل.",
+      "cols": {
+        "order": "#",
+        "code": "الكود",
+        "labelEn": "التسمية (EN)",
+        "labelAr": "التسمية (AR)",
+        "status": "الحالة"
+      },
+      "form": {
+        "code": "الكود",
+        "codeHint": "snake_case بأحرف صغيرة. ثابت — اختر بعناية.",
+        "labelEn": "التسمية (إنجليزي)",
+        "labelAr": "التسمية (عربي)",
+        "displayOrder": "الترتيب",
+        "displayOrderHint": "الأرقام الأصغر تظهر أولاً في قائمة الوكيل.",
+        "isActive": "الحالة",
+        "isActiveLabel": "نشط"
+      },
+      "errors": {
+        "codeRequired": "الكود مطلوب.",
+        "codeShape": "يجب أن يكون الكود snake_case بأحرف صغيرة (a-z, 0-9, _).",
+        "labelsRequired": "التسميتان الإنجليزية والعربية مطلوبتان.",
+        "orderInvalid": "يجب أن يكون الترتيب رقماً غير سالب.",
+        "cannotDeactivateProtected": "سبب 'أخرى' محمي ولا يمكن تعطيله."
+      }
+    },
     "whatsappTemplates": {
       "title": "قوالب واتساب",
       "subtitle": "القوالب المعتمدة من Meta التي يستخدمها الوكيل لبدء أو إعادة فتح المحادثات.",
@@ -665,6 +727,11 @@
       "stageName": "اسم العرض",
       "stageOrder": "الترتيب",
       "stageTerminal": "نهائية (مستثناة من مؤشرات النشاط)",
+      "stageTerminalKind": "نوع النهاية",
+      "stageTerminalKindHint": "يحدد ما إذا كانت هذه المرحلة النهائية تعتبر فوزاً أو خسارة. اتركها بدون لمراحل الأرشيف.",
+      "stageTerminalKindNone": "بدون",
+      "stageTerminalKindWon": "فوز",
+      "stageTerminalKindLost": "خسارة",
       "moveUp": "نقل لأعلى",
       "moveDown": "نقل لأسفل",
       "deleteStageConfirm": "هل تريد حذف هذه المرحلة؟",
