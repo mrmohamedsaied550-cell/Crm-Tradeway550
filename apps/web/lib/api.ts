@@ -538,6 +538,42 @@ export const leadsApi = {
       offset?: number;
     } = {},
   ): Promise<PaginatedResult<Lead>> => apiFetch<PaginatedResult<Lead>>('/leads', { query }),
+  /**
+   * Phase 1 — Kanban grouped query. One round-trip returns one
+   * bucket per stage of `pipelineId`, each bucket carrying its
+   * `totalCount` and the first `perStage` cards.
+   */
+  listByStage: (query: {
+    pipelineId: string;
+    companyId?: string;
+    countryId?: string;
+    assignedToId?: string;
+    q?: string;
+    source?: LeadSource;
+    slaStatus?: SlaStatus;
+    createdFrom?: string;
+    createdTo?: string;
+    unassigned?: boolean;
+    hasOverdueFollowup?: boolean;
+    perStage?: number;
+  }): Promise<{
+    pipelineId: string;
+    perStage: number;
+    stages: {
+      stage: { id: string; code: string; name: string; order: number; isTerminal: boolean };
+      totalCount: number;
+      leads: Lead[];
+    }[];
+  }> =>
+    apiFetch<{
+      pipelineId: string;
+      perStage: number;
+      stages: {
+        stage: { id: string; code: string; name: string; order: number; isTerminal: boolean };
+        totalCount: number;
+        leads: Lead[];
+      }[];
+    }>('/leads/by-stage', { query }),
   /** C37 — leads whose pending follow-up is past its dueAt. Defaults
    *  to the calling user; pass `mine: '0'` to broaden to all. */
   overdue: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>

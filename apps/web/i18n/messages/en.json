@@ -186,6 +186,14 @@
     "leads": {
       "title": "Leads",
       "subtitle": "Prospective captains in the funnel.",
+      "lens": {
+        "pipeline": "Pipeline",
+        "default": "default",
+        "viewMode": "View",
+        "list": "List",
+        "kanban": "Kanban",
+        "kanbanComingNext": "Kanban view is being prepared in the next release. The list view below shows the same leads."
+      },
       "empty": "No leads yet",
       "emptyHint": "Create the first lead to start working the funnel.",
       "emptyFiltered": "No leads match the filters",

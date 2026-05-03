@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Plus, Upload, UserPlus } from 'lucide-react';
+import { Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -13,7 +13,16 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
-import { ApiError, companiesApi, countriesApi, leadsApi, pipelineApi, usersApi } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import {
+  ApiError,
+  companiesApi,
+  countriesApi,
+  leadsApi,
+  pipelineApi,
+  pipelinesApi,
+  usersApi,
+} from '@/lib/api';
 import type {
   AdminUser,
   Company,
@@ -21,9 +30,50 @@ import type {
   Lead,
   LeadSource,
   LeadStageCode,
+  Pipeline,
   PipelineStage,
   SlaStatus,
 } from '@/lib/api-types';
+
+/**
+ * Phase 1 — Lead Workspace.
+ *
+ * The page is a shell with three slots:
+ *   1. Header (title, primary actions, create / import).
+ *   2. Lens row — pipeline picker + view-mode toggle (List | Kanban).
+ *   3. Body — depends on view mode. List uses the legacy DataTable;
+ *      Kanban (added in K1.3) draws a board from `leadsApi.listByStage`.
+ *
+ * View mode persists per pipeline in localStorage so an agent who
+ * lives on Kanban for one pipeline and List for another keeps both
+ * preferences. (Server-side preferences land in Phase 3.)
+ */
+
+type ViewMode = 'list' | 'kanban';
+
+const VIEW_MODE_KEY_PREFIX = 'crm.leads.viewMode.';
+const ACTIVE_PIPELINE_KEY = 'crm.leads.activePipelineId';
+
+function readViewMode(pipelineId: string | null): ViewMode {
+  if (!pipelineId || typeof window === 'undefined') return 'list';
+  const v = window.localStorage.getItem(VIEW_MODE_KEY_PREFIX + pipelineId);
+  return v === 'kanban' ? 'kanban' : 'list';
+}
+
+function writeViewMode(pipelineId: string, mode: ViewMode): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(VIEW_MODE_KEY_PREFIX + pipelineId, mode);
+}
+
+function readActivePipelineId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(ACTIVE_PIPELINE_KEY);
+}
+
+function writeActivePipelineId(id: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(ACTIVE_PIPELINE_KEY, id);
+}
 
 interface CreateForm {
   name: string;
@@ -115,6 +165,15 @@ export default function LeadsPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Phase 1 — workspace shell state.
+  // Pipelines are loaded once on mount; the active pipeline drives
+  // the future Kanban columns and persists across reloads.
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
+  // View mode is per-pipeline so an agent who lives on Kanban for
+  // pipeline A and List for pipeline B keeps both preferences.
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
   // P3-03 — advanced filters. Empty string means "any" (mapped to
@@ -200,6 +259,39 @@ export default function LeadsPage(): JSX.Element {
     filterCreatedTo,
     filterOverdue,
   ]);
+
+  // Phase 1 — load pipelines once on mount; pick the active one
+  // from localStorage (must still exist + be active), else the
+  // tenant default. The result drives the lens row's pipeline
+  // picker and the future Kanban view.
+  useEffect(() => {
+    void (async () => {
+      const list = await pipelinesApi.list().catch(() => [] as Pipeline[]);
+      setPipelines(list);
+      const stored = readActivePipelineId();
+      const storedStillValid = stored ? list.find((p) => p.id === stored && p.isActive) : null;
+      const fallback =
+        list.find((p) => p.isDefault && p.isActive) ?? list.find((p) => p.isActive) ?? null;
+      const chosen = storedStillValid ?? fallback;
+      if (chosen) {
+        setActivePipelineId(chosen.id);
+        setViewMode(readViewMode(chosen.id));
+      }
+    })();
+  }, []);
+
+  // Phase 1 — when the active pipeline changes, persist it and
+  // refresh the per-pipeline view-mode preference.
+  useEffect(() => {
+    if (!activePipelineId) return;
+    writeActivePipelineId(activePipelineId);
+    setViewMode(readViewMode(activePipelineId));
+  }, [activePipelineId]);
+
+  function changeViewMode(mode: ViewMode): void {
+    setViewMode(mode);
+    if (activePipelineId) writeViewMode(activePipelineId, mode);
+  }
 
   /** P3-03 — true when ANY filter is non-empty. Drives the empty-state copy. */
   const anyFilterActive: boolean =
@@ -573,217 +665,285 @@ export default function LeadsPage(): JSX.Element {
       />
 
       {/*
-       * P3-03 — primary filter row stays on screen at all times.
-       * The advanced panel (source / SLA / assignee / created-at /
-       * overdue) is collapsed by default to keep the page tidy and
-       * expanded on demand.
+       * Phase 1 — Lens row. Pipeline picker on the left, view-mode
+       * toggle on the right. Both persist per-user via localStorage.
+       * When only one pipeline exists the picker is shown but
+       * disabled (still informative — the user knows what they're
+       * looking at).
        */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-full max-w-xs">
-          <Field label={t('filterByStage')}>
-            <Select
-              value={filterStage}
-              onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              {stages.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-        <div className="w-full max-w-sm">
-          <Field label={t('search')}>
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
-          </Field>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          aria-expanded={advancedOpen}
-        >
-          {advancedOpen ? t('advanced.hide') : t('advanced.show')}
-        </Button>
-        {anyFilterActive ? (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            {tCommon('clearFilters')}
-          </Button>
-        ) : null}
-      </div>
-
-      {advancedOpen ? (
-        <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
-          <Field label={t('advanced.source')}>
-            <Select
-              value={filterSource}
-              onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              <option value="manual">{t('advanced.sources.manual')}</option>
-              <option value="meta">{t('advanced.sources.meta')}</option>
-              <option value="tiktok">{t('advanced.sources.tiktok')}</option>
-              <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
-              <option value="import">{t('advanced.sources.import')}</option>
-            </Select>
-          </Field>
-          <Field label={t('advanced.sla')}>
-            <Select
-              value={filterSla}
-              onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              <option value="active">{t('advanced.slaActive')}</option>
-              <option value="breached">{t('advanced.slaBreached')}</option>
-              <option value="paused">{t('advanced.slaPaused')}</option>
-            </Select>
-          </Field>
-          <Field label={t('advanced.assignee')}>
-            <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
-              <option value="">{tCommon('all')}</option>
-              <option value="__unassigned__">{t('advanced.unassigned')}</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label={t('advanced.createdFrom')}>
-            <Input
-              type="date"
-              value={filterCreatedFrom}
-              onChange={(e) => setFilterCreatedFrom(e.target.value)}
-              max={filterCreatedTo || undefined}
-            />
-          </Field>
-          <Field label={t('advanced.createdTo')}>
-            <Input
-              type="date"
-              value={filterCreatedTo}
-              onChange={(e) => setFilterCreatedTo(e.target.value)}
-              min={filterCreatedFrom || undefined}
-            />
-          </Field>
-          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
-            <input
-              type="checkbox"
-              checked={filterOverdue}
-              onChange={(e) => setFilterOverdue(e.target.checked)}
-            />
-            {t('advanced.overdueOnly')}
-          </label>
-        </div>
-      ) : null}
-
-      {error ? (
-        <Notice tone="error">
-          <div className="flex items-start justify-between gap-3">
-            <span>{error}</span>
-            <Button variant="ghost" size="sm" onClick={() => void reload()}>
-              {tCommon('retry')}
-            </Button>
+      {pipelines.length > 0 ? (
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-surface-border bg-surface-card px-3 py-2 shadow-card">
+          <div className="flex items-end gap-3">
+            <Field label={t('lens.pipeline')}>
+              <Select
+                value={activePipelineId ?? ''}
+                onChange={(e) => setActivePipelineId(e.target.value)}
+                disabled={pipelines.length <= 1}
+                className="min-w-[220px]"
+              >
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isDefault ? ` · ${t('lens.default')}` : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
-        </Notice>
+          <div
+            className="inline-flex h-9 items-center rounded-md border border-surface-border bg-surface p-0.5"
+            role="tablist"
+            aria-label={t('lens.viewMode')}
+          >
+            {(['list', 'kanban'] as const).map((m) => {
+              const Icon = m === 'list' ? List : Columns;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === m}
+                  onClick={() => changeViewMode(m)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded px-3 py-1 text-sm font-medium transition-colors',
+                    viewMode === m
+                      ? 'bg-surface-card text-brand-700 shadow-sm'
+                      : 'text-ink-secondary hover:text-ink-primary',
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t(`lens.${m}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       ) : null}
-      {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      {!loading && !error && rows.length === 0 ? (
-        <EmptyState
-          title={anyFilterActive ? t('emptyFiltered') : t('empty')}
-          body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
-          action={
-            anyFilterActive ? (
-              <Button variant="secondary" size="sm" onClick={clearFilters}>
+      {/*
+       * Phase 1 — Kanban placeholder. The board itself ships in K1.3;
+       * for now we surface a clear "coming next" message instead of
+       * silently falling back to the list view (which would surprise
+       * users who flipped the toggle).
+       */}
+      {viewMode === 'kanban' ? <Notice tone="info">{t('lens.kanbanComingNext')}</Notice> : null}
+
+      {viewMode === 'list' ? (
+        <>
+          {/*
+           * P3-03 — primary filter row stays on screen at all times.
+           * The advanced panel (source / SLA / assignee / created-at /
+           * overdue) is collapsed by default to keep the page tidy and
+           * expanded on demand.
+           */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-full max-w-xs">
+              <Field label={t('filterByStage')}>
+                <Select
+                  value={filterStage}
+                  onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
+                >
+                  <option value="">{tCommon('all')}</option>
+                  {stages.map((s) => (
+                    <option key={s.code} value={s.code}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <div className="w-full max-w-sm">
+              <Field label={t('search')}>
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
+              </Field>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-expanded={advancedOpen}
+            >
+              {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+            </Button>
+            {anyFilterActive ? (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
                 {tCommon('clearFilters')}
               </Button>
-            ) : (
-              <Button variant="primary" size="sm" onClick={openNew}>
-                {t('newButton')}
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <>
-          {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
-          {selectedIds.size > 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
-              <span className="font-medium text-brand-800">
-                {t('bulk.selected', { n: selectedIds.size })}
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setBulkAssignTarget('');
-                    setBulkAssignOpen(true);
-                  }}
-                  disabled={bulkSubmitting}
+            ) : null}
+          </div>
+
+          {advancedOpen ? (
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
+              <Field label={t('advanced.source')}>
+                <Select
+                  value={filterSource}
+                  onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
                 >
-                  {t('bulk.assign')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setBulkStageTarget('');
-                    setBulkStageOpen(true);
-                  }}
-                  disabled={bulkSubmitting}
+                  <option value="">{tCommon('all')}</option>
+                  <option value="manual">{t('advanced.sources.manual')}</option>
+                  <option value="meta">{t('advanced.sources.meta')}</option>
+                  <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+                  <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+                  <option value="import">{t('advanced.sources.import')}</option>
+                </Select>
+              </Field>
+              <Field label={t('advanced.sla')}>
+                <Select
+                  value={filterSla}
+                  onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
                 >
-                  {t('bulk.stage')}
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => void onBulkDelete()}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.delete')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedIds(new Set())}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.clear')}
-                </Button>
-              </div>
+                  <option value="">{tCommon('all')}</option>
+                  <option value="active">{t('advanced.slaActive')}</option>
+                  <option value="breached">{t('advanced.slaBreached')}</option>
+                  <option value="paused">{t('advanced.slaPaused')}</option>
+                </Select>
+              </Field>
+              <Field label={t('advanced.assignee')}>
+                <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
+                  <option value="">{tCommon('all')}</option>
+                  <option value="__unassigned__">{t('advanced.unassigned')}</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={t('advanced.createdFrom')}>
+                <Input
+                  type="date"
+                  value={filterCreatedFrom}
+                  onChange={(e) => setFilterCreatedFrom(e.target.value)}
+                  max={filterCreatedTo || undefined}
+                />
+              </Field>
+              <Field label={t('advanced.createdTo')}>
+                <Input
+                  type="date"
+                  value={filterCreatedTo}
+                  onChange={(e) => setFilterCreatedTo(e.target.value)}
+                  min={filterCreatedFrom || undefined}
+                />
+              </Field>
+              <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+                <input
+                  type="checkbox"
+                  checked={filterOverdue}
+                  onChange={(e) => setFilterOverdue(e.target.checked)}
+                />
+                {t('advanced.overdueOnly')}
+              </label>
             </div>
           ) : null}
 
-          <DataTable
-            columns={columns}
-            rows={rows}
-            keyOf={(r) => r.id}
-            loading={loading}
-            skeletonRows={6}
-            selection={{
-              selectedIds,
-              onChange: setSelectedIds,
-              ariaLabel: t('bulk.selectRow'),
-            }}
-            rowActions={(row) => (
-              <>
-                <Link
-                  href={`/admin/leads/${row.id}`}
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-                >
-                  {t('openDetail')}
-                </Link>
-                <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-                  {tCommon('delete')}
+          {error ? (
+            <Notice tone="error">
+              <div className="flex items-start justify-between gap-3">
+                <span>{error}</span>
+                <Button variant="ghost" size="sm" onClick={() => void reload()}>
+                  {tCommon('retry')}
                 </Button>
-              </>
-            )}
-          />
+              </div>
+            </Notice>
+          ) : null}
+          {notice ? <Notice tone="success">{notice}</Notice> : null}
+
+          {!loading && !error && rows.length === 0 ? (
+            <EmptyState
+              title={anyFilterActive ? t('emptyFiltered') : t('empty')}
+              body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
+              action={
+                anyFilterActive ? (
+                  <Button variant="secondary" size="sm" onClick={clearFilters}>
+                    {tCommon('clearFilters')}
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={openNew}>
+                    {t('newButton')}
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
+              {selectedIds.size > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+                  <span className="font-medium text-brand-800">
+                    {t('bulk.selected', { n: selectedIds.size })}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setBulkAssignTarget('');
+                        setBulkAssignOpen(true);
+                      }}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.assign')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setBulkStageTarget('');
+                        setBulkStageOpen(true);
+                      }}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.stage')}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => void onBulkDelete()}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.delete')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedIds(new Set())}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.clear')}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              <DataTable
+                columns={columns}
+                rows={rows}
+                keyOf={(r) => r.id}
+                loading={loading}
+                skeletonRows={6}
+                selection={{
+                  selectedIds,
+                  onChange: setSelectedIds,
+                  ariaLabel: t('bulk.selectRow'),
+                }}
+                rowActions={(row) => (
+                  <>
+                    <Link
+                      href={`/admin/leads/${row.id}`}
+                      className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                    >
+                      {t('openDetail')}
+                    </Link>
+                    <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                      {tCommon('delete')}
+                    </Button>
+                  </>
+                )}
+              />
+            </>
+          )}
         </>
-      )}
+      ) : null}
 
       {/* P3-05 — bulk assign modal */}
       <Modal
