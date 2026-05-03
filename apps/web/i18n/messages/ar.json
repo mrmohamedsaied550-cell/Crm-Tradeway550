@@ -194,6 +194,18 @@
         "kanban": "كانبان",
         "kanbanComingNext": "عرض كانبان قيد الإعداد للإصدار التالي. القائمة في الأسفل تعرض نفس العملاء."
       },
+      "kanban": {
+        "newButton": "عميل جديد",
+        "unassigned": "غير معيَّن",
+        "terminal": "نهائية",
+        "columnEmpty": "لا يوجد عملاء في هذه المرحلة",
+        "cardsTotal": "{count, plural, zero {لا عملاء} one {عميل واحد} two {عميلان} few {# عملاء} many {# عميلاً} other {# عميل}}",
+        "moreInColumn": "+{count} المزيد — افتح عرض القائمة لرؤية الكل",
+        "emptyPipeline": "هذا الـ pipeline لا يحتوي على مراحل بعد",
+        "emptyPipelineHint": "أضف مراحل من Pipeline Builder قبل فتح اللوحة.",
+        "emptyFiltered": "لا يوجد عملاء يطابقون المرشّحات الحالية",
+        "emptyFilteredHint": "امسح المرشّحات أعلاه لرؤية كل عملاء هذا الـ pipeline."
+      },
       "empty": "لا يوجد عملاء محتملون بعد",
       "emptyHint": "أنشئ أول عميل محتمل لبدء العمل على القمع.",
       "emptyFiltered": "لا يوجد عملاء يطابقون الفلاتر",

@@ -13,6 +13,7 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
+import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
 import { cn } from '@/lib/utils';
 import {
   ApiError,
@@ -303,6 +304,45 @@ export default function LeadsPage(): JSX.Element {
     Boolean(filterCreatedFrom) ||
     Boolean(filterCreatedTo) ||
     filterOverdue;
+
+  /**
+   * Phase 1 — Kanban filter shape. Mirrors the list view's filters
+   * minus the stage selector (the board is grouped BY stage so a
+   * stage filter makes no sense on it). Recomputed on every render
+   * but the KanbanBoard memos its fetcher on the same shape, so
+   * unchanged filters don't trigger a re-fetch.
+   */
+  const kanbanFilters: KanbanFilters | null = useMemo(
+    () =>
+      activePipelineId
+        ? {
+            pipelineId: activePipelineId,
+            ...(search.trim() && { q: search.trim() }),
+            ...(filterSource && { source: filterSource }),
+            ...(filterSla && { slaStatus: filterSla }),
+            ...(filterAssignee &&
+              filterAssignee !== '__unassigned__' && { assignedToId: filterAssignee }),
+            ...(filterAssignee === '__unassigned__' && { unassigned: true }),
+            ...(filterCreatedFrom && {
+              createdFrom: new Date(`${filterCreatedFrom}T00:00:00.000Z`).toISOString(),
+            }),
+            ...(filterCreatedTo && {
+              createdTo: new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString(),
+            }),
+            ...(filterOverdue && { hasOverdueFollowup: true }),
+          }
+        : null,
+    [
+      activePipelineId,
+      search,
+      filterSource,
+      filterSla,
+      filterAssignee,
+      filterCreatedFrom,
+      filterCreatedTo,
+      filterOverdue,
+    ],
+  );
 
   function clearFilters(): void {
     setFilterStage('');
@@ -721,12 +761,14 @@ export default function LeadsPage(): JSX.Element {
       ) : null}
 
       {/*
-       * Phase 1 — Kanban placeholder. The board itself ships in K1.3;
-       * for now we surface a clear "coming next" message instead of
-       * silently falling back to the list view (which would surprise
-       * users who flipped the toggle).
+       * Phase 1 — Kanban view. Renders a board grouped by the active
+       * pipeline's stages, sharing the same filter set as the list
+       * view. Drag-and-drop arrives in K1.4; quick actions / SLA /
+       * detail drawer arrive in Phase 2.
        */}
-      {viewMode === 'kanban' ? <Notice tone="info">{t('lens.kanbanComingNext')}</Notice> : null}
+      {viewMode === 'kanban' && kanbanFilters ? (
+        <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
+      ) : null}
 
       {viewMode === 'list' ? (
         <>

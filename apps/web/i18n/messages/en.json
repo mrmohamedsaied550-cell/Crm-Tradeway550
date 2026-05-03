@@ -194,6 +194,18 @@
         "kanban": "Kanban",
         "kanbanComingNext": "Kanban view is being prepared in the next release. The list view below shows the same leads."
       },
+      "kanban": {
+        "newButton": "New lead",
+        "unassigned": "Unassigned",
+        "terminal": "Terminal",
+        "columnEmpty": "No leads in this stage",
+        "cardsTotal": "{count, plural, one {# lead} other {# leads}}",
+        "moreInColumn": "+{count} more — open list view to see all",
+        "emptyPipeline": "This pipeline has no stages yet",
+        "emptyPipelineHint": "Add stages to the pipeline (Pipeline Builder) before opening the board.",
+        "emptyFiltered": "No leads match the current filters",
+        "emptyFilteredHint": "Clear filters above to see every lead in this pipeline."
+      },
       "empty": "No leads yet",
       "emptyHint": "Create the first lead to start working the funnel.",
       "emptyFiltered": "No leads match the filters",
