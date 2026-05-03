@@ -813,6 +813,8 @@
       "stageTerminalKindNone": "None",
       "stageTerminalKindWon": "Won",
       "stageTerminalKindLost": "Lost",
+      "stageStatusComingSoon": "Status options · soon",
+      "stageStatusComingSoonTitle": "Per-stage statuses (e.g. Awaiting reply / Replied) are planned for a later iteration.",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "deleteStageConfirm": "Delete this stage?",

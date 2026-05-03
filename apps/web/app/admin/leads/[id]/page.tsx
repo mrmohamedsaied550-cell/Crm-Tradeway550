@@ -31,6 +31,7 @@ import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
+import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
 import {
   AttributionCard,
   LastActivityCard,
@@ -601,6 +602,10 @@ export default function LeadDetailPage(): JSX.Element {
           <div className="flex flex-wrap items-center gap-2">
             <LifecycleBadge state={lead.lifecycleState} />
             <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
+            {/* Phase B — B5: placeholder slot for the stage-specific
+                status badge (renders null today; activates when the
+                backend ships actual statuses). */}
+            <StageStatusSlot />
             <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
             {isConverted ? (
               <Badge tone="healthy">

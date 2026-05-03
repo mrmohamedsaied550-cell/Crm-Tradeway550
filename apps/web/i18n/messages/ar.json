@@ -813,6 +813,8 @@
       "stageTerminalKindNone": "بدون",
       "stageTerminalKindWon": "فوز",
       "stageTerminalKindLost": "خسارة",
+      "stageStatusComingSoon": "خيارات الحالة · قريباً",
+      "stageStatusComingSoonTitle": "حالات خاصة بكل مرحلة (مثل: بانتظار الرد / تم الرد) مخطّطة في تكرار لاحق.",
       "moveUp": "نقل لأعلى",
       "moveDown": "نقل لأسفل",
       "deleteStageConfirm": "هل تريد حذف هذه المرحلة؟",
