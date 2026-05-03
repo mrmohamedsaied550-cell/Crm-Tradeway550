@@ -249,6 +249,9 @@
         "today": "اليوم {time}",
         "tomorrow": "غداً {time}"
       },
+      "myOverdue": "متأخّراتي",
+      "myOverdueDisabled": "سجّل الدخول لاستخدام هذه التصفية",
+      "overdueIndicator": "لديه إجراء متأخّر",
       "filterByStage": "تصفية حسب المرحلة",
       "search": "بحث في الاسم / الهاتف / البريد",
       "bulk": {

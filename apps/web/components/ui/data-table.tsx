@@ -59,6 +59,12 @@ export interface DataTableProps<T> {
    * drawer reflects.
    */
   selectedRowId?: string | null;
+  /**
+   * Phase B — B4: per-row class hook for tinting (e.g. an overdue
+   * row gets a subtle red wash). Composed under the existing
+   * selected/hover styling.
+   */
+  rowClassName?: (row: T) => string | null | undefined;
 }
 
 export function DataTable<T>({
@@ -73,6 +79,7 @@ export function DataTable<T>({
   onRowClick,
   onRowDoubleClick,
   selectedRowId,
+  rowClassName,
 }: DataTableProps<T>): JSX.Element {
   const colCount = columns.length + (selection ? 1 : 0) + (rowActions ? 1 : 0);
   const visibleIds = rows.map((r) => keyOf(r));
@@ -193,6 +200,7 @@ export function DataTable<T>({
                         : selection && checked
                           ? 'bg-brand-50/40'
                           : '',
+                      rowClassName?.(row),
                     )}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}

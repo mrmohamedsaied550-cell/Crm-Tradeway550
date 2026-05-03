@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
+import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -19,6 +19,7 @@ import { LeadPreviewDrawer } from '@/components/admin/lead-preview-drawer';
 import { NextActionCell } from '@/components/admin/next-action-cell';
 import { useIsMobile } from '@/lib/use-media-query';
 import { buildListSignature, saveListContext } from '@/lib/lead-list-context';
+import { getCachedMe } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import {
   ApiError,
@@ -163,6 +164,15 @@ export default function LeadsPage(): JSX.Element {
   // drawer's contents; null = closed. Single click on a row opens it,
   // double click navigates to the full page.
   const [previewLeadId, setPreviewLeadId] = useState<string | null>(null);
+
+  // Phase B — B4: cached "me" id powers the "My Overdue Leads"
+  // chip. Read once on mount; null when not signed in (chip
+  // disabled). The chip itself just toggles assignedToId + overdue
+  // via the existing filter state, no new query params needed.
+  const [meId, setMeId] = useState<string | null>(null);
+  useEffect(() => {
+    setMeId(getCachedMe()?.userId ?? null);
+  }, []);
 
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -706,11 +716,26 @@ export default function LeadsPage(): JSX.Element {
   // every render so relative labels track the wall clock without a
   // dedicated tick (the list reloads whenever the user acts).
   const tableNow = new Date();
+  // B4 — overdue test: any lead whose nextActionDueAt is in the past.
+  // Used by both the name-column icon and the row-level red wash.
+  const isOverdueRow = (r: Lead): boolean =>
+    Boolean(r.nextActionDueAt && new Date(r.nextActionDueAt).getTime() < tableNow.getTime());
+
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
       header: t('name'),
-      render: (r) => <span className="font-medium">{r.name}</span>,
+      render: (r) => (
+        <span className="inline-flex items-center gap-1.5">
+          {isOverdueRow(r) ? (
+            <AlertTriangle
+              className="h-3.5 w-3.5 shrink-0 text-status-breach"
+              aria-label={t('overdueIndicator')}
+            />
+          ) : null}
+          <span className="font-medium">{r.name}</span>
+        </span>
+      ),
     },
     {
       key: 'phone',
@@ -897,6 +922,29 @@ export default function LeadsPage(): JSX.Element {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
           </Field>
         </div>
+        {/* B4 — quick filter: leads assigned to me + overdue. Toggling
+            on sets both filterAssignee + filterOverdue; toggling off
+            clears them. Disabled when no signed-in user is cached. */}
+        <Button
+          variant={meId && filterAssignee === meId && filterOverdue ? 'primary' : 'secondary'}
+          size="sm"
+          onClick={() => {
+            if (!meId) return;
+            const isActive = filterAssignee === meId && filterOverdue;
+            if (isActive) {
+              setFilterAssignee('');
+              setFilterOverdue(false);
+            } else {
+              setFilterAssignee(meId);
+              setFilterOverdue(true);
+            }
+          }}
+          disabled={!meId}
+          title={meId ? undefined : t('myOverdueDisabled')}
+        >
+          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('myOverdue')}
+        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -1081,6 +1129,7 @@ export default function LeadsPage(): JSX.Element {
                 onRowClick={(row) => setPreviewLeadId(row.id)}
                 onRowDoubleClick={(row) => router.push(`/admin/leads/${row.id}`)}
                 selectedRowId={previewLeadId}
+                rowClassName={(r) => (isOverdueRow(r) ? 'bg-status-breach/5' : null)}
                 rowActions={(row) => (
                   <>
                     <Link

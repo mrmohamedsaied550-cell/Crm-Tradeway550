@@ -249,6 +249,9 @@
         "today": "Today {time}",
         "tomorrow": "Tomorrow {time}"
       },
+      "myOverdue": "My overdue",
+      "myOverdueDisabled": "Sign in to use this filter",
+      "overdueIndicator": "Has an overdue next action",
       "filterByStage": "Filter by stage",
       "search": "Search name / phone / email",
       "bulk": {
