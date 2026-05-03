@@ -345,6 +345,11 @@
           "moveStage": "Move stage",
           "terminalHint": "Lead is in a terminal stage"
         },
+        "navigator": {
+          "prev": "Previous lead (Alt + ← or k)",
+          "next": "Next lead (Alt + → or j)",
+          "label": "{pos} of {total}"
+        },
         "nextAction": {
           "title": "Next action",
           "emptyHint": "No follow-up scheduled. Schedule one so this lead doesn't fall through.",

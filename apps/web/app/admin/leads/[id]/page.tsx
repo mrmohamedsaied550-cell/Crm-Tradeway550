@@ -32,6 +32,7 @@ import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
+import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import {
   AttributionCard,
@@ -61,6 +62,7 @@ import type {
   SlaStatus,
   Team,
 } from '@/lib/api-types';
+import { readListContext, type NavigatorPosition } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
 
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
@@ -199,6 +201,55 @@ export default function LeadDetailPage(): JSX.Element {
     const t = setInterval(() => setTickNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // Phase B — Navigation: read the list-context cache (filled by the
+  // /admin/leads page) and re-resolve when the lead id changes —
+  // walking prev/next pushes a new id, which re-fires this.
+  const [navigatorPos, setNavigatorPos] = useState<NavigatorPosition | null>(null);
+  useEffect(() => {
+    setNavigatorPos(readListContext(id));
+  }, [id]);
+
+  // Keyboard shortcuts: Alt+←/→ + j/k. Active only when no input,
+  // textarea, or contentEditable element is focused — typing in the
+  // composer must not jump to a different lead.
+  useEffect(() => {
+    if (!navigatorPos) return;
+    function isTypingTarget(t: EventTarget | null): boolean {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (isTypingTarget(e.target)) return;
+      // Alt+Arrow normally walks browser history. Inside the lead
+      // detail we override it for prev/next-lead — preventDefault so
+      // both intents don't fire.
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        const id = e.key === 'ArrowLeft' ? navigatorPos!.prevId : navigatorPos!.nextId;
+        if (id) {
+          e.preventDefault();
+          router.push(`/admin/leads/${id}`);
+        }
+        return;
+      }
+      // j/k vim-style; ignore when any modifier is held so app
+      // shortcuts (Ctrl+K command palette, etc.) keep working.
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key === 'j' && navigatorPos!.nextId) {
+        e.preventDefault();
+        router.push(`/admin/leads/${navigatorPos!.nextId}`);
+      } else if (e.key === 'k' && navigatorPos!.prevId) {
+        e.preventDefault();
+        router.push(`/admin/leads/${navigatorPos!.prevId}`);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigatorPos, router]);
 
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
@@ -521,12 +572,18 @@ export default function LeadDetailPage(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-4">
-      <Link
-        href="/admin/leads"
-        className="inline-flex items-center gap-1 text-xs font-medium text-ink-secondary hover:text-brand-700"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" /> {t('title')}
-      </Link>
+      {/* Top strip: Back link + prev/next navigator. The navigator
+          gracefully renders disabled chevrons (no count) when the
+          list cache is missing — feature is absent, not broken. */}
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/admin/leads"
+          className="inline-flex items-center gap-1 text-xs font-medium text-ink-secondary hover:text-brand-700"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> {t('title')}
+        </Link>
+        <ListNavigator position={navigatorPos} />
+      </div>
 
       {/* ───── Header card (B1) ─────
           Identity + at-a-glance state in one compact card so the

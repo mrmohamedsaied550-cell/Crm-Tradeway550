@@ -15,6 +15,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
 import { useIsMobile } from '@/lib/use-media-query';
+import { buildListSignature, saveListContext } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
 import {
   ApiError,
@@ -276,6 +277,29 @@ export default function LeadsPage(): JSX.Element {
       setUsers(usrs.items);
       setCompanies(cs);
       setCountries(cos);
+      // Phase B — Navigation: cache the current page so the
+      // lead-detail navigator can walk prev/next within the same
+      // filter set. List view only — Kanban writes the same array
+      // but its visual order is column-by-column, not the array's
+      // by-createdAt order, so we'd be lying about position.
+      if (effectiveViewMode === 'list') {
+        saveListContext({
+          signature: buildListSignature({
+            pipelineId: activePipelineId,
+            stageCode: filterStage,
+            q: debouncedSearch.trim(),
+            source: filterSource,
+            slaStatus: filterSla,
+            assignedToId,
+            unassigned,
+            createdFrom,
+            createdTo,
+            hasOverdueFollowup: filterOverdue,
+          }),
+          ids: page.items.map((r) => r.id),
+          total: page.total,
+        });
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -291,6 +315,7 @@ export default function LeadsPage(): JSX.Element {
     filterCreatedFrom,
     filterCreatedTo,
     filterOverdue,
+    effectiveViewMode,
   ]);
 
   // Phase 1 — load pipelines once on mount; pick the active one
