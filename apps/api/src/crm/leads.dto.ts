@@ -86,6 +86,16 @@ export const MoveStageSchema = z
   .object({
     stageCode: z.string().trim().min(1).max(64).optional(),
     pipelineStageId: z.string().uuid().optional(),
+    /**
+     * Phase A — required when the target stage has
+     * `terminalKind = 'lost'`. Forbidden otherwise (server clears any
+     * existing reason when the lead leaves a 'lost' stage). Service
+     * layer enforces both directions; the DTO can't because the
+     * target's terminal kind is only known after pipeline lookup.
+     */
+    lostReasonId: z.string().uuid().optional(),
+    /** Optional free-text elaboration; ignored if not moving to lost. */
+    lostNote: z.string().trim().min(1).max(500).optional(),
   })
   .strict()
   .refine((v) => Boolean(v.stageCode) !== Boolean(v.pipelineStageId), {
@@ -253,6 +263,14 @@ export const BulkMoveStageSchema = z
     leadIds: bulkLeadIds,
     stageCode: z.string().trim().min(1).max(64).optional(),
     pipelineStageId: z.string().uuid().optional(),
+    /**
+     * Phase A — single reason applied to the whole batch when the
+     * target stage is 'lost'. Required for terminalKind=lost moves;
+     * forbidden otherwise. Same per-lead validation as the singular
+     * moveStage runs inside the per-id loop.
+     */
+    lostReasonId: z.string().uuid().optional(),
+    lostNote: z.string().trim().min(1).max(500).optional(),
   })
   .strict()
   .refine((v) => Boolean(v.stageCode) !== Boolean(v.pipelineStageId), {

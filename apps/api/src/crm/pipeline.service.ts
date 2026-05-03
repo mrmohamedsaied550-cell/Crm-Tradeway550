@@ -194,6 +194,8 @@ export class PipelineService {
     name: string;
     order: number;
     isTerminal: boolean;
+    /** Phase A — drives Lead.lifecycleState on stage moves. */
+    terminalKind: string | null;
   }> {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, (tx) =>
@@ -206,6 +208,7 @@ export class PipelineService {
           name: true,
           order: true,
           isTerminal: true,
+          terminalKind: true,
         },
       }),
     );
@@ -226,12 +229,26 @@ export class PipelineService {
   async findCodeInPipelineOrThrow(
     pipelineId: string,
     code: string,
-  ): Promise<{ id: string; code: string; name: string; order: number; isTerminal: boolean }> {
+  ): Promise<{
+    id: string;
+    code: string;
+    name: string;
+    order: number;
+    isTerminal: boolean;
+    terminalKind: string | null;
+  }> {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, (tx) =>
       tx.pipelineStage.findUnique({
         where: { pipelineId_code: { pipelineId, code } },
-        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          terminalKind: true,
+        },
       }),
     );
     if (!row) {

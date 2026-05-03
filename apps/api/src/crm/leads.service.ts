@@ -12,6 +12,7 @@ import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
+import { LostReasonsService } from './lost-reasons.service';
 import { PipelineService } from './pipeline.service';
 import { isSlaResetting, type ActivityType } from './pipeline.registry';
 import { normalizeE164WithDefault } from './phone.util';
@@ -58,6 +59,13 @@ export class LeadsService {
      */
     @Optional() private readonly distribution?: DistributionService,
     @Optional() private readonly realtime?: RealtimeService,
+    /**
+     * Phase A — A3: validation of lostReasonId on terminal=lost
+     * stage moves. @Optional so legacy test fixtures compile —
+     * production wiring (CrmModule) always provides it; the service
+     * throws a clear error if a lost move is attempted without it.
+     */
+    @Optional() private readonly lostReasons?: LostReasonsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -100,7 +108,17 @@ export class LeadsService {
         //   3. neither          → resolve pipeline; pick its first
         //                          non-terminal stage (lowest order).
         let pipelineId: string;
-        let stage: { id: string; code: string; name: string; isTerminal: boolean };
+        // Phase A — terminalKind threaded through so the lifecycle
+        // classifier is correct on rare admin-create-direct-to-
+        // terminal-stage flows. The first-non-terminal entry path
+        // hardcodes terminalKind=null since isTerminal:false.
+        let stage: {
+          id: string;
+          code: string;
+          name: string;
+          isTerminal: boolean;
+          terminalKind: string | null;
+        };
 
         if (dto.pipelineStageId) {
           const row = await tx.pipelineStage.findUnique({
@@ -110,6 +128,7 @@ export class LeadsService {
               code: true,
               name: true,
               isTerminal: true,
+              terminalKind: true,
               pipelineId: true,
             },
           });
@@ -134,7 +153,7 @@ export class LeadsService {
             const first = await tx.pipelineStage.findFirst({
               where: { pipelineId, isTerminal: false },
               orderBy: { order: 'asc' },
-              select: { id: true, code: true, name: true, isTerminal: true },
+              select: { id: true, code: true, name: true, isTerminal: true, terminalKind: true },
             });
             if (!first) {
               throw new BadRequestException({
@@ -152,6 +171,31 @@ export class LeadsService {
         const slaDueAt = stage.isTerminal ? null : this.sla.computeDueAt(now, settings.slaMinutes);
         const slaStatus = stage.isTerminal ? 'paused' : 'active';
 
+        // Phase A — derive lifecycleState from the entry stage's
+        // terminalKind. The default is 'open' (column default), but
+        // we set it explicitly so admin create-into-terminal-stage
+        // produces the right classifier on day one. Note: 'lost' on
+        // create is rejected — the create DTO has no path to supply
+        // a lostReasonId, so we'd write a 'lost' lead with NULL
+        // reason which violates the FK semantics. Force admins to
+        // create-then-moveStage if they really want this.
+        const lifecycleState =
+          stage.terminalKind === 'won'
+            ? 'won'
+            : stage.terminalKind === 'lost'
+              ? // Defensive: this path is reachable only via
+                // pipelineStageId pointing at a 'lost' stage. We
+                // refuse with a typed error rather than silently
+                // creating a lifecycle=lost row with no reason.
+                (() => {
+                  throw new BadRequestException({
+                    code: 'lead.create_into_lost_forbidden',
+                    message:
+                      'Cannot create a lead directly into a "lost" stage; create it open and then move it',
+                  });
+                })()
+              : 'open';
+
         const lead = await tx.lead.create({
           data: {
             tenantId,
@@ -163,6 +207,7 @@ export class LeadsService {
             countryId: dto.countryId ?? null,
             pipelineId,
             stageId: stage.id,
+            lifecycleState,
             assignedToId: dto.assignedToId ?? null,
             createdById: actorUserId,
             slaDueAt,
@@ -787,7 +832,12 @@ export class LeadsService {
    */
   async moveStage(
     id: string,
-    target: { stageCode?: string; pipelineStageId?: string },
+    target: {
+      stageCode?: string;
+      pipelineStageId?: string;
+      lostReasonId?: string;
+      lostNote?: string;
+    },
     actorUserId: string,
   ) {
     if (Boolean(target.stageCode) === Boolean(target.pipelineStageId)) {
@@ -802,7 +852,13 @@ export class LeadsService {
     // back to the stage row for legacy leads still on NULL.
     const leadPipelineId = before.pipelineId ?? before.stage.pipelineId;
 
-    let toStage: { id: string; code: string; name: string; isTerminal: boolean };
+    let toStage: {
+      id: string;
+      code: string;
+      name: string;
+      isTerminal: boolean;
+      terminalKind: string | null;
+    };
     if (target.pipelineStageId) {
       // Explicit UUID path — verify it belongs to the lead's pipeline.
       try {
@@ -844,8 +900,57 @@ export class LeadsService {
       return before;
     }
 
+    // ─── Phase A — A3: lost-reason validation + lifecycle write ───
+    //
+    // Three rules:
+    //   1. Moving to terminalKind='lost' MUST include a lostReasonId.
+    //   2. Moving to anything else MUST NOT include a lostReasonId
+    //      (catches accidental UI sends; keeps the row clean).
+    //   3. The lostReasonId, if present, must exist in this tenant
+    //      AND be active. Inactive reasons reject identically to
+    //      missing ones — the picker should never surface an
+    //      inactive reason in the first place.
+    //
+    // `lifecycleState` is computed from the target stage's
+    // terminalKind ('won', 'lost', or null → 'open'). Returning to a
+    // non-terminal stage automatically clears any prior lostReasonId
+    // / lostNote — leaving them set on a non-lost lead would be
+    // misleading.
+    if (toStage.terminalKind === 'lost') {
+      if (!target.lostReasonId) {
+        throw new BadRequestException({
+          code: 'lead.lost_reason_required',
+          message: 'lostReasonId is required when moving to a "lost" stage',
+        });
+      }
+    } else if (target.lostReasonId) {
+      throw new BadRequestException({
+        code: 'lead.lost_reason_only_on_lost_stage',
+        message: 'lostReasonId is only valid when moving to a "lost" stage',
+      });
+    }
+
     const settings = await this.tenantSettings.getCurrent();
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Validate the lostReasonId inside the same tx so the read
+      // sees the same RLS scope. Returns null for unknown OR
+      // inactive — both reject with the same code.
+      if (toStage.terminalKind === 'lost' && target.lostReasonId) {
+        if (!this.lostReasons) {
+          throw new BadRequestException({
+            code: 'lead.lost_reason_unavailable',
+            message: 'LostReasonsService is not wired in this context',
+          });
+        }
+        const reason = await this.lostReasons.findActiveByIdInTx(tx, target.lostReasonId);
+        if (!reason) {
+          throw new BadRequestException({
+            code: 'lead.lost_reason_not_in_tenant',
+            message: `Lost reason ${target.lostReasonId} not found or inactive`,
+          });
+        }
+      }
+
       // Stage transitions drive SLA state:
       //   non-terminal → fresh window (counts as agent response).
       //   terminal     → pause; the breach scanner ignores paused rows.
@@ -858,9 +963,25 @@ export class LeadsService {
             lastResponseAt: now,
           };
 
+      // Phase A — derive lifecycleState + write the lost-reason
+      // payload (or clear it). 'archived' is set only via a
+      // dedicated admin path, not via stage move.
+      const lifecycleState =
+        toStage.terminalKind === 'won' ? 'won' : toStage.terminalKind === 'lost' ? 'lost' : 'open';
+
+      const lostFields: Prisma.LeadUncheckedUpdateInput =
+        toStage.terminalKind === 'lost'
+          ? { lostReasonId: target.lostReasonId!, lostNote: target.lostNote ?? null }
+          : { lostReasonId: null, lostNote: null };
+
       const updated = await tx.lead.update({
         where: { id },
-        data: { stageId: toStage.id, ...sla },
+        data: {
+          stageId: toStage.id,
+          lifecycleState,
+          ...lostFields,
+          ...sla,
+        },
         include: { stage: true, captain: true },
       });
       await this.appendActivity(tx, {
@@ -874,6 +995,10 @@ export class LeadsService {
           fromStageId: before.stageId,
           toStageCode: toStage.code,
           toStageId: toStage.id,
+          // Phase A — surface the lifecycle classifier on the activity
+          // payload so the timeline can render badges directly.
+          toLifecycleState: lifecycleState,
+          ...(target.lostReasonId && { lostReasonId: target.lostReasonId }),
         },
         createdById: actorUserId,
       });
@@ -999,9 +1124,20 @@ export class LeadsService {
     // Phase 1B — re-shape the input so each call passes the correct
     // discriminator; per-lead pipeline resolution lives inside
     // moveStage.
-    const target = dto.pipelineStageId
-      ? { pipelineStageId: dto.pipelineStageId }
-      : { stageCode: dto.stageCode! };
+    //
+    // Phase A — forward lostReasonId / lostNote so a single bulk
+    // batch can mark many leads as lost with one reason. Per-lead
+    // validation (terminal=lost requires reason; non-lost forbids
+    // it) happens inside moveStage; if the batch's target is a
+    // mix of lost and non-lost destinations across pipelines, the
+    // failures get reported per-lead in the result envelope.
+    const target = {
+      ...(dto.pipelineStageId
+        ? { pipelineStageId: dto.pipelineStageId }
+        : { stageCode: dto.stageCode! }),
+      ...(dto.lostReasonId !== undefined && { lostReasonId: dto.lostReasonId }),
+      ...(dto.lostNote !== undefined && { lostNote: dto.lostNote }),
+    };
     for (const id of dto.leadIds) {
       try {
         await this.moveStage(id, target, actorUserId);

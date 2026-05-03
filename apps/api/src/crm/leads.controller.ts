@@ -193,9 +193,16 @@ export class LeadsController {
   ) {
     return this.leads.moveStage(
       id,
-      body.pipelineStageId
-        ? { pipelineStageId: body.pipelineStageId }
-        : { stageCode: body.stageCode! },
+      {
+        ...(body.pipelineStageId
+          ? { pipelineStageId: body.pipelineStageId }
+          : { stageCode: body.stageCode! }),
+        // Phase A — lostReasonId / lostNote are optional at the DTO
+        // level; the service rejects when the target stage's
+        // terminalKind is 'lost' and they're missing (or vice versa).
+        ...(body.lostReasonId !== undefined && { lostReasonId: body.lostReasonId }),
+        ...(body.lostNote !== undefined && { lostNote: body.lostNote }),
+      },
       user.sub,
     );
   }
@@ -227,6 +234,21 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.captains.convertFromLead(id, body, user.sub);
+  }
+
+  /**
+   * Phase A — A3: reverse a conversion. Allowed only when the
+   * captain has zero recorded trips (operational safety).
+   * Deletes the captain row, moves the lead back to its pipeline's
+   * first non-terminal stage, flips lifecycleState back to 'open',
+   * and writes a `system` activity with `event: 'unconverted'`.
+   */
+  @Post('leads/:id/unconvert')
+  @RequireCapability('lead.convert')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reverse a Lead → Captain conversion (admin undo)' })
+  unconvert(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.captains.unconvertFromLead(id, user.sub);
   }
 
   // ─── P3-05 — bulk actions ───

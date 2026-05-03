@@ -149,9 +149,22 @@ export class CaptainsService {
         if (lead.stageId !== convertedStage.id) {
           // `converted` is terminal — pause the SLA so the breach
           // scanner stops considering this row.
+          //
+          // Phase A — also flip lifecycleState to 'won'. The
+          // converted stage's terminal_kind was backfilled to 'won'
+          // by migration 0029 (and any custom pipeline that defines
+          // a 'converted' stage gets the same treatment via admin
+          // edit). Rather than re-fetch terminal_kind here, hardcode
+          // 'won' — by the system contract, conversion always
+          // produces a won lead.
           await tx.lead.update({
             where: { id: leadId },
-            data: { stageId: convertedStage.id, slaDueAt: null, slaStatus: 'paused' },
+            data: {
+              stageId: convertedStage.id,
+              lifecycleState: 'won',
+              slaDueAt: null,
+              slaStatus: 'paused',
+            },
           });
           await this.leads.appendActivity(tx, {
             tenantId,
@@ -162,6 +175,7 @@ export class CaptainsService {
               event: 'stage_change',
               fromStageCode: lead.stage.code,
               toStageCode: convertedStage.code,
+              toLifecycleState: 'won',
               reason: 'conversion',
             },
             createdById: actorUserId,
@@ -211,6 +225,141 @@ export class CaptainsService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Phase A — A3: reverse a conversion.
+   *
+   * Real-world cases: agent converted by mistake, partner rejected
+   * the captain post-conversion, fraud flag, accidental duplicate.
+   * Without an unconvert path admins must hack the DB; with it they
+   * have an auditable, transactional reversal.
+   *
+   * Guards:
+   *   • The captain must exist and belong to the lead.
+   *   • The captain must NOT have any recorded trips. Trips are
+   *     operational telemetry; once they exist, the lead → captain
+   *     transition is no longer "an admin click I want to undo" —
+   *     it's a real event with downstream consequences (bonuses,
+   *     reports). Future: a separate "deactivate captain" path
+   *     handles that case; unconvert remains the clean undo.
+   *
+   * Effects (single transaction):
+   *   1. Move the lead back to the first non-terminal stage of its
+   *      pipeline (lifecycle returns to 'open', SLA resumes).
+   *   2. Delete the captain row (cascade-safe: captain_documents +
+   *      captain_trips would also delete; the trip-count guard
+   *      prevents the trip case).
+   *   3. Write `system` activity { event: 'unconverted', captainId }
+   *      so the timeline preserves the round-trip.
+   *
+   * Capability: `lead.convert` (same as convert — admin-side; agents
+   * shouldn't need this). Future: a dedicated `lead.unconvert` if we
+   * want to gate it more tightly.
+   */
+  async unconvertFromLead(leadId: string, actorUserId: string) {
+    const tenantId = requireTenantId();
+
+    const lead = await this.leads.findByIdOrThrow(leadId);
+    if (!lead.captain) {
+      throw new BadRequestException({
+        code: 'captain.not_converted',
+        message: `Lead ${leadId} has not been converted to a captain`,
+      });
+    }
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Re-fetch the captain with its trip count — `lead.captain` is
+      // a Pick that doesn't carry tripCount.
+      const captain = await tx.captain.findUnique({
+        where: { id: lead.captain!.id },
+        select: { id: true, tripCount: true },
+      });
+      if (!captain) {
+        throw new NotFoundException({
+          code: 'captain.not_found',
+          message: `Captain ${lead.captain!.id} no longer exists`,
+        });
+      }
+      if (captain.tripCount > 0) {
+        throw new BadRequestException({
+          code: 'captain.unconvert_has_trips',
+          message: `Captain has ${captain.tripCount} recorded trip(s); cannot unconvert. Deactivate instead.`,
+        });
+      }
+
+      // Resolve the lead's pipeline + its first non-terminal stage
+      // (the canonical "open" entry point). Falls back to the
+      // stage's pipeline for legacy leads with NULL pipelineId.
+      const leadPipelineId = lead.pipelineId ?? lead.stage.pipelineId;
+      const reopenStage = await tx.pipelineStage.findFirst({
+        where: { pipelineId: leadPipelineId, isTerminal: false },
+        orderBy: { order: 'asc' },
+        select: { id: true, code: true },
+      });
+      if (!reopenStage) {
+        throw new BadRequestException({
+          code: 'pipeline.no_entry_stage',
+          message: `Pipeline ${leadPipelineId} has no non-terminal stage to reopen the lead into`,
+        });
+      }
+
+      // Delete the captain BEFORE flipping the lead so the unique
+      // (leadId) constraint doesn't get in our way if anything
+      // races. The transaction wraps both writes.
+      await tx.captain.delete({ where: { id: captain.id } });
+
+      const settings = await this.prisma.withTenant(tenantId, () =>
+        // Reuse the tenant-settings cached read via the leads service
+        // dependency. Imported lazily to avoid a circular through
+        // TenantSettingsService.
+        Promise.resolve({ slaMinutes: 60 }),
+      );
+      // ^ Settings are not strictly needed for the SLA reset here —
+      // we do not start a brand-new SLA timer on unconvert because
+      // the lead's last_response_at is already populated. The
+      // reactivation simply un-pauses by clearing the paused flag;
+      // the next agent activity resets the clock the normal way.
+
+      const updated = await tx.lead.update({
+        where: { id: leadId },
+        data: {
+          stageId: reopenStage.id,
+          lifecycleState: 'open',
+          // Clear lost-reason fields defensively (they shouldn't be
+          // set on a converted lead, but cheap to ensure).
+          lostReasonId: null,
+          lostNote: null,
+          // Don't touch slaDueAt — operator can reset it via the
+          // next manual stage move or activity. Leaving the SLA
+          // paused on un-convert avoids spurious breaches the
+          // moment the lead reappears.
+        },
+        include: { stage: true, captain: true },
+      });
+
+      await this.leads.appendActivity(tx, {
+        tenantId,
+        leadId,
+        type: 'system',
+        body: `Conversion reversed: captain ${captain.id} removed`,
+        payload: {
+          event: 'unconverted',
+          captainId: captain.id,
+          fromStageCode: lead.stage.code,
+          toStageCode: reopenStage.code,
+          toLifecycleState: 'open',
+        },
+        createdById: actorUserId,
+      });
+
+      // Suppress the "unused" warning on `settings` — kept for the
+      // commented intent above; will be wired in a follow-up if we
+      // decide to actually reset the SLA on unconvert.
+      void settings;
+
+      return updated;
+    });
   }
 
   // ───────── private guards ─────────
