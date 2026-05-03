@@ -14,6 +14,7 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
+import { useIsMobile } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 import {
   ApiError,
@@ -174,6 +175,14 @@ export default function LeadsPage(): JSX.Element {
   // View mode is per-pipeline so an agent who lives on Kanban for
   // pipeline A and List for pipeline B keeps both preferences.
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  // K1.5 — Kanban is unusable on phones (columns don't fit, drag
+  // fights with native scroll). The page auto-falls-back to List
+  // below 768 px even if the saved preference is Kanban. The user
+  // can still override per-session via `forceKanbanOnMobile`.
+  const isMobile = useIsMobile();
+  const [forceKanbanOnMobile, setForceKanbanOnMobile] = useState<boolean>(false);
+  const effectiveViewMode: ViewMode = isMobile && !forceKanbanOnMobile ? 'list' : viewMode;
 
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
@@ -766,11 +775,25 @@ export default function LeadsPage(): JSX.Element {
        * view. Drag-and-drop arrives in K1.4; quick actions / SLA /
        * detail drawer arrive in Phase 2.
        */}
-      {viewMode === 'kanban' && kanbanFilters ? (
+      {/* K1.5 — when the user has Kanban selected but the screen
+          dropped below 768px, surface the auto-switch with an opt-in
+          to force Kanban anyway. Avoids silently swapping the body. */}
+      {isMobile && viewMode === 'kanban' && !forceKanbanOnMobile ? (
+        <Notice tone="info">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>{t('lens.mobileFallback')}</span>
+            <Button variant="ghost" size="sm" onClick={() => setForceKanbanOnMobile(true)}>
+              {t('lens.useKanbanAnyway')}
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
+
+      {effectiveViewMode === 'kanban' && kanbanFilters ? (
         <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
       ) : null}
 
-      {viewMode === 'list' ? (
+      {effectiveViewMode === 'list' ? (
         <>
           {/*
            * P3-03 — primary filter row stays on screen at all times.

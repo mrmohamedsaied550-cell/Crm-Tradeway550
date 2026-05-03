@@ -192,7 +192,9 @@
         "viewMode": "View",
         "list": "List",
         "kanban": "Kanban",
-        "kanbanComingNext": "Kanban view is being prepared in the next release. The list view below shows the same leads."
+        "kanbanComingNext": "Kanban view is being prepared in the next release. The list view below shows the same leads.",
+        "mobileFallback": "Kanban works best on a wider screen. We've switched to the list view automatically.",
+        "useKanbanAnyway": "Use Kanban anyway"
       },
       "kanban": {
         "newButton": "New lead",
