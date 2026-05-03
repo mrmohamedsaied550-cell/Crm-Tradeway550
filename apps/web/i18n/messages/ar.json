@@ -204,7 +204,8 @@
         "emptyPipeline": "هذا الـ pipeline لا يحتوي على مراحل بعد",
         "emptyPipelineHint": "أضف مراحل من Pipeline Builder قبل فتح اللوحة.",
         "emptyFiltered": "لا يوجد عملاء يطابقون المرشّحات الحالية",
-        "emptyFilteredHint": "امسح المرشّحات أعلاه لرؤية كل عملاء هذا الـ pipeline."
+        "emptyFilteredHint": "امسح المرشّحات أعلاه لرؤية كل عملاء هذا الـ pipeline.",
+        "moveFailed": "تعذّر نقل {name}"
       },
       "empty": "لا يوجد عملاء محتملون بعد",
       "emptyHint": "أنشئ أول عميل محتمل لبدء العمل على القمع.",

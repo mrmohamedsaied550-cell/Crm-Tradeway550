@@ -4,11 +4,24 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Loader2, Plus } from 'lucide-react';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  TouchSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, leadsApi } from '@/lib/api';
 import type { AdminUser, Lead, LeadSource, SlaStatus } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
@@ -63,12 +76,28 @@ const PER_STAGE = 50;
 export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX.Element {
   const t = useTranslations('admin.leads.kanban');
   const tCommon = useTranslations('admin.common');
+  const { toast } = useToast();
 
   const [buckets, setBuckets] = useState<StageBucket[] | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // K1.4 — drag state. `draggingId` drives the DragOverlay preview;
+  // it's set on dragStart and cleared on dragEnd.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
+
+  // PointerSensor with activationConstraint distance:6 prevents the
+  // drag from starting on a regular click (the card is also a Link
+  // — without this, every click would initiate a drag and swallow
+  // navigation).
+  // TouchSensor with delay:200 enables mobile drag without breaking
+  // tap-to-open. Mobile auto-switch to List ships in K1.5 anyway,
+  // but keep the sensor for tablet (>= 768px).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+  );
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -86,6 +115,97 @@ export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /**
+   * Optimistic move: immediately relocate the card in local state,
+   * then call the API. On failure roll back + toast. The server-side
+   * cross-pipeline guard (B3) catches accidental drops onto stages
+   * from a different pipeline — but our DnD only allows drops onto
+   * columns of the SAME board, so cross-pipeline can only happen if
+   * the data races with a pipeline change (rare; surfaced as toast).
+   */
+  const onDragStart = useCallback((e: DragStartEvent) => {
+    setDraggingId(String(e.active.id));
+  }, []);
+
+  const onDragEnd = useCallback(
+    (e: DragEndEvent) => {
+      setDraggingId(null);
+      const leadId = String(e.active.id);
+      const targetStageId = e.over ? String(e.over.id) : null;
+      if (!targetStageId || !buckets) return;
+
+      // No-op if dropped back onto the source column.
+      const sourceBucket = buckets.find((b) => b.leads.some((l) => l.id === leadId));
+      if (!sourceBucket || sourceBucket.stage.id === targetStageId) return;
+
+      const targetBucket = buckets.find((b) => b.stage.id === targetStageId);
+      if (!targetBucket) return;
+
+      const movedLead = sourceBucket.leads.find((l) => l.id === leadId);
+      if (!movedLead) return;
+
+      // 1. Optimistic update.
+      const previous = buckets;
+      const next: StageBucket[] = buckets.map((b) => {
+        if (b.stage.id === sourceBucket.stage.id) {
+          return {
+            ...b,
+            totalCount: b.totalCount - 1,
+            leads: b.leads.filter((l) => l.id !== leadId),
+          };
+        }
+        if (b.stage.id === targetBucket.stage.id) {
+          // Update the lead's stage on the in-flight optimistic copy
+          // so the card renders in the right column with the right
+          // stage badge.
+          const optimisticLead: Lead = {
+            ...movedLead,
+            stageId: targetBucket.stage.id,
+            stage: {
+              code: targetBucket.stage.code,
+              name: targetBucket.stage.name,
+              order: targetBucket.stage.order,
+              isTerminal: targetBucket.stage.isTerminal,
+            },
+          };
+          return {
+            ...b,
+            totalCount: b.totalCount + 1,
+            leads: [optimisticLead, ...b.leads],
+          };
+        }
+        return b;
+      });
+      setBuckets(next);
+
+      // 2. Fire the mutation.
+      void (async () => {
+        try {
+          await leadsApi.moveStage(leadId, { pipelineStageId: targetStageId });
+        } catch (err) {
+          // Roll back. Toast the reason — server-side error codes
+          // surface as `err.message` via ApiError.
+          setBuckets(previous);
+          toast({
+            tone: 'error',
+            title: t('moveFailed', { name: movedLead.name }),
+            body: err instanceof ApiError ? err.message : String(err),
+          });
+        }
+      })();
+    },
+    [buckets, toast, t],
+  );
+
+  const draggedLead = useMemo(() => {
+    if (!draggingId || !buckets) return null;
+    for (const b of buckets) {
+      const found = b.leads.find((l) => l.id === draggingId);
+      if (found) return found;
+    }
+    return null;
+  }, [draggingId, buckets]);
 
   if (error) {
     return (
@@ -156,16 +276,38 @@ export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX
       {allColumnsEmpty ? (
         <EmptyState title={t('emptyFiltered')} body={t('emptyFilteredHint')} />
       ) : (
-        <div
-          className={cn(
-            'flex gap-3 overflow-x-auto pb-2 transition-opacity',
-            loading ? 'opacity-60' : 'opacity-100',
-          )}
-        >
-          {buckets.map((b) => (
-            <KanbanColumn key={b.stage.id} bucket={b} userById={userById} />
-          ))}
-        </div>
+        <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+          <div
+            className={cn(
+              'flex gap-3 overflow-x-auto pb-2 transition-opacity',
+              loading ? 'opacity-60' : 'opacity-100',
+            )}
+          >
+            {buckets.map((b) => (
+              <KanbanColumn
+                key={b.stage.id}
+                bucket={b}
+                userById={userById}
+                draggingId={draggingId}
+              />
+            ))}
+          </div>
+          {/* DragOverlay renders the dragged card under the cursor.
+              Without it, the original card stays put visually and the
+              drag feels broken. */}
+          <DragOverlay dropAnimation={null}>
+            {draggedLead ? (
+              <div className="w-72 rotate-1 cursor-grabbing opacity-95">
+                <LeadCardBody
+                  lead={draggedLead}
+                  assignee={
+                    draggedLead.assignedToId ? userById.get(draggedLead.assignedToId) : null
+                  }
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       )}
     </div>
   );
@@ -176,18 +318,23 @@ export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX
 interface KanbanColumnProps {
   bucket: StageBucket;
   userById: Map<string, AdminUser>;
+  draggingId: string | null;
 }
 
-function KanbanColumn({ bucket, userById }: KanbanColumnProps): JSX.Element {
+function KanbanColumn({ bucket, userById, draggingId }: KanbanColumnProps): JSX.Element {
   const t = useTranslations('admin.leads.kanban');
   const overflow = bucket.totalCount - bucket.leads.length;
+  // K1.4 — make the column a drop target. The dnd-kit `over` event
+  // fires when the dragged card hovers over this droppable.
+  const { setNodeRef, isOver } = useDroppable({ id: bucket.stage.id });
 
   return (
     <section
       aria-label={bucket.stage.name}
       className={cn(
-        'flex h-[640px] w-72 shrink-0 flex-col rounded-lg border border-surface-border bg-surface shadow-card',
+        'flex h-[640px] w-72 shrink-0 flex-col rounded-lg border bg-surface shadow-card transition-colors',
         bucket.stage.isTerminal ? 'opacity-95' : '',
+        isOver ? 'border-brand-500 bg-brand-50/40' : 'border-surface-border',
       )}
     >
       <header className="flex items-center justify-between gap-2 border-b border-surface-border bg-surface-card px-3 py-2">
@@ -202,7 +349,7 @@ function KanbanColumn({ bucket, userById }: KanbanColumnProps): JSX.Element {
         {bucket.stage.isTerminal ? <Badge tone="inactive">{t('terminal')}</Badge> : null}
       </header>
 
-      <div className="flex-1 overflow-y-auto p-2">
+      <div ref={setNodeRef} className="flex-1 overflow-y-auto p-2">
         {bucket.leads.length === 0 ? (
           <div className="flex h-full items-center justify-center px-2 text-center text-xs text-ink-tertiary">
             {t('columnEmpty')}
@@ -211,9 +358,10 @@ function KanbanColumn({ bucket, userById }: KanbanColumnProps): JSX.Element {
           <ul className="flex flex-col gap-2">
             {bucket.leads.map((l) => (
               <li key={l.id}>
-                <LeadCard
+                <DraggableLeadCard
                   lead={l}
                   assignee={l.assignedToId ? userById.get(l.assignedToId) : null}
+                  isDragging={draggingId === l.id}
                 />
               </li>
             ))}
@@ -235,9 +383,35 @@ function KanbanColumn({ bucket, userById }: KanbanColumnProps): JSX.Element {
 interface LeadCardProps {
   lead: Lead;
   assignee: AdminUser | null | undefined;
+  isDragging?: boolean;
 }
 
-function LeadCard({ lead, assignee }: LeadCardProps): JSX.Element {
+/**
+ * K1.4 — draggable wrapper. PointerSensor.activationConstraint
+ * (distance:6) ensures a regular click navigates via the inner Link
+ * instead of starting a drag. While the card is being dragged the
+ * wrapper hides (opacity:0); the DragOverlay renders a copy under
+ * the cursor.
+ */
+function DraggableLeadCard({ lead, assignee, isDragging }: LeadCardProps): JSX.Element {
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: lead.id });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn('cursor-grab touch-none', isDragging ? 'opacity-0' : '')}
+    >
+      <LeadCardBody lead={lead} assignee={assignee} />
+    </div>
+  );
+}
+
+/**
+ * Pure card render — used by both the in-column draggable wrapper
+ * and the floating DragOverlay during a drag.
+ */
+function LeadCardBody({ lead, assignee }: LeadCardProps): JSX.Element {
   const t = useTranslations('admin.leads.kanban');
   const initials =
     (assignee?.name ?? '')
