@@ -69,6 +69,8 @@ model Tenant {
   distributionRules     DistributionRule[]
   agentCapacities       AgentCapacity[]
   leadRoutingLogs       LeadRoutingLog[]
+  /// Phase A — per-tenant rejection-reason catalogue.
+  lostReasons           LostReason[]
 
   @@map("tenants")
 }
@@ -312,6 +314,11 @@ model PipelineStage {
   name       String
   order      Int
   isTerminal Boolean  @default(false) @map("is_terminal")
+  /// Phase A — A1: classifies a terminal stage as 'won' or 'lost'.
+  /// Drives `Lead.lifecycleState` on stage moves. NULL on non-terminal
+  /// stages and on terminal stages that are neither (rare; admin can
+  /// configure later via Pipeline Builder).
+  terminalKind String? @map("terminal_kind")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -390,6 +397,33 @@ model Lead {
   lastActivityAt  DateTime? @map("last_activity_at") @db.Timestamptz(6)
   nextActionDueAt DateTime? @map("next_action_due_at") @db.Timestamptz(6)
 
+  /// Phase A — A1: lifecycle classifier derived from the lead's
+  /// current stage's `terminalKind`. Single source of truth for
+  /// "is this lead in the funnel, won, or lost?" — used by reports,
+  /// dashboards, and capacity calculations. NEVER set directly via
+  /// the API; only LeadsService.moveStage / convertToCaptain may
+  /// write it.
+  ///   'open'     — non-terminal stage; agent is working it.
+  ///   'won'      — entered a stage with terminalKind='won' (e.g. converted).
+  ///   'lost'     — entered a stage with terminalKind='lost'; requires lostReasonId.
+  ///   'archived' — manually retired (rare; admin-only undo path).
+  lifecycleState String @default("open") @map("lifecycle_state")
+
+  /// Phase A — A1: required when lifecycleState='lost'. References
+  /// the per-tenant `lost_reasons` catalogue. Cleared automatically
+  /// when the lead is moved back to a non-lost stage.
+  lostReasonId String?     @map("lost_reason_id") @db.Uuid
+  lostReason   LostReason? @relation(fields: [lostReasonId], references: [id], onDelete: Restrict)
+  /// Optional free-text elaboration on the lost reason.
+  lostNote     String?     @map("lost_note")
+
+  /// Phase A — A1: rich attribution payload (source, campaign, ad
+  /// set, ad, UTM). Populated on every create path (Meta webhook,
+  /// CSV import, manual). Distribution rules + reporting will read
+  /// from this in Phase D. Backfilled to `{ source: <flat source> }`
+  /// for legacy rows; `Lead.source` is preserved for backward compat.
+  attribution  Json?       @map("attribution")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -412,6 +446,8 @@ model Lead {
   @@index([tenantId, pipelineId, stageId])
   // Phase 1B — reporting + admin filters by (company, country).
   @@index([tenantId, companyId, countryId])
+  // Phase A — workspace + reports filter by lifecycle state.
+  @@index([tenantId, lifecycleState])
   @@map("leads")
 }
 
@@ -1063,6 +1099,10 @@ model LeadFollowUp {
   dueAt       DateTime @map("due_at") @db.Timestamptz(6)
   note        String?
   completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  /// Phase A — A1: when set + > now, the row is hidden from
+  /// "overdue" / "due-today" counters until snoozedUntil passes.
+  /// Cleared on completion.
+  snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
 
   assignedToId String? @map("assigned_to_id") @db.Uuid
   assignedTo   User?   @relation("LeadFollowUpAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
@@ -1076,6 +1116,38 @@ model LeadFollowUp {
   // Hot path: "my open follow-ups, soonest first" + the overdue scan.
   @@index([tenantId, assignedToId, completedAt, dueAt])
   @@map("lead_followups")
+}
+
+/// LostReason (Phase A — A1) — per-tenant configurable list of
+/// rejection reasons. Required when a lead is moved to a stage with
+/// `terminalKind = 'lost'`. Multi-language at the row level
+/// (labelEn / labelAr); future locales add columns without a
+/// migration of existing rows.
+///
+/// `code` is a stable machine identifier (e.g. 'no_vehicle');
+/// labels are display-only and may be edited freely. The seed
+/// installs 7 canonical reasons per tenant; admins can add /
+/// rename / reorder / deactivate via /admin/lost-reasons. The
+/// 'other' code is protected from deactivation as a fallback.
+model LostReason {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String
+  labelEn      String   @map("label_en")
+  labelAr      String   @map("label_ar")
+  isActive     Boolean  @default(true) @map("is_active")
+  displayOrder Int      @default(100) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Leads currently lost for this reason. ON DELETE RESTRICT on the
+  /// FK forbids deleting an in-use reason — admin must deactivate.
+  leads Lead[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive, displayOrder])
+  @@map("lost_reasons")
 }
 
 /// Competition (C33) — admin-managed agent / team contest definition.
