@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useLocale, useTranslations } from 'next-intl';
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Image as ImageIcon,
   Lock,
   MessageSquareDashed,
@@ -18,14 +19,23 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, conversationsApi, whatsappAccountsApi, whatsappTemplatesApi } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
+import {
+  ApiError,
+  conversationsApi,
+  usersApi,
+  whatsappAccountsApi,
+  whatsappTemplatesApi,
+} from '@/lib/api';
 import type {
+  AdminUser,
   ConversationStatus,
   WhatsAppAccount,
   WhatsAppConversation,
   WhatsAppMessage,
   WhatsAppTemplateRow,
 } from '@/lib/api-types';
+import { hasCapability } from '@/lib/auth';
 import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +52,12 @@ import { cn } from '@/lib/utils';
  *   - Status filter as a 3-way segmented control (open / closed / all).
  *   - Closed conversations show a clear notice and disable the composer.
  *   - Messages render with day separators and consecutive-bubble grouping.
+ *
+ * PL-1 (final-sprint) addition:
+ *   - Agents with `whatsapp.handover` can transfer the active conversation
+ *     directly from the chat header. The button is hidden for users
+ *     without the capability (sales agents); the server is the
+ *     authoritative gate.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -127,6 +143,20 @@ export default function InboxPage(): JSX.Element {
   const [draft, setDraft] = useState<string>('');
   const [sending, setSending] = useState<boolean>(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // ─────── PL-1 — handover (transfer to another agent) ───────
+  const { toast } = useToast();
+  const canHandover = hasCapability('whatsapp.handover');
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [handoverOpen, setHandoverOpen] = useState<boolean>(false);
+  const [handoverForm, setHandoverForm] = useState<{
+    newAssigneeId: string;
+    mode: 'full' | 'clean' | 'summary';
+    summary: string;
+    notify: boolean;
+  }>({ newAssigneeId: '', mode: 'full', summary: '', notify: true });
+  const [handing, setHanding] = useState<boolean>(false);
+  const [handoverError, setHandoverError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLLIElement | null>(null);
 
@@ -344,6 +374,50 @@ export default function InboxPage(): JSX.Element {
       setSendError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setSending(false);
+    }
+  }
+
+  // PL-1 — open the transfer modal. Lazy-loads the active-user list
+  // the first time the modal is shown so we don't spam /users on
+  // every inbox mount.
+  async function openHandover(): Promise<void> {
+    setHandoverOpen(true);
+    setHandoverError(null);
+    setHandoverForm({ newAssigneeId: '', mode: 'full', summary: '', notify: true });
+    if (users.length > 0) return;
+    try {
+      const page = await usersApi.list({ status: 'active', limit: 200 });
+      setUsers(page.items);
+    } catch (err) {
+      setHandoverError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function onHandover(e: FormEvent<HTMLFormElement>): Promise<void> {
+    e.preventDefault();
+    if (!selectedId || !handoverForm.newAssigneeId) return;
+    setHanding(true);
+    setHandoverError(null);
+    try {
+      await conversationsApi.handover(selectedId, {
+        newAssigneeId: handoverForm.newAssigneeId,
+        mode: handoverForm.mode,
+        ...(handoverForm.mode === 'summary' && handoverForm.summary
+          ? { summary: handoverForm.summary }
+          : {}),
+        notify: handoverForm.notify,
+      });
+      toast({ tone: 'success', title: t('handover.done') });
+      setHandoverOpen(false);
+      // The 'clean' mode closes the conversation server-side; reload
+      // the list so its status badge updates immediately.
+      await reloadList();
+      // If still open in this tab, refresh the message thread too.
+      if (selectedId) await reloadMessages(selectedId);
+    } catch (err) {
+      setHandoverError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setHanding(false);
     }
   }
 
@@ -567,6 +641,26 @@ export default function InboxPage(): JSX.Element {
                     })()}
                   </span>
                 </div>
+                {/*
+                 * PL-1 — handover trigger. Hidden for users without the
+                 * `whatsapp.handover` capability (sales agents); for
+                 * everyone else (TLs / ops) it sits in the trailing
+                 * corner of the chat header. The server is the
+                 * authoritative gate even when the button is shown.
+                 */}
+                {canHandover ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ms-auto"
+                    onClick={() => void openHandover()}
+                    disabled={isClosed}
+                    title={isClosed ? t('handover.disabledClosed') : undefined}
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t('handover.cta')}
+                  </Button>
+                ) : null}
               </div>
 
               {/* Messages */}
@@ -821,6 +915,102 @@ export default function InboxPage(): JSX.Element {
             />
           </Field>
         </div>
+      </Modal>
+
+      {/*
+       * PL-1 — handover modal. Mirrors the admin /admin/whatsapp
+       * handover form so the operator's mental model is identical.
+       * The chat header guards `disabled` on closed conversations,
+       * but we keep the form submit guard on the disabled / empty
+       * cases too (defense in depth).
+       */}
+      <Modal
+        open={handoverOpen}
+        title={t('handover.title')}
+        onClose={() => setHandoverOpen(false)}
+        width="lg"
+      >
+        <form onSubmit={onHandover} className="flex flex-col gap-3">
+          {handoverError ? <Notice tone="error">{handoverError}</Notice> : null}
+          <p className="text-sm text-ink-secondary">{t('handover.hint')}</p>
+
+          <Field label={t('handover.newAssignee')} required>
+            <Select
+              value={handoverForm.newAssigneeId}
+              onChange={(e) => setHandoverForm({ ...handoverForm, newAssigneeId: e.target.value })}
+              required
+            >
+              <option value="" disabled>
+                {t('handover.pickAssignee')}
+              </option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} — {u.email}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="text-sm font-medium text-ink-primary">
+              {t('handover.modeLabel')}
+            </legend>
+            {(['full', 'clean', 'summary'] as const).map((m) => (
+              <label key={m} className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="agent-handover-mode"
+                  value={m}
+                  checked={handoverForm.mode === m}
+                  onChange={() => setHandoverForm({ ...handoverForm, mode: m })}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-medium">{t(`handover.modes.${m}.title`)}</span>
+                  <span className="ms-1 text-ink-tertiary">— {t(`handover.modes.${m}.body`)}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+
+          {handoverForm.mode === 'summary' ? (
+            <Field label={t('handover.summary')} required>
+              <Textarea
+                value={handoverForm.summary}
+                onChange={(e) => setHandoverForm({ ...handoverForm, summary: e.target.value })}
+                rows={4}
+                required
+                maxLength={2000}
+                placeholder={t('handover.summaryPlaceholder')}
+              />
+            </Field>
+          ) : null}
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={handoverForm.notify}
+              onChange={(e) => setHandoverForm({ ...handoverForm, notify: e.target.checked })}
+            />
+            {t('handover.notify')}
+          </label>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" type="button" onClick={() => setHandoverOpen(false)}>
+              {t('cancel')}
+            </Button>
+            <Button
+              type="submit"
+              loading={handing}
+              disabled={
+                !handoverForm.newAssigneeId ||
+                (handoverForm.mode === 'summary' && !handoverForm.summary.trim())
+              }
+            >
+              {t('handover.confirm')}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

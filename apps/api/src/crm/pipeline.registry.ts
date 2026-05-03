@@ -1,11 +1,33 @@
 /**
- * Default pipeline stages — single shared funnel per tenant in MVP.
+ * Well-known stage definitions — the canonical 5-stage funnel that
+ * the seed installs into every new tenant's default pipeline.
  *
- * Per-Company × Country pipelines (per the PRD) layer on later;
- * each tenant's seed currently produces this 5-stage catalogue.
+ * Phase 1B note: this file is NO LONGER an enum that constrains
+ * what stage codes the system accepts. Custom pipelines (built via
+ * the Pipeline Builder admin UI) may define any codes they want;
+ * the API treats `stage.code` as an open string. The constants
+ * below are kept for two narrow reasons:
  *
- * Order MUST be unique-per-tenant and starts at 10 (gaps make manual
- * insertion of intermediate stages later painless).
+ *   1. SEED — `seed.ts` reads `PIPELINE_STAGE_DEFINITIONS` to
+ *      install the default pipeline for new tenants. Existing
+ *      tenants pre-Pipeline-Builder rely on these exact 5 codes
+ *      and the seed keeps the contract.
+ *
+ *   2. SYSTEM CONTRACTS — two codes are referenced by name from
+ *      lifecycle code:
+ *        • `DEFAULT_STAGE_CODE  ('new')`       — entry point used
+ *           by CSV import + Meta webhook ingest. Every pipeline
+ *           MUST define a stage with this code, or those callers
+ *           throw `pipeline.stage.not_found`.
+ *        • `CONVERTED_STAGE_CODE ('converted')` — terminal stage
+ *           used by `CaptainsService.convertFromLead`. Same
+ *           contract: every pipeline must define this code if it
+ *           wants leads on it to be convertible to captains.
+ *      Pipeline Builder admins are free to add any other codes
+ *      alongside these; the system only cares about these two.
+ *
+ * Order MUST be unique-per-pipeline and starts at 10 (gaps make
+ * manual insertion of intermediate stages later painless).
  */
 
 export interface PipelineStageDef {

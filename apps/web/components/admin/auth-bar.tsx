@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NotificationBell } from '@/components/admin/notification-bell';
+import { FollowUpBell } from '@/components/agent/follow-up-bell';
 import { ApiError, authApi } from '@/lib/api';
 import {
   clearAuth,
@@ -122,6 +123,7 @@ export function AuthBar(): JSX.Element {
         </span>
       </div>
       <div className="flex items-center gap-2">
+        <FollowUpBell />
         <NotificationBell />
         <Button variant="secondary" size="sm" onClick={onSignOut}>
           <LogOut className="h-3.5 w-3.5" />

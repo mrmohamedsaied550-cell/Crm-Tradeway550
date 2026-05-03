@@ -2,14 +2,15 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
-import { AssignmentService } from '../crm/assignment.service';
+import { buildAttribution, type AttributionInput } from '../crm/attribution.util';
+import { LeadsService } from '../crm/leads.service';
 import { normalizeE164WithDefault } from '../crm/phone.util';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { DEFAULT_STAGE_CODE, type LeadSource } from '../crm/pipeline.registry';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { requireTenantId } from '../tenants/tenant-context';
+import { requireTenantId, tenantContext } from '../tenants/tenant-context';
 import { CsvParseError, parseCsv } from './csv.util';
 import type { CsvImportDto } from './ingestion.dto';
 
@@ -46,7 +47,13 @@ export class LeadIngestionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
-    private readonly assignment: AssignmentService,
+    /**
+     * A5.5 — routing for ingested leads now goes through
+     * LeadsService.autoAssign which delegates to DistributionService.
+     * Source-based + company/country/team rules now apply to Meta
+     * webhook + CSV-imported leads identically to manual creation.
+     */
+    private readonly leads: LeadsService,
     private readonly sla: SlaService,
     private readonly audit: AuditService,
     private readonly tenantSettings: TenantSettingsService,
@@ -109,6 +116,12 @@ export class LeadIngestionService {
     }
 
     const stage = await this.pipeline.findByCodeOrThrow(DEFAULT_STAGE_CODE);
+    // Phase 1B — CSV import currently always lands on the tenant
+    // default pipeline (no company/country mapping yet). Per-import
+    // pipeline selection ships in a follow-up.
+    const defaultPipelineId = await this.prisma.withTenant(tenantId, (tx) =>
+      this.pipeline.findDefaultPipelineIdInTx(tx),
+    );
     const settings = await this.tenantSettings.getCurrent();
     const errors: { row: number; reason: string }[] = [];
     let created = 0;
@@ -119,8 +132,41 @@ export class LeadIngestionService {
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i] as Record<string, string>;
         const lineNumber = i + 2; // header is line 1
+        // Phase A — A4: build per-row attribution from the optional
+        // mapping columns. Helper: look up `row[csvHeader]` and trim
+        // — empty / missing values become undefined and are
+        // dropped by buildAttribution.
+        const cell = (header: string | undefined): string | undefined => {
+          if (!header) return undefined;
+          const v = (row[header] ?? '').trim();
+          return v.length > 0 ? v : undefined;
+        };
+        const rowAttribution: AttributionInput = {
+          subSource: 'csv_import',
+          campaign:
+            cell(mapping.campaignId) || cell(mapping.campaignName)
+              ? { id: cell(mapping.campaignId), name: cell(mapping.campaignName) }
+              : undefined,
+          adSet:
+            cell(mapping.adSetId) || cell(mapping.adSetName)
+              ? { id: cell(mapping.adSetId), name: cell(mapping.adSetName) }
+              : undefined,
+          ad:
+            cell(mapping.adId) || cell(mapping.adName)
+              ? { id: cell(mapping.adId), name: cell(mapping.adName) }
+              : undefined,
+          utm: {
+            source: cell(mapping.utmSource),
+            medium: cell(mapping.utmMedium),
+            campaign: cell(mapping.utmCampaign),
+            term: cell(mapping.utmTerm),
+            content: cell(mapping.utmContent),
+          },
+        };
+
         const result = await this.tryCreateLead(tx, {
           tenantId,
+          pipelineId: defaultPipelineId,
           stageId: stage.id,
           stageIsTerminal: stage.isTerminal,
           name: (row[mapping.name] ?? '').trim(),
@@ -130,6 +176,7 @@ export class LeadIngestionService {
           actorUserId,
           defaultDialCode: settings.defaultDialCode,
           slaMinutes: settings.slaMinutes,
+          attribution: rowAttribution,
         });
         if (result.kind === 'created') {
           created += 1;
@@ -187,7 +234,22 @@ export class LeadIngestionService {
     email?: string | null;
     source: LeadSource;
     actorUserId?: string | null;
+    /**
+     * Audit-log payload (leadgenId, pageId, formId, sourceId). Free-
+     * form; written to `audit_events.payload`. Distinct from
+     * `attribution` below — that one is structured + lands on the
+     * lead row for distribution rules + reporting.
+     */
     metadata?: Record<string, unknown>;
+    /**
+     * Phase A — A4: structured attribution forwarded to
+     * `Lead.attribution`. The webhook controller assembles this
+     * from the parsed Meta event (page_id, form_id, ad_id,
+     * adgroup_id, leadgen_id) so distribution rules can reach
+     * `attribution.campaign.id` etc. without parsing the raw
+     * audit payload.
+     */
+    attribution?: AttributionInput | null;
   }): Promise<
     { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
   > {
@@ -228,6 +290,10 @@ export class LeadIngestionService {
 
       const r = await this.tryCreateLead(tx, {
         tenantId: input.tenantId,
+        // Phase 1B — webhook ingest also lands on the tenant default
+        // until per-source mapping (Track B) lets a Meta source bind
+        // to a specific (company, country) → pipeline tuple.
+        pipelineId: defaultPipeline.id,
         stageId: stage.id,
         stageIsTerminal: stage.isTerminal,
         defaultDialCode: settings.defaultDialCode,
@@ -237,6 +303,8 @@ export class LeadIngestionService {
         email: input.email ? input.email.trim() || null : null,
         source: input.source,
         actorUserId: input.actorUserId ?? null,
+        // Phase A — A4: structured attribution from the Meta event.
+        attribution: input.attribution ?? null,
       });
       await this.audit.writeInTx(tx, input.tenantId, {
         action: r.kind === 'created' ? 'lead.ingest.meta' : `lead.ingest.meta.${r.kind}`,
@@ -269,6 +337,12 @@ export class LeadIngestionService {
     tx: Prisma.TransactionClient,
     input: {
       tenantId: string;
+      /**
+       * Phase 1B — denormalised pipeline id; persisted on the lead so
+       * Kanban + reporting can filter without joining stages. Always
+       * equals the parent of `stageId`.
+       */
+      pipelineId: string;
       stageId: string;
       stageIsTerminal: boolean;
       name: string;
@@ -278,6 +352,13 @@ export class LeadIngestionService {
       actorUserId: string | null;
       defaultDialCode: string;
       slaMinutes: number;
+      /**
+       * Phase A — A4: optional rich attribution payload. The helper
+       * `buildAttribution` is invoked here so callers can pass a
+       * partial input (sub-source, campaign, ad, utm) without
+       * repeating the source-mirroring logic.
+       */
+      attribution?: AttributionInput | null;
     },
   ): Promise<
     { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
@@ -323,6 +404,12 @@ export class LeadIngestionService {
     const slaDueAt = input.stageIsTerminal ? null : this.sla.computeDueAt(now, input.slaMinutes);
     const slaStatus = input.stageIsTerminal ? 'paused' : 'active';
 
+    // Phase A — A4: build the JSONB attribution payload from the
+    // ingest-side flat source + the optional rich payload (Meta
+    // campaign/ad ids, CSV-mapped UTM fields). Always non-null
+    // post-A4 so reports can rely on it.
+    const attribution = buildAttribution(input.source, input.attribution ?? null);
+
     const lead = await tx.lead.create({
       data: {
         tenantId: input.tenantId,
@@ -330,6 +417,12 @@ export class LeadIngestionService {
         phone,
         email: input.email,
         source: input.source,
+        attribution: attribution as unknown as Prisma.InputJsonValue,
+        // Phase 1B — populate the denormalised pipeline pointer so
+        // ingested leads participate in Kanban + reporting from day
+        // one. company/country stay NULL until per-source mapping
+        // ships in a follow-up (Track B).
+        pipelineId: input.pipelineId,
         stageId: input.stageId,
         assignedToId: null,
         createdById: input.actorUserId,
@@ -351,25 +444,45 @@ export class LeadIngestionService {
     return { kind: 'created', id: lead.id };
   }
 
-  /** Best-effort auto-assign — failures are logged and swallowed. */
+  /**
+   * Best-effort auto-assign — failures are logged and swallowed.
+   *
+   * A5.5 cutover: routing for ingested leads (CSV import + Meta
+   * webhook) now goes through LeadsService.autoAssign which
+   * delegates to DistributionService.route(). That means:
+   *
+   *   - Source / company / country / team rules apply to ingested
+   *     leads identically to manual /auto-assign — closing the
+   *     PL-3-era gap where ingestion bypassed the rule lookup.
+   *   - A `lead_routing_logs` row is written for every ingest
+   *     auto-assign attempt (including no-eligible cases).
+   *   - The activity payload carries the strategy that fired
+   *     (specific_user / round_robin / weighted / capacity) plus
+   *     the matched ruleId.
+   *
+   * The Meta webhook is unauthenticated and runs without an
+   * AsyncLocalStorage tenant context (the routing row lookup is the
+   * only "tenant resolution" the request gets). LeadsService.autoAssign
+   * uses requireTenantId() internally, so we wrap the call in
+   * tenantContext.run to set the scope synthetically. This is the
+   * same pattern lead.test.ts uses; it's safe to nest if the
+   * caller already has context (the inner scope wins).
+   */
   private async tryAutoAssign(
     tenantId: string,
     leadId: string,
     actorUserId: string | null,
   ): Promise<void> {
     try {
-      await this.prisma.withTenant(tenantId, async (tx) => {
-        await this.assignment.assignLeadViaRoundRobin({
-          tx,
-          leadId,
-          tenantId,
-          excludeUserIds: [],
-          activityType: 'auto_assignment',
-          actorUserId,
-          body: 'Lead auto-assigned at ingest via round-robin',
-          payload: { event: 'auto_assignment', strategy: 'round_robin', stage: 'ingest' },
-        });
-      });
+      await tenantContext.run(
+        // tenantCode is synthetic — autoAssign + DistributionService
+        // only consume tenantId from the context; tenantCode is here
+        // to satisfy the type contract.
+        { tenantId, tenantCode: '__ingest__', source: 'header' },
+        async () => {
+          await this.leads.autoAssign(leadId, actorUserId);
+        },
+      );
     } catch (err) {
       // Not fatal — the lead exists, an admin can assign manually.
       this.logger.warn(

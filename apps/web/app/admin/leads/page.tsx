@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Plus, Upload, UserPlus } from 'lucide-react';
+import { Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -13,21 +13,81 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
-import { ApiError, leadsApi, pipelineApi, usersApi } from '@/lib/api';
+import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
+import { useIsMobile } from '@/lib/use-media-query';
+import { cn } from '@/lib/utils';
+import {
+  ApiError,
+  companiesApi,
+  countriesApi,
+  leadsApi,
+  pipelineApi,
+  pipelinesApi,
+  usersApi,
+} from '@/lib/api';
 import type {
   AdminUser,
+  Company,
+  Country,
   Lead,
   LeadSource,
   LeadStageCode,
+  Pipeline,
   PipelineStage,
   SlaStatus,
 } from '@/lib/api-types';
+
+/**
+ * Phase 1 — Lead Workspace.
+ *
+ * The page is a shell with three slots:
+ *   1. Header (title, primary actions, create / import).
+ *   2. Lens row — pipeline picker + view-mode toggle (List | Kanban).
+ *   3. Body — depends on view mode. List uses the legacy DataTable;
+ *      Kanban (added in K1.3) draws a board from `leadsApi.listByStage`.
+ *
+ * View mode persists per pipeline in localStorage so an agent who
+ * lives on Kanban for one pipeline and List for another keeps both
+ * preferences. (Server-side preferences land in Phase 3.)
+ */
+
+type ViewMode = 'list' | 'kanban';
+
+const VIEW_MODE_KEY_PREFIX = 'crm.leads.viewMode.';
+const ACTIVE_PIPELINE_KEY = 'crm.leads.activePipelineId';
+
+function readViewMode(pipelineId: string | null): ViewMode {
+  if (!pipelineId || typeof window === 'undefined') return 'list';
+  const v = window.localStorage.getItem(VIEW_MODE_KEY_PREFIX + pipelineId);
+  return v === 'kanban' ? 'kanban' : 'list';
+}
+
+function writeViewMode(pipelineId: string, mode: ViewMode): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(VIEW_MODE_KEY_PREFIX + pipelineId, mode);
+}
+
+function readActivePipelineId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(ACTIVE_PIPELINE_KEY);
+}
+
+function writeActivePipelineId(id: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(ACTIVE_PIPELINE_KEY, id);
+}
 
 interface CreateForm {
   name: string;
   phone: string;
   email: string;
   source: LeadSource;
+  /**
+   * Phase 1B — explicit (company, country) on create. Both optional;
+   * empty string falls back to the tenant default pipeline.
+   */
+  companyId: string;
+  countryId: string;
   stageCode: LeadStageCode | '';
   assignedToId: string;
 }
@@ -37,6 +97,8 @@ const EMPTY_CREATE_FORM: CreateForm = {
   phone: '',
   email: '',
   source: 'manual',
+  companyId: '',
+  countryId: '',
   stageCode: '',
   assignedToId: '',
 };
@@ -95,12 +157,44 @@ export default function LeadsPage(): JSX.Element {
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  // Phase 1B — companies + countries drive the create form's
+  // (company × country) pickers so the new lead lands on the right
+  // pipeline. Loaded once on mount; refreshing on filter changes
+  // would be wasteful.
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Phase 1 — workspace shell state.
+  // Pipelines are loaded once on mount; the active pipeline drives
+  // the future Kanban columns and persists across reloads.
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [activePipelineId, setActivePipelineId] = useState<string | null>(null);
+  // View mode is per-pipeline so an agent who lives on Kanban for
+  // pipeline A and List for pipeline B keeps both preferences.
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  // K1.5 — Kanban is unusable on phones (columns don't fit, drag
+  // fights with native scroll). The page auto-falls-back to List
+  // below 768 px even if the saved preference is Kanban. The user
+  // can still override per-session via `forceKanbanOnMobile`.
+  const isMobile = useIsMobile();
+  const [forceKanbanOnMobile, setForceKanbanOnMobile] = useState<boolean>(false);
+  const effectiveViewMode: ViewMode = isMobile && !forceKanbanOnMobile ? 'list' : viewMode;
+
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
+  // Q3 — debounced mirror of `search`. The text input updates
+  // `search` synchronously (responsive typing), but the API calls
+  // and Kanban refetches read `debouncedSearch`, throttling actual
+  // network traffic to one request per 250 ms of typing pause.
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(search), 250);
+    return () => window.clearTimeout(id);
+  }, [search]);
   // P3-03 — advanced filters. Empty string means "any" (mapped to
   // `undefined` on the wire so the API treats them as not-passed).
   const [filterSource, setFilterSource] = useState<LeadSource | ''>('');
@@ -144,10 +238,16 @@ export default function LeadsPage(): JSX.Element {
         ? new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString()
         : undefined;
 
-      const [page, st, usrs] = await Promise.all([
+      const [page, st, usrs, cs, cos] = await Promise.all([
         leadsApi.list({
+          // Q2 — narrow the list to the active pipeline so the picker
+          // actually means something here. Was a no-op before — the
+          // list returned every pipeline's leads regardless of which
+          // pipeline the user thought they were looking at.
+          pipelineId: activePipelineId ?? undefined,
           stageCode: filterStage || undefined,
-          q: search.trim() || undefined,
+          // Q3 — `debouncedSearch` is `search` lagged by 250 ms.
+          q: debouncedSearch.trim() || undefined,
           source: filterSource || undefined,
           slaStatus: filterSla || undefined,
           assignedToId,
@@ -157,22 +257,34 @@ export default function LeadsPage(): JSX.Element {
           hasOverdueFollowup: filterOverdue || undefined,
           limit: 100,
         }),
-        pipelineApi.listStages(),
+        // Q2 — load stages from the ACTIVE pipeline, not the tenant
+        // default. Without this, the stage filter dropdown showed
+        // stages from a different pipeline whenever the picker was
+        // on a custom pipeline (and selecting one of those stage
+        // codes filtered against the wrong pipeline's stage UUID).
+        activePipelineId
+          ? pipelinesApi.stagesOf(activePipelineId).catch(() => [] as PipelineStage[])
+          : pipelineApi.listStages().catch(() => [] as PipelineStage[]),
         usersApi
           .list({ status: 'active', limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
+        companiesApi.list().catch(() => [] as Company[]),
+        countriesApi.list().catch(() => [] as Country[]),
       ]);
       setRows(page.items);
       setStages(st);
       setUsers(usrs.items);
+      setCompanies(cs);
+      setCountries(cos);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
   }, [
+    activePipelineId,
     filterStage,
-    search,
+    debouncedSearch,
     filterSource,
     filterSla,
     filterAssignee,
@@ -180,6 +292,47 @@ export default function LeadsPage(): JSX.Element {
     filterCreatedTo,
     filterOverdue,
   ]);
+
+  // Phase 1 — load pipelines once on mount; pick the active one
+  // from localStorage (must still exist + be active), else the
+  // tenant default. The result drives the lens row's pipeline
+  // picker and the future Kanban view.
+  useEffect(() => {
+    void (async () => {
+      const list = await pipelinesApi.list().catch(() => [] as Pipeline[]);
+      setPipelines(list);
+      const stored = readActivePipelineId();
+      const storedStillValid = stored ? list.find((p) => p.id === stored && p.isActive) : null;
+      const fallback =
+        list.find((p) => p.isDefault && p.isActive) ?? list.find((p) => p.isActive) ?? null;
+      const chosen = storedStillValid ?? fallback;
+      if (chosen) {
+        setActivePipelineId(chosen.id);
+        setViewMode(readViewMode(chosen.id));
+      }
+    })();
+  }, []);
+
+  // Phase 1 — when the active pipeline changes, persist it and
+  // refresh the per-pipeline view-mode preference.
+  //
+  // Q2 — also reset the stage filter on pipeline change. Stage codes
+  // are scoped to a pipeline; an old code (e.g. 'contacted' from
+  // pipeline A) does not generally exist in pipeline B and would
+  // either return zero leads silently or hit a 404 from the
+  // server-side resolver. Clearing on switch keeps the user out of
+  // that confusing state.
+  useEffect(() => {
+    if (!activePipelineId) return;
+    writeActivePipelineId(activePipelineId);
+    setViewMode(readViewMode(activePipelineId));
+    setFilterStage('');
+  }, [activePipelineId]);
+
+  function changeViewMode(mode: ViewMode): void {
+    setViewMode(mode);
+    if (activePipelineId) writeViewMode(activePipelineId, mode);
+  }
 
   /** P3-03 — true when ANY filter is non-empty. Drives the empty-state copy. */
   const anyFilterActive: boolean =
@@ -191,6 +344,47 @@ export default function LeadsPage(): JSX.Element {
     Boolean(filterCreatedFrom) ||
     Boolean(filterCreatedTo) ||
     filterOverdue;
+
+  /**
+   * Phase 1 — Kanban filter shape. Mirrors the list view's filters
+   * minus the stage selector (the board is grouped BY stage so a
+   * stage filter makes no sense on it). Recomputed on every render
+   * but the KanbanBoard memos its fetcher on the same shape, so
+   * unchanged filters don't trigger a re-fetch.
+   */
+  const kanbanFilters: KanbanFilters | null = useMemo(
+    () =>
+      activePipelineId
+        ? {
+            pipelineId: activePipelineId,
+            // Q3 — debounced source so the Kanban refetch doesn't
+            // fire on every keystroke.
+            ...(debouncedSearch.trim() && { q: debouncedSearch.trim() }),
+            ...(filterSource && { source: filterSource }),
+            ...(filterSla && { slaStatus: filterSla }),
+            ...(filterAssignee &&
+              filterAssignee !== '__unassigned__' && { assignedToId: filterAssignee }),
+            ...(filterAssignee === '__unassigned__' && { unassigned: true }),
+            ...(filterCreatedFrom && {
+              createdFrom: new Date(`${filterCreatedFrom}T00:00:00.000Z`).toISOString(),
+            }),
+            ...(filterCreatedTo && {
+              createdTo: new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString(),
+            }),
+            ...(filterOverdue && { hasOverdueFollowup: true }),
+          }
+        : null,
+    [
+      activePipelineId,
+      debouncedSearch,
+      filterSource,
+      filterSla,
+      filterAssignee,
+      filterCreatedFrom,
+      filterCreatedTo,
+      filterOverdue,
+    ],
+  );
 
   function clearFilters(): void {
     setFilterStage('');
@@ -316,6 +510,11 @@ export default function LeadsPage(): JSX.Element {
         phone: form.phone,
         email: form.email || undefined,
         source: form.source,
+        // Phase 1B — pass company/country so the server resolves the
+        // right pipeline; pass stageCode (resolved per-pipeline) when
+        // the operator picked one explicitly.
+        companyId: form.companyId || undefined,
+        countryId: form.countryId || undefined,
         stageCode: form.stageCode || undefined,
         assignedToId: form.assignedToId || undefined,
       });
@@ -548,27 +747,108 @@ export default function LeadsPage(): JSX.Element {
       />
 
       {/*
-       * P3-03 — primary filter row stays on screen at all times.
-       * The advanced panel (source / SLA / assignee / created-at /
-       * overdue) is collapsed by default to keep the page tidy and
-       * expanded on demand.
+       * Phase 1 — Lens row. Pipeline picker on the left, view-mode
+       * toggle on the right. Both persist per-user via localStorage.
+       * When only one pipeline exists the picker is shown but
+       * disabled (still informative — the user knows what they're
+       * looking at).
+       */}
+      {pipelines.length > 0 ? (
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-surface-border bg-surface-card px-3 py-2 shadow-card">
+          <div className="flex items-end gap-3">
+            <Field label={t('lens.pipeline')}>
+              <Select
+                value={activePipelineId ?? ''}
+                onChange={(e) => setActivePipelineId(e.target.value)}
+                disabled={pipelines.length <= 1}
+                className="min-w-[220px]"
+              >
+                {pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.isDefault ? ` · ${t('lens.default')}` : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          <div
+            className="inline-flex h-9 items-center rounded-md border border-surface-border bg-surface p-0.5"
+            role="tablist"
+            aria-label={t('lens.viewMode')}
+          >
+            {(['list', 'kanban'] as const).map((m) => {
+              const Icon = m === 'list' ? List : Columns;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === m}
+                  onClick={() => changeViewMode(m)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded px-3 py-1 text-sm font-medium transition-colors',
+                    viewMode === m
+                      ? 'bg-surface-card text-brand-700 shadow-sm'
+                      : 'text-ink-secondary hover:text-ink-primary',
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t(`lens.${m}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/*
+       * Phase 1 — Kanban view. Renders a board grouped by the active
+       * pipeline's stages, sharing the same filter set as the list
+       * view. Drag-and-drop arrives in K1.4; quick actions / SLA /
+       * detail drawer arrive in Phase 2.
+       */}
+      {/* K1.5 — when the user has Kanban selected but the screen
+          dropped below 768px, surface the auto-switch with an opt-in
+          to force Kanban anyway. Avoids silently swapping the body. */}
+      {isMobile && viewMode === 'kanban' && !forceKanbanOnMobile ? (
+        <Notice tone="info">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>{t('lens.mobileFallback')}</span>
+            <Button variant="ghost" size="sm" onClick={() => setForceKanbanOnMobile(true)}>
+              {t('lens.useKanbanAnyway')}
+            </Button>
+          </div>
+        </Notice>
+      ) : null}
+
+      {/*
+       * Q1 — primary filter row + advanced panel are SHARED state and
+       * apply to both views. Lifted out of the list-only conditional
+       * so Kanban users can also filter, search, and clear.
+       *
+       * The stage filter (`filterStage`) is List-specific because the
+       * Kanban view groups BY stage — narrowing to one stage there
+       * would just hide the other columns. Hidden in Kanban.
        */}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="w-full max-w-xs">
-          <Field label={t('filterByStage')}>
-            <Select
-              value={filterStage}
-              onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              {stages.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
+        {effectiveViewMode === 'list' ? (
+          <div className="w-full max-w-xs">
+            <Field label={t('filterByStage')}>
+              <Select
+                value={filterStage}
+                onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
+              >
+                <option value="">{tCommon('all')}</option>
+                {stages.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        ) : null}
         <div className="w-full max-w-sm">
           <Field label={t('search')}>
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
@@ -653,112 +933,126 @@ export default function LeadsPage(): JSX.Element {
         </div>
       ) : null}
 
-      {error ? (
-        <Notice tone="error">
-          <div className="flex items-start justify-between gap-3">
-            <span>{error}</span>
-            <Button variant="ghost" size="sm" onClick={() => void reload()}>
-              {tCommon('retry')}
-            </Button>
-          </div>
-        </Notice>
+      {effectiveViewMode === 'kanban' && kanbanFilters ? (
+        <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
       ) : null}
-      {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      {!loading && !error && rows.length === 0 ? (
-        <EmptyState
-          title={anyFilterActive ? t('emptyFiltered') : t('empty')}
-          body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
-          action={
-            anyFilterActive ? (
-              <Button variant="secondary" size="sm" onClick={clearFilters}>
-                {tCommon('clearFilters')}
-              </Button>
-            ) : (
-              <Button variant="primary" size="sm" onClick={openNew}>
-                {t('newButton')}
-              </Button>
-            )
-          }
-        />
-      ) : (
+      {effectiveViewMode === 'list' ? (
         <>
-          {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
-          {selectedIds.size > 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
-              <span className="font-medium text-brand-800">
-                {t('bulk.selected', { n: selectedIds.size })}
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setBulkAssignTarget('');
-                    setBulkAssignOpen(true);
-                  }}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.assign')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setBulkStageTarget('');
-                    setBulkStageOpen(true);
-                  }}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.stage')}
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => void onBulkDelete()}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.delete')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedIds(new Set())}
-                  disabled={bulkSubmitting}
-                >
-                  {t('bulk.clear')}
+          {/*
+           * Q1 — the filter row above is now shared. The list view
+           * keeps its own load-error / notice / empty-state /
+           * DataTable / bulk-action bar below.
+           */}
+
+          {error ? (
+            <Notice tone="error">
+              <div className="flex items-start justify-between gap-3">
+                <span>{error}</span>
+                <Button variant="ghost" size="sm" onClick={() => void reload()}>
+                  {tCommon('retry')}
                 </Button>
               </div>
-            </div>
+            </Notice>
           ) : null}
+          {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-          <DataTable
-            columns={columns}
-            rows={rows}
-            keyOf={(r) => r.id}
-            loading={loading}
-            skeletonRows={6}
-            selection={{
-              selectedIds,
-              onChange: setSelectedIds,
-              ariaLabel: t('bulk.selectRow'),
-            }}
-            rowActions={(row) => (
-              <>
-                <Link
-                  href={`/admin/leads/${row.id}`}
-                  className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-                >
-                  {t('openDetail')}
-                </Link>
-                <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-                  {tCommon('delete')}
-                </Button>
-              </>
-            )}
-          />
+          {!loading && !error && rows.length === 0 ? (
+            <EmptyState
+              title={anyFilterActive ? t('emptyFiltered') : t('empty')}
+              body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
+              action={
+                anyFilterActive ? (
+                  <Button variant="secondary" size="sm" onClick={clearFilters}>
+                    {tCommon('clearFilters')}
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={openNew}>
+                    {t('newButton')}
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
+              {selectedIds.size > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+                  <span className="font-medium text-brand-800">
+                    {t('bulk.selected', { n: selectedIds.size })}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setBulkAssignTarget('');
+                        setBulkAssignOpen(true);
+                      }}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.assign')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setBulkStageTarget('');
+                        setBulkStageOpen(true);
+                      }}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.stage')}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => void onBulkDelete()}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.delete')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedIds(new Set())}
+                      disabled={bulkSubmitting}
+                    >
+                      {t('bulk.clear')}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              <DataTable
+                columns={columns}
+                rows={rows}
+                keyOf={(r) => r.id}
+                loading={loading}
+                skeletonRows={6}
+                selection={{
+                  selectedIds,
+                  onChange: setSelectedIds,
+                  ariaLabel: t('bulk.selectRow'),
+                }}
+                rowActions={(row) => (
+                  <>
+                    <Link
+                      href={`/admin/leads/${row.id}`}
+                      className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                    >
+                      {t('openDetail')}
+                    </Link>
+                    <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                      {tCommon('delete')}
+                    </Button>
+                  </>
+                )}
+              />
+            </>
+          )}
         </>
-      )}
+      ) : null}
 
       {/* P3-05 — bulk assign modal */}
       <Modal
@@ -998,6 +1292,49 @@ export default function LeadsPage(): JSX.Element {
               ))}
             </Select>
           </Field>
+          {/* Phase 1B — explicit (company × country). Both optional;
+              empty values let the server fall back to the tenant default
+              pipeline. The country dropdown is filtered by the chosen
+              company so admins can't pick an invalid (company, country)
+              tuple. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label={t('company') ?? 'Company'}>
+              <Select
+                value={form.companyId}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    companyId: e.target.value,
+                    // Drop the country if it no longer matches the new company.
+                    countryId: '',
+                  }))
+                }
+              >
+                <option value="">— ({tCommon('all')})</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label={t('country') ?? 'Country'}>
+              <Select
+                value={form.countryId}
+                onChange={(e) => setForm((f) => ({ ...f, countryId: e.target.value }))}
+              >
+                <option value="">— ({tCommon('all')})</option>
+                {(form.companyId
+                  ? countries.filter((c) => c.companyId === form.companyId)
+                  : countries
+                ).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
           <Field label={t('stage')}>
             <Select
               value={form.stageCode}

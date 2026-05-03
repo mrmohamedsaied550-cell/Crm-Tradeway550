@@ -33,6 +33,7 @@ import {
   BulkMoveStageSchema,
   ConvertLeadSchema,
   CreateLeadSchema,
+  ListLeadsByStageQuerySchema,
   ListLeadsQuerySchema,
   MoveStageSchema,
   UpdateLeadSchema,
@@ -45,6 +46,7 @@ class MoveStageDto extends createZodDto(MoveStageSchema) {}
 class AddActivityDto extends createZodDto(AddActivitySchema) {}
 class ConvertLeadDto extends createZodDto(ConvertLeadSchema) {}
 class ListLeadsQueryDto extends createZodDto(ListLeadsQuerySchema) {}
+class ListLeadsByStageQueryDto extends createZodDto(ListLeadsByStageQuerySchema) {}
 class BulkAssignDto extends createZodDto(BulkAssignSchema) {}
 class BulkMoveStageDto extends createZodDto(BulkMoveStageSchema) {}
 class BulkDeleteDto extends createZodDto(BulkDeleteSchema) {}
@@ -87,6 +89,19 @@ export class LeadsController {
   @ApiOperation({ summary: 'List leads with filters + pagination' })
   list(@Query() query: ListLeadsQueryDto) {
     return this.leads.list(query);
+  }
+
+  /**
+   * Phase 1B — Kanban grouped query. Returns one bucket per stage
+   * of the requested pipeline, each bucket carrying its totalCount
+   * and the first `perStage` cards. Drives the workspace board with
+   * a single round-trip.
+   */
+  @Get('leads/by-stage')
+  @RequireCapability('lead.read')
+  @ApiOperation({ summary: 'Group leads by pipeline stage (Kanban view)' })
+  listByStage(@Query() query: ListLeadsByStageQueryDto) {
+    return this.leads.listByStage(query);
   }
 
   @Get('leads/overdue')
@@ -176,7 +191,20 @@ export class LeadsController {
     @Body() body: MoveStageDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.moveStage(id, body.stageCode, user.sub);
+    return this.leads.moveStage(
+      id,
+      {
+        ...(body.pipelineStageId
+          ? { pipelineStageId: body.pipelineStageId }
+          : { stageCode: body.stageCode! }),
+        // Phase A — lostReasonId / lostNote are optional at the DTO
+        // level; the service rejects when the target stage's
+        // terminalKind is 'lost' and they're missing (or vice versa).
+        ...(body.lostReasonId !== undefined && { lostReasonId: body.lostReasonId }),
+        ...(body.lostNote !== undefined && { lostNote: body.lostNote }),
+      },
+      user.sub,
+    );
   }
 
   @Get('leads/:id/activities')
@@ -206,6 +234,21 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.captains.convertFromLead(id, body, user.sub);
+  }
+
+  /**
+   * Phase A — A3: reverse a conversion. Allowed only when the
+   * captain has zero recorded trips (operational safety).
+   * Deletes the captain row, moves the lead back to its pipeline's
+   * first non-terminal stage, flips lifecycleState back to 'open',
+   * and writes a `system` activity with `event: 'unconverted'`.
+   */
+  @Post('leads/:id/unconvert')
+  @RequireCapability('lead.convert')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reverse a Lead → Captain conversion (admin undo)' })
+  unconvert(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.captains.unconvertFromLead(id, user.sub);
   }
 
   // ─── P3-05 — bulk actions ───

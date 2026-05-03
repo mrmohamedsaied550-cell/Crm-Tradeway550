@@ -76,9 +76,35 @@ export interface PipelineStage {
   name: string;
   order: number;
   isTerminal: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Drives `Lead.lifecycleState` on stage moves. Returned by every
+   * stage-lookup endpoint (resolve / stagesOf / list) so the lead
+   * detail page can detect lost-stage moves and prompt for a reason.
+   */
+  terminalKind: 'won' | 'lost' | null;
 }
 
-export type LeadStageCode = 'new' | 'contacted' | 'interested' | 'converted' | 'lost';
+/**
+ * Phase 1B — well-known stage codes seeded into the tenant default
+ * pipeline. Custom pipelines may define any other codes; the API
+ * treats `stage.code` as an open string.
+ *
+ * `LeadStageCode` is intentionally `string` (not a literal union)
+ * so callers can pass codes from custom pipelines. Use
+ * `WELL_KNOWN_STAGE_CODES` / `WellKnownLeadStageCode` when you need
+ * to special-case one of the canonical 5 (e.g. show the "convert to
+ * captain" CTA only when `stage.code === 'converted'`).
+ */
+export type LeadStageCode = string;
+export const WELL_KNOWN_STAGE_CODES = [
+  'new',
+  'contacted',
+  'interested',
+  'converted',
+  'lost',
+] as const;
+export type WellKnownLeadStageCode = (typeof WELL_KNOWN_STAGE_CODES)[number];
 export type LeadSource = 'manual' | 'meta' | 'tiktok' | 'whatsapp' | 'import';
 export type SlaStatus = 'active' | 'breached' | 'paused';
 export type LeadActivityType =
@@ -155,6 +181,33 @@ export interface RecordTripResult {
   recordId?: string;
 }
 
+/**
+ * Phase A — A4: rich attribution payload stored on `Lead.attribution`
+ * (JSONB on the API side). `source` always mirrors `Lead.source` —
+ * the API enforces the invariant. All other fields are optional.
+ */
+export interface AttributionRef {
+  id?: string;
+  name?: string;
+}
+export interface AttributionUtm {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+  term?: string;
+  content?: string;
+}
+export interface AttributionPayload {
+  source: LeadSource;
+  subSource?: string;
+  campaign?: AttributionRef;
+  adSet?: AttributionRef;
+  ad?: AttributionRef;
+  utm?: AttributionUtm;
+  referrer?: string;
+  custom?: Record<string, unknown>;
+}
+
 export interface Lead {
   id: string;
   tenantId: string;
@@ -162,8 +215,46 @@ export interface Lead {
   phone: string;
   email: string | null;
   source: LeadSource;
+  /**
+   * Phase A — A4: rich attribution. Mirrors `source` plus optional
+   * sub-source / campaign / ad-set / ad / utm fields. Populated on
+   * every create path (manual, Meta webhook, CSV import). Null on
+   * very old rows that pre-date A1.
+   */
+  attribution: AttributionPayload | null;
+  /**
+   * Phase A — lifecycle classifier derived from the lead's current
+   * stage's `terminalKind`. Single source of truth for "is this lead
+   * in the funnel, won, lost, or archived?"
+   */
+  lifecycleState: LeadLifecycleState;
+  /** Phase A — required when lifecycleState='lost'. */
+  lostReasonId: string | null;
+  lostNote: string | null;
+  /**
+   * Phase 1B — explicit (company × country) scope on the lead.
+   * Both nullable: when missing the lead runs on the tenant default
+   * pipeline. Populated from the create form / Meta source / CSV
+   * import going forward.
+   */
+  companyId: string | null;
+  countryId: string | null;
+  /**
+   * Phase 1B — denormalised pipeline pointer. Always equals
+   * `stage.pipelineId`; carried on the row so Kanban + reporting
+   * can filter by pipeline without a join. Nullable today (legacy
+   * leads pre-1B); will be promoted to non-null after a backfill
+   * window closes.
+   */
+  pipelineId: string | null;
   stageId: string;
-  stage: { code: LeadStageCode; name: string; order: number; isTerminal: boolean };
+  /**
+   * `code` is now an open string (a pipeline can define any code it
+   * wants). The `LeadStageCode` literal is kept only as a "well-known
+   * codes" reference for callers that still need to pattern-match
+   * against the canonical 5 (e.g. "is this lead converted?").
+   */
+  stage: { code: string; name: string; order: number; isTerminal: boolean };
   assignedToId: string | null;
   createdById: string | null;
   slaDueAt: string | null;
@@ -336,12 +427,25 @@ export interface LeadFollowUp {
   dueAt: string;
   note: string | null;
   completedAt: string | null;
+  /**
+   * Phase A — A5: when set + > now, the row is hidden from `pending`
+   * / `overdue` lists and from the bell-badge counters. The lead's
+   * `nextActionDueAt` uses `MAX(dueAt, snoozedUntil)` for display.
+   * `null` (or in the past) means no active snooze.
+   */
+  snoozedUntil: string | null;
   assignedToId: string | null;
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
   /** Present on /follow-ups/mine. */
   lead?: { id: string; name: string; phone: string };
+}
+
+/** Phase A — A5: bell-badge counters payload from `/follow-ups/me/summary`. */
+export interface FollowUpSummary {
+  overdueCount: number;
+  dueTodayCount: number;
 }
 
 // ───── WhatsApp accounts (C24A) — read-only client view ─────
@@ -373,11 +477,23 @@ export interface WhatsAppAccount {
  * for local-format phone input, and the timezone used by "due today"
  * calculations on the agent workspace.
  */
+/**
+ * PL-3 — distribution rule. One per source the operator wants to
+ * route directly to a specific agent. The autoAssign path checks
+ * for a matching rule first; when the listed user is no longer
+ * eligible, autoAssign silently falls back to round-robin.
+ */
+export interface DistributionRule {
+  source: LeadSource;
+  assigneeUserId: string;
+}
+
 export interface TenantSettingsRow {
   tenantId: string;
   timezone: string;
   slaMinutes: number;
   defaultDialCode: string;
+  distributionRules: DistributionRule[];
   createdAt: string;
   updatedAt: string;
 }
@@ -437,9 +553,36 @@ export interface PipelineStageRow {
   name: string;
   order: number;
   isTerminal: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Drives `Lead.lifecycleState` on stage moves. NULL on
+   * non-terminal stages and on terminal stages that are neither
+   * (admin-configurable via Pipeline Builder).
+   */
+  terminalKind: 'won' | 'lost' | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Phase A — A6: per-tenant rejection-reason catalogue. Populated by
+ * the seed; admins edit via /admin/lost-reasons. The 'other' code is
+ * protected from deactivation.
+ */
+export interface LostReason {
+  id: string;
+  tenantId: string;
+  code: string;
+  labelEn: string;
+  labelAr: string;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Phase A — A6: lead lifecycle classifier. Computed from stage.terminalKind. */
+export type LeadLifecycleState = 'open' | 'won' | 'lost' | 'archived';
 
 // ───── Meta lead-ad sources (P2-06) ─────
 
@@ -460,4 +603,78 @@ export interface MetaLeadSource {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// ───── Distribution Engine (Phase 1A — A8) ─────
+
+export type DistributionStrategyName = 'specific_user' | 'round_robin' | 'weighted' | 'capacity';
+
+export const ALL_DISTRIBUTION_STRATEGIES: readonly DistributionStrategyName[] = [
+  'specific_user',
+  'round_robin',
+  'weighted',
+  'capacity',
+] as const;
+
+/**
+ * Per-user reasons recorded in `lead_routing_logs.excluded_reasons`.
+ * Mirrors the `ExclusionReason` union on the API side; UI surfaces
+ * these strings in the routing-log row drilldown.
+ */
+export type DistributionExclusionReason =
+  | 'not_eligible_role'
+  | 'inactive_user'
+  | 'excluded_by_caller'
+  | 'wrong_team'
+  | 'unavailable'
+  | 'out_of_office'
+  | 'outside_working_hours'
+  | 'at_capacity';
+
+export interface DistributionRuleRow {
+  id: string;
+  tenantId: string;
+  name: string;
+  isActive: boolean;
+  priority: number;
+  source: LeadSource | null;
+  companyId: string | null;
+  countryId: string | null;
+  targetTeamId: string | null;
+  strategy: DistributionStrategyName;
+  targetUserId: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentCapacityRow {
+  userId: string;
+  tenantId: string;
+  weight: number;
+  isAvailable: boolean;
+  outOfOfficeUntil: string | null;
+  maxActiveLeads: number | null;
+  /**
+   * Per-day { start: "HH:MM", end: "HH:MM" }. The candidate-filter
+   * implementation that consumes this lands in a follow-up; the
+   * column is stored + read-through as JSON today.
+   */
+  workingHours: Record<string, { start: string; end: string }> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadRoutingLogRow {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  ruleId: string | null;
+  strategy: DistributionStrategyName;
+  chosenUserId: string | null;
+  candidateCount: number;
+  excludedCount: number;
+  excludedReasons: Record<string, DistributionExclusionReason>;
+  decidedAt: string;
+  requestId: string | null;
 }

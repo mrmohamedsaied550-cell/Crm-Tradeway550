@@ -21,6 +21,10 @@ import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import { AgentCapacitiesService } from '../distribution/capacities.service';
+import { DistributionService } from '../distribution/distribution.service';
+import { LeadRoutingLogService } from '../distribution/routing-log.service';
+import { DistributionRulesService } from '../distribution/rules.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
@@ -99,7 +103,18 @@ describe('crm — round-robin assignment (C11)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
+    // A5 — autoAssign now routes through DistributionService.
+    const rules = new DistributionRulesService(prismaSvc);
+    const capacities = new AgentCapacitiesService(prismaSvc);
+    const routingLog = new LeadRoutingLogService(prismaSvc);
+    const distribution = new DistributionService(
+      prismaSvc,
+      rules,
+      capacities,
+      routingLog,
+      tenantSettings,
+    );
+    leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings, distribution);
 
     // Provision the primary test tenant.
     const tenant = await prisma.tenant.upsert({
@@ -319,30 +334,30 @@ describe('crm — round-robin assignment (C11)', () => {
     assert.equal(picked, null);
   });
 
-  it('assignLeadViaRoundRobin updates the lead and writes the activity row', async () => {
+  it('autoAssign updates the lead and writes the activity row (default strategy=capacity)', async () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'AutoAssign A', phone: '+201111000002', source: 'manual' }, actorUserId),
     );
 
     const updated = await inTenant(() => leads.autoAssign(lead.id, actorUserId));
     assert.ok(updated, 'autoAssign should return the updated lead');
-    // Agent Low has load 0 so it wins.
+    // No rules → tenant default 'capacity' picks lowest active-lead
+    // count. Agent Low has 0 leads so it wins.
     assert.equal(updated?.assignedToId, agentLowLoadId);
 
     const acts = await inTenant(() => leads.listActivities(lead.id));
     const auto = acts.find((a) => a.type === 'auto_assignment');
     assert.ok(auto, 'auto_assignment activity must be written');
-    assert.deepEqual(
-      (auto?.payload as { event: string; strategy: string }).strategy,
-      'round_robin',
-    );
+    // A5 cutover — strategy is now the actual strategy that fired.
+    // No matching rule + tenant default = 'capacity'.
+    assert.equal((auto?.payload as { event: string; strategy: string }).strategy, 'capacity');
   });
 
   it('autoAssign throws when the lead is in a terminal stage', async () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'Terminal', phone: '+201111000003', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
 
     await assert.rejects(
       () => inTenant(() => leads.autoAssign(lead.id, actorUserId)),

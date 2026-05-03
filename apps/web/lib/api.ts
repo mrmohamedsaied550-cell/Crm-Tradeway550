@@ -24,6 +24,7 @@ import {
 } from './auth';
 import type {
   AdminUser,
+  AgentCapacityRow,
   Captain,
   CaptainDocument,
   CaptainStatus,
@@ -31,11 +32,15 @@ import type {
   Company,
   ConversationStatus,
   Country,
+  DistributionRuleRow,
+  DistributionStrategyName,
   Lead,
   LeadActivity,
   LeadActivityType,
+  LeadRoutingLogRow,
   LeadSource,
   LeadStageCode,
+  LostReason,
   LoginResponse,
   MeUser,
   PaginatedResult,
@@ -52,6 +57,7 @@ import type {
   CompetitionMetric,
   CompetitionStatus,
   FollowUpActionType,
+  FollowUpSummary,
   LeadFollowUp,
   MetaLeadSource,
   Pipeline,
@@ -79,7 +85,7 @@ export class ApiError extends Error {
 }
 
 interface ApiFetchOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
   /** Override the Bearer token (used by the login flow itself). */
@@ -437,11 +443,49 @@ export interface CreatePipelineStageInput {
   name: string;
   order?: number;
   isTerminal?: boolean;
+  /**
+   * Phase A — A6: classifies a terminal stage as 'won' or 'lost'.
+   * Only valid when `isTerminal` is true; the server rejects
+   * otherwise with `pipeline.stage.terminal_kind_requires_terminal`.
+   */
+  terminalKind?: 'won' | 'lost' | null;
 }
 
 export const pipelinesApi = {
   list: (): Promise<Pipeline[]> => apiFetch<Pipeline[]>('/pipelines'),
   get: (id: string): Promise<Pipeline> => apiFetch<Pipeline>(`/pipelines/${id}`),
+  /**
+   * Phase 1B — resolve the right pipeline for a (company, country)
+   * scope and return its stages in one round-trip. Used by the
+   * create-lead form, lead detail dropdown, and (later) Kanban.
+   */
+  resolve: (query: {
+    companyId?: string;
+    countryId?: string;
+  }): Promise<{
+    pipeline: {
+      id: string;
+      isDefault: boolean;
+      companyId: string | null;
+      countryId: string | null;
+    };
+    stages: PipelineStage[];
+  }> =>
+    apiFetch<{
+      pipeline: {
+        id: string;
+        isDefault: boolean;
+        companyId: string | null;
+        countryId: string | null;
+      };
+      stages: PipelineStage[];
+    }>('/pipelines/resolve', { query }),
+  /**
+   * Phase 1B — stages of a specific pipeline. For lead-detail
+   * dropdowns + Kanban columns.
+   */
+  stagesOf: (id: string): Promise<PipelineStage[]> =>
+    apiFetch<PipelineStage[]>(`/pipelines/${id}/stages`),
   create: (input: CreatePipelineInput): Promise<Pipeline> =>
     apiFetch<Pipeline>('/pipelines', { method: 'POST', body: input }),
   update: (id: string, input: { name?: string; isActive?: boolean }): Promise<Pipeline> =>
@@ -453,7 +497,7 @@ export const pipelinesApi = {
   updateStage: (
     id: string,
     stageId: string,
-    input: { name?: string; isTerminal?: boolean },
+    input: { name?: string; isTerminal?: boolean; terminalKind?: 'won' | 'lost' | null },
   ): Promise<PipelineStageRow> =>
     apiFetch<PipelineStageRow>(`/pipelines/${id}/stages/${stageId}`, {
       method: 'PATCH',
@@ -471,7 +515,23 @@ export const pipelinesApi = {
 export const leadsApi = {
   list: (
     query: {
+      /**
+       * Phase 1B — three stage-filter inputs (mutually exclusive in
+       * practice; the server validates only one is sent):
+       *   • `pipelineStageId` — exact stage row (preferred for Kanban).
+       *   • `pipelineId`      — every lead currently in this pipeline.
+       *   • `stageCode`       — legacy code-based filter, resolved
+       *                          against the tenant default pipeline.
+       *                          Kept for backward compatibility with
+       *                          existing callers; new code should
+       *                          prefer pipelineStageId.
+       */
+      pipelineStageId?: string;
+      pipelineId?: string;
       stageCode?: LeadStageCode;
+      /** Phase 1B — narrow by (company, country). */
+      companyId?: string;
+      countryId?: string;
       assignedToId?: string;
       q?: string;
       /** P3-03 — narrow by source / SLA / date / unassigned / overdue. */
@@ -486,6 +546,42 @@ export const leadsApi = {
       offset?: number;
     } = {},
   ): Promise<PaginatedResult<Lead>> => apiFetch<PaginatedResult<Lead>>('/leads', { query }),
+  /**
+   * Phase 1 — Kanban grouped query. One round-trip returns one
+   * bucket per stage of `pipelineId`, each bucket carrying its
+   * `totalCount` and the first `perStage` cards.
+   */
+  listByStage: (query: {
+    pipelineId: string;
+    companyId?: string;
+    countryId?: string;
+    assignedToId?: string;
+    q?: string;
+    source?: LeadSource;
+    slaStatus?: SlaStatus;
+    createdFrom?: string;
+    createdTo?: string;
+    unassigned?: boolean;
+    hasOverdueFollowup?: boolean;
+    perStage?: number;
+  }): Promise<{
+    pipelineId: string;
+    perStage: number;
+    stages: {
+      stage: { id: string; code: string; name: string; order: number; isTerminal: boolean };
+      totalCount: number;
+      leads: Lead[];
+    }[];
+  }> =>
+    apiFetch<{
+      pipelineId: string;
+      perStage: number;
+      stages: {
+        stage: { id: string; code: string; name: string; order: number; isTerminal: boolean };
+        totalCount: number;
+        leads: Lead[];
+      }[];
+    }>('/leads/by-stage', { query }),
   /** C37 — leads whose pending follow-up is past its dueAt. Defaults
    *  to the calling user; pass `mine: '0'` to broaden to all. */
   overdue: (query: { assignedToId?: string; mine?: '0' } = {}): Promise<Lead[]> =>
@@ -499,7 +595,41 @@ export const leadsApi = {
     phone: string;
     email?: string;
     source?: LeadSource;
+    /**
+     * Phase 1B — initial-stage discriminator. Pass at most one:
+     *   • `pipelineStageId` — explicit stage UUID (preferred).
+     *   • `stageCode`       — resolved against the lead's pipeline.
+     * Omitting both lets the server pick the entry-point stage of the
+     * resolved pipeline.
+     */
     stageCode?: LeadStageCode;
+    pipelineStageId?: string;
+    /**
+     * Phase 1B — explicit (company × country) scope. Drives which
+     * pipeline the new lead lands on.
+     */
+    companyId?: string;
+    countryId?: string;
+    /**
+     * Phase A — A4: optional rich attribution. The server merges
+     * `{ source: input.source }` into this payload so the persisted
+     * `attribution.source` always matches the flat source.
+     */
+    attribution?: {
+      subSource?: string;
+      campaign?: { id?: string; name?: string };
+      adSet?: { id?: string; name?: string };
+      ad?: { id?: string; name?: string };
+      utm?: {
+        source?: string;
+        medium?: string;
+        campaign?: string;
+        term?: string;
+        content?: string;
+      };
+      referrer?: string;
+      custom?: Record<string, unknown>;
+    };
     assignedToId?: string;
   }): Promise<Lead> => apiFetch<Lead>('/leads', { method: 'POST', body: input }),
   update: (
@@ -511,10 +641,24 @@ export const leadsApi = {
     apiFetch<Lead>(`/leads/${id}/assign`, { method: 'POST', body: { assignedToId } }),
   autoAssign: (id: string): Promise<Lead | null> =>
     apiFetch<Lead | null>(`/leads/${id}/auto-assign`, { method: 'POST' }),
-  moveStage: (id: string, stageCode: LeadStageCode): Promise<Lead> =>
-    apiFetch<Lead>(`/leads/${id}/stage`, { method: 'POST', body: { stageCode } }),
+  /**
+   * Phase 1B — accepts either a stage UUID (preferred) or a stage
+   * code. The server resolves the code against THIS lead's pipeline,
+   * so the same code in two pipelines never cross-pollinates.
+   */
+  moveStage: (
+    id: string,
+    target: { pipelineStageId: string } | { stageCode: LeadStageCode },
+  ): Promise<Lead> => apiFetch<Lead>(`/leads/${id}/stage`, { method: 'POST', body: target }),
   listActivities: (id: string): Promise<LeadActivity[]> =>
     apiFetch<LeadActivity[]>(`/leads/${id}/activities`),
+  /**
+   * Phase 1A — A8: routing decisions recorded for this lead, newest
+   * first. Gated on `lead.read` server-side, so anyone with access to
+   * the lead detail can see why it was routed where it was.
+   */
+  routingLog: (id: string): Promise<LeadRoutingLogRow[]> =>
+    apiFetch<LeadRoutingLogRow[]>(`/leads/${id}/routing-log`),
   addActivity: (
     id: string,
     input: { type: Extract<LeadActivityType, 'note' | 'call'>; body: string },
@@ -550,16 +694,29 @@ export const leadsApi = {
       method: 'POST',
       body: { leadIds: input.leadIds, assignedToId: input.assignedToId },
     }),
-  bulkStage: (input: {
-    leadIds: readonly string[];
-    stageCode: LeadStageCode;
-  }): Promise<{
+  /**
+   * Phase 1B — bulk move accepts either a stage UUID (resolved
+   * across all leads in the batch — they must all be on the same
+   * pipeline as the target stage) or a stage code (resolved
+   * per-lead against each lead's pipeline; lets a single bulk move
+   * land "contacted" on leads spread across pipelines that all
+   * happen to define that code).
+   */
+  bulkStage: (
+    input: { leadIds: readonly string[] } & (
+      | { pipelineStageId: string; stageCode?: never }
+      | { stageCode: LeadStageCode; pipelineStageId?: never }
+    ),
+  ): Promise<{
     updated: string[];
     failed: { id: string; code: string; message: string }[];
   }> =>
     apiFetch('/leads/bulk-stage', {
       method: 'POST',
-      body: { leadIds: input.leadIds, stageCode: input.stageCode },
+      body:
+        'pipelineStageId' in input
+          ? { leadIds: input.leadIds, pipelineStageId: input.pipelineStageId }
+          : { leadIds: input.leadIds, stageCode: input.stageCode },
     }),
   bulkDelete: (input: {
     leadIds: readonly string[];
@@ -570,7 +727,25 @@ export const leadsApi = {
   /** P2-06 — bulk CSV import. `csv` is the full file as text. */
   importCsv: (input: {
     csv: string;
-    mapping: { name: string; phone: string; email?: string };
+    mapping: {
+      name: string;
+      phone: string;
+      email?: string;
+      // Phase A — A4: optional CSV columns for the per-row
+      // attribution payload. Each value is a CSV header name; rows
+      // missing the column / value are silently skipped.
+      campaignId?: string;
+      campaignName?: string;
+      adSetId?: string;
+      adSetName?: string;
+      adId?: string;
+      adName?: string;
+      utmSource?: string;
+      utmMedium?: string;
+      utmCampaign?: string;
+      utmTerm?: string;
+      utmContent?: string;
+    };
     defaultSource?: LeadSource;
     autoAssign?: boolean;
   }): Promise<{
@@ -1012,6 +1187,12 @@ export const followUpsApi = {
     query: { status?: 'pending' | 'overdue' | 'done' | 'all'; limit?: number } = {},
   ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/mine', { query }),
   /**
+   * Phase A — A5: bell-badge counters. Returns
+   * `{ overdueCount, dueTodayCount }` for the calling user.
+   * `dueToday` is computed in the tenant's IANA timezone.
+   */
+  meSummary: (): Promise<FollowUpSummary> => apiFetch<FollowUpSummary>('/follow-ups/me/summary'),
+  /**
    * P3-04 — calendar feed. `from` and `to` are ISO datetimes; `mine`
    * defaults to '1' (caller only). The web calendar passes the
    * month-grid bounds as the window.
@@ -1026,6 +1207,13 @@ export const followUpsApi = {
     apiFetch<LeadFollowUp[]>(`/leads/${leadId}/follow-ups`),
   create: (leadId: string, input: CreateFollowUpInput): Promise<LeadFollowUp> =>
     apiFetch<LeadFollowUp>(`/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  /**
+   * Phase A — A5: snooze (push the row out of active windows) or
+   * un-snooze a follow-up. Pass `snoozedUntil: null` to clear.
+   * Server rejects past timestamps with `follow_up.snoozed_in_past`.
+   */
+  update: (id: string, input: { snoozedUntil?: string | null }): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/follow-ups/${id}`, { method: 'PATCH', body: input }),
   complete: (id: string): Promise<LeadFollowUp> =>
     apiFetch<LeadFollowUp>(`/follow-ups/${id}/complete`, { method: 'POST' }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/follow-ups/${id}`, { method: 'DELETE' }),
@@ -1083,10 +1271,127 @@ export interface UpdateTenantSettingsInput {
   timezone?: string;
   slaMinutes?: number;
   defaultDialCode?: string;
+  /** PL-3 — replace the rule list (omit to leave unchanged). */
+  distributionRules?: { source: LeadSource; assigneeUserId: string }[];
 }
 
 export const tenantSettingsApi = {
   get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
   update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
     apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Phase A — A6: per-tenant lost-reason catalogue.
+//
+// Two access tiers: agents read the active list via /lost-reasons
+// (used by the lost-stage modal); admins manage via /admin/lost-reasons.
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateLostReasonInput {
+  code: string;
+  labelEn: string;
+  labelAr: string;
+  isActive?: boolean;
+  displayOrder?: number;
+}
+
+export type UpdateLostReasonInput = Partial<
+  Pick<CreateLostReasonInput, 'labelEn' | 'labelAr' | 'isActive' | 'displayOrder'>
+>;
+
+export const lostReasonsApi = {
+  /** Active reasons in display order — for the lost-stage agent picker. */
+  listActive: (): Promise<LostReason[]> => apiFetch<LostReason[]>('/lost-reasons'),
+  /** All reasons (admin) — includes inactive. */
+  listAll: (): Promise<LostReason[]> => apiFetch<LostReason[]>('/admin/lost-reasons'),
+  create: (input: CreateLostReasonInput): Promise<LostReason> =>
+    apiFetch<LostReason>('/admin/lost-reasons', { method: 'POST', body: input }),
+  update: (id: string, input: UpdateLostReasonInput): Promise<LostReason> =>
+    apiFetch<LostReason>(`/admin/lost-reasons/${id}`, { method: 'PATCH', body: input }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Distribution Engine (Phase 1A — A8)
+//
+// Admin-side surface for the rule engine that decides which agent a
+// lead is routed to. Three flat resources mirror the API:
+//   - rules       → CRUD over distribution_rules (priority order)
+//   - capacities  → upsert per-user capacity row (max active leads,
+//                   weight, availability, OOF, working hours)
+//   - logs        → read-only routing decisions (audit trail)
+//
+// `targetUserId` is REQUIRED when strategy='specific_user' and
+// FORBIDDEN otherwise — Zod enforces this server-side; the form layer
+// mirrors the same invariant for UX (PATCH re-validates against the
+// merged shape).
+// ───────────────────────────────────────────────────────────────────────
+
+export interface CreateDistributionRuleInput {
+  name: string;
+  isActive?: boolean;
+  /** Lower = higher precedence; default 100. Server clamps to [1, 1000]. */
+  priority?: number;
+  source?: LeadSource | null;
+  companyId?: string | null;
+  countryId?: string | null;
+  targetTeamId?: string | null;
+  strategy: DistributionStrategyName;
+  /** Required when `strategy === 'specific_user'`. */
+  targetUserId?: string | null;
+}
+
+export type UpdateDistributionRuleInput = Partial<CreateDistributionRuleInput>;
+
+export interface UpsertAgentCapacityInput {
+  weight?: number;
+  isAvailable?: boolean;
+  /** ISO datetime; pass `null` to clear the OOF window. */
+  outOfOfficeUntil?: string | null;
+  /** `null` = no cap. */
+  maxActiveLeads?: number | null;
+  workingHours?: Record<string, { start: string; end: string }> | null;
+}
+
+export interface ListRoutingLogsQuery {
+  leadId?: string;
+  /** ISO datetime — return only logs decided at or after this point. */
+  from?: string;
+  /** Default 50, max 200. */
+  limit?: number;
+}
+
+export const distributionApi = {
+  rules: {
+    list: (): Promise<DistributionRuleRow[]> =>
+      apiFetch<DistributionRuleRow[]>('/distribution/rules'),
+    create: (input: CreateDistributionRuleInput): Promise<DistributionRuleRow> =>
+      apiFetch<DistributionRuleRow>('/distribution/rules', { method: 'POST', body: input }),
+    update: (id: string, input: UpdateDistributionRuleInput): Promise<DistributionRuleRow> =>
+      apiFetch<DistributionRuleRow>(`/distribution/rules/${id}`, {
+        method: 'PATCH',
+        body: input,
+      }),
+    remove: (id: string): Promise<void> =>
+      apiFetch<void>(`/distribution/rules/${id}`, { method: 'DELETE' }),
+  },
+  capacities: {
+    list: (): Promise<AgentCapacityRow[]> =>
+      apiFetch<AgentCapacityRow[]>('/distribution/capacities'),
+    upsert: (userId: string, input: UpsertAgentCapacityInput): Promise<AgentCapacityRow> =>
+      apiFetch<AgentCapacityRow>(`/distribution/capacities/${userId}`, {
+        method: 'PUT',
+        body: input,
+      }),
+  },
+  logs: {
+    list: (query: ListRoutingLogsQuery = {}): Promise<LeadRoutingLogRow[]> =>
+      apiFetch<LeadRoutingLogRow[]>('/distribution/logs', {
+        query: {
+          ...(query.leadId !== undefined && { leadId: query.leadId }),
+          ...(query.from !== undefined && { from: query.from }),
+          ...(query.limit !== undefined && { limit: query.limit }),
+        },
+      }),
+  },
 };

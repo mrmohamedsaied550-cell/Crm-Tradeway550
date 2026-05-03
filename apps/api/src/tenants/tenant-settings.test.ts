@@ -66,7 +66,8 @@ describe('tenants — settings + downstream wiring (P2-08)', () => {
     const pipeline = new PipelineService(prismaSvc);
     const assignment = new AssignmentService(prismaSvc);
     const sla = new SlaService(prismaSvc, assignment, undefined, settings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, settings);
+    // A5 — LeadsService no longer takes AssignmentService directly.
+    leads = new LeadsService(prismaSvc, pipeline, sla, settings);
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },

@@ -21,8 +21,13 @@ import { PrismaClient } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AssignmentService } from '../crm/assignment.service';
+import { LeadsService } from '../crm/leads.service';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
+import { AgentCapacitiesService } from '../distribution/capacities.service';
+import { DistributionService } from '../distribution/distribution.service';
+import { LeadRoutingLogService } from '../distribution/routing-log.service';
+import { DistributionRulesService } from '../distribution/rules.service';
 import { hashPassword } from '../identity/password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
@@ -60,14 +65,22 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    ingestion = new LeadIngestionService(
+    // A5.5 — ingestion now routes through LeadsService.autoAssign,
+    // which delegates to DistributionService. We wire the same dep
+    // graph leads.test.ts uses so the integration-test path is
+    // identical to production.
+    const rulesSvc = new DistributionRulesService(prismaSvc);
+    const capacitiesSvc = new AgentCapacitiesService(prismaSvc);
+    const routingLogSvc = new LeadRoutingLogService(prismaSvc);
+    const distribution = new DistributionService(
       prismaSvc,
-      pipeline,
-      assignment,
-      sla,
-      audit,
+      rulesSvc,
+      capacitiesSvc,
+      routingLogSvc,
       tenantSettings,
     );
+    const leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings, distribution);
+    ingestion = new LeadIngestionService(prismaSvc, pipeline, leads, sla, audit, tenantSettings);
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },
@@ -296,5 +309,293 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
       actorUserId: null,
     });
     assert.equal(result.kind, 'error');
+  });
+
+  // ─── A5.5 — distribution rules apply to ingested leads ───
+  // Pre-A5.5 the ingestion path called AssignmentService directly,
+  // bypassing rule consultation. After A5.5 ingestion routes through
+  // LeadsService.autoAssign → DistributionService.route, so source /
+  // company / country / team rules apply identically to manual
+  // /auto-assign. The next two tests prove that.
+
+  it('A5.5 — Meta-ingested lead honours a source-based distribution rule', async () => {
+    // Plant a specific_user rule for source=meta → agentUserId.
+    // Since agentUserId is the ONLY active sales agent in the test
+    // tenant, we wouldn't be able to distinguish "rule fired" from
+    // "default strategy fired" if we left it there. Add a SECOND
+    // sales agent so the routing decision becomes meaningful.
+    const hash = await hashPassword('Password@123', 4);
+    const role = await withTenantRaw(tenantId, (tx) =>
+      tx.role.findFirstOrThrow({ where: { code: 'sales_agent' } }),
+    );
+    const otherAgent = await withTenantRaw(tenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId,
+          email: '__a55_other@x',
+          name: 'Other',
+          passwordHash: hash,
+          roleId: role.id,
+        },
+      }),
+    );
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.create({
+        data: {
+          tenantId,
+          name: 'Test (A5.5): meta → otherAgent',
+          strategy: 'specific_user',
+          source: 'meta',
+          targetUserId: otherAgent.id,
+          updatedAt: new Date(),
+        },
+      }),
+    );
+
+    const ingested = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Routed-By-Rule',
+      phoneRaw: '+201001100700',
+      source: 'meta',
+      actorUserId: null,
+    });
+    assert.equal(ingested.kind, 'created');
+
+    // Lead must be assigned to otherAgent (the rule's target),
+    // NOT to agentUserId (the default-strategy winner).
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirstOrThrow({
+        where: { phone: '+201001100700' },
+        select: { id: true, assignedToId: true },
+      }),
+    );
+    assert.equal(
+      lead.assignedToId,
+      otherAgent.id,
+      'rule should route Meta-ingested lead to its target',
+    );
+
+    // Routing log row written with strategy='specific_user' + ruleId.
+    const logs = await withTenantRaw(tenantId, (tx) =>
+      tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+    );
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0]!.strategy, 'specific_user');
+    assert.equal(logs[0]!.chosenUserId, otherAgent.id);
+    assert.ok(logs[0]!.ruleId, 'log records the matched rule');
+
+    // Cleanup so subsequent tests aren't perturbed.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.deleteMany({
+        where: { name: 'Test (A5.5): meta → otherAgent' },
+      }),
+    );
+    await withTenantRaw(tenantId, (tx) =>
+      tx.user.delete({ where: { id: otherAgent.id } }).catch(() => null),
+    );
+  });
+
+  it('A5.5 — CSV-ingested lead writes a routing log row even when default strategy fires', async () => {
+    // No matching rule → tenant default strategy ('capacity') fires.
+    // The contract under test is that the log row IS written for
+    // every ingested lead — pre-A5.5 there was no log at all.
+    const csv = 'name,phone\nLogged,+201001100800\n';
+    await inTenant(() =>
+      ingestion.importCsv(
+        {
+          csv,
+          mapping: { name: 'name', phone: 'phone' },
+          defaultSource: 'import',
+          autoAssign: true,
+        },
+        actorUserId,
+      ),
+    );
+
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirstOrThrow({
+        where: { phone: '+201001100800' },
+        select: { id: true, assignedToId: true },
+      }),
+    );
+    assert.ok(lead.assignedToId, 'CSV-imported lead must be auto-assigned');
+
+    const logs = await withTenantRaw(tenantId, (tx) =>
+      tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+    );
+    assert.equal(logs.length, 1, 'exactly one routing log row per ingested auto-assign');
+    assert.equal(logs[0]!.ruleId, null, 'no rule matched');
+    assert.equal(logs[0]!.strategy, 'capacity', 'fallback strategy fires');
+    assert.equal(logs[0]!.chosenUserId, lead.assignedToId);
+  });
+
+  it('A5.5 — Meta-ingested lead leaves itself unassigned when no eligible agent exists', async () => {
+    // Disable every sales agent in the tenant. Ingestion must NOT
+    // throw; the lead lands but stays unassigned. The routing log
+    // records chosenUserId=null.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.user.updateMany({
+        where: { tenantId, role: { code: 'sales_agent' } },
+        data: { status: 'disabled' },
+      }),
+    );
+    try {
+      const result = await ingestion.ingestMetaPayload({
+        tenantId,
+        name: 'Stranded',
+        phoneRaw: '+201001100900',
+        source: 'meta',
+        actorUserId: null,
+      });
+      assert.equal(result.kind, 'created');
+
+      const lead = await withTenantRaw(tenantId, (tx) =>
+        tx.lead.findFirstOrThrow({
+          where: { phone: '+201001100900' },
+          select: { id: true, assignedToId: true },
+        }),
+      );
+      assert.equal(lead.assignedToId, null, 'no eligible agent → lead unassigned');
+
+      const logs = await withTenantRaw(tenantId, (tx) =>
+        tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+      );
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0]!.chosenUserId, null);
+      assert.equal(logs[0]!.candidateCount, 0, 'no surviving candidates');
+    } finally {
+      // Restore so subsequent tests have agents.
+      await withTenantRaw(tenantId, (tx) =>
+        tx.user.updateMany({
+          where: { tenantId, role: { code: 'sales_agent' } },
+          data: { status: 'active' },
+        }),
+      );
+    }
+  });
+
+  // ─── Phase A — A4: attribution on Meta + CSV ingest ────────────────
+
+  it('Meta payload with attribution writes the campaign + ad ids', async () => {
+    const r = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Attr Hassan',
+      phoneRaw: '+201001100630',
+      email: 'attr-hassan@example.com',
+      source: 'meta',
+      actorUserId: null,
+      metadata: { leadgenId: 'LG_ATTR_1' },
+      attribution: {
+        subSource: 'meta_lead_form',
+        campaign: { id: 'C_ATTR_1', name: 'Promo Campaign' },
+        adSet: { id: 'AS_ATTR_1' },
+        ad: { id: 'AD_ATTR_1' },
+        custom: { pageId: 'P_ATTR_1', formId: 'F_ATTR_1', leadgenId: 'LG_ATTR_1' },
+      },
+    });
+    assert.equal(r.kind, 'created');
+
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirst({
+        where: { phone: '+201001100630' },
+        select: { source: true, attribution: true },
+      }),
+    );
+    assert.ok(lead);
+    assert.equal(lead!.source, 'meta');
+    const attr = lead!.attribution as Record<string, unknown>;
+    assert.equal(attr.source, 'meta');
+    assert.equal(attr.subSource, 'meta_lead_form');
+    assert.deepEqual(attr.campaign, { id: 'C_ATTR_1', name: 'Promo Campaign' });
+    assert.deepEqual(attr.adSet, { id: 'AS_ATTR_1' });
+    assert.deepEqual(attr.ad, { id: 'AD_ATTR_1' });
+    assert.deepEqual(attr.custom, {
+      pageId: 'P_ATTR_1',
+      formId: 'F_ATTR_1',
+      leadgenId: 'LG_ATTR_1',
+    });
+  });
+
+  it('Meta payload without attribution still writes the bare source', async () => {
+    const r = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Plain Hassan',
+      phoneRaw: '+201001100631',
+      email: null,
+      source: 'meta',
+      actorUserId: null,
+      metadata: { leadgenId: 'LG_PLAIN' },
+      // no attribution payload
+    });
+    assert.equal(r.kind, 'created');
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirst({
+        where: { phone: '+201001100631' },
+        select: { attribution: true },
+      }),
+    );
+    assert.deepEqual(lead?.attribution, { source: 'meta' });
+  });
+
+  it('CSV import populates attribution from mapped UTM + campaign columns', async () => {
+    const csv = [
+      'Full Name,Phone,Campaign,Ad,utm_source,utm_medium',
+      'Karim,+201001100640,C_CSV_1,AD_CSV_1,fb,cpc',
+      'Sara,+201001100641,,AD_CSV_2,google,organic',
+      'Tarek,+201001100642,C_CSV_3,,,',
+    ].join('\n');
+
+    const result = await inTenant(() =>
+      ingestion.importCsv(
+        {
+          csv,
+          mapping: {
+            name: 'Full Name',
+            phone: 'Phone',
+            campaignId: 'Campaign',
+            adId: 'Ad',
+            utmSource: 'utm_source',
+            utmMedium: 'utm_medium',
+          },
+          defaultSource: 'import',
+          autoAssign: false,
+        },
+        actorUserId,
+      ),
+    );
+    assert.equal(result.created, 3);
+
+    const rows = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findMany({
+        where: { phone: { in: ['+201001100640', '+201001100641', '+201001100642'] } },
+        orderBy: { phone: 'asc' },
+        select: { phone: true, source: true, attribution: true },
+      }),
+    );
+    const byPhone = new Map(rows.map((r) => [r.phone, r]));
+
+    const karim = byPhone.get('+201001100640')!;
+    assert.equal(karim.source, 'import');
+    const ka = karim.attribution as Record<string, unknown>;
+    assert.equal(ka.source, 'import');
+    assert.equal(ka.subSource, 'csv_import');
+    assert.deepEqual(ka.campaign, { id: 'C_CSV_1' });
+    assert.deepEqual(ka.ad, { id: 'AD_CSV_1' });
+    assert.deepEqual(ka.utm, { source: 'fb', medium: 'cpc' });
+
+    // Sara has no campaign id but has an ad id and utm.
+    const sara = byPhone.get('+201001100641')!;
+    const sa = sara.attribution as Record<string, unknown>;
+    assert.equal(sa.campaign, undefined);
+    assert.deepEqual(sa.ad, { id: 'AD_CSV_2' });
+    assert.deepEqual(sa.utm, { source: 'google', medium: 'organic' });
+
+    // Tarek has only a campaign id; ad + utm should be dropped.
+    const tarek = byPhone.get('+201001100642')!;
+    const ta = tarek.attribution as Record<string, unknown>;
+    assert.deepEqual(ta.campaign, { id: 'C_CSV_3' });
+    assert.equal(ta.ad, undefined);
+    assert.equal(ta.utm, undefined);
+    assert.equal(ta.subSource, 'csv_import');
   });
 });

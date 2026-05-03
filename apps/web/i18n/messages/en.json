@@ -47,7 +47,11 @@
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
       "whatsappTemplates": "WA Templates",
+      "metaLeadSources": "Meta Sources",
+      "calendar": "Calendar",
       "reports": "Reports",
+      "distribution": "Distribution",
+      "lostReasons": "Lost reasons",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
       "backup": "Backup"
@@ -183,6 +187,48 @@
     "leads": {
       "title": "Leads",
       "subtitle": "Prospective captains in the funnel.",
+      "lifecycle": {
+        "open": "Open",
+        "won": "Won",
+        "lost": "Lost",
+        "archived": "Archived"
+      },
+      "lostReasonModal": {
+        "title": "Mark as lost",
+        "titleNamed": "Mark {name} as lost",
+        "intro": "Pick a rejection reason. This is recorded with the stage change so reports can break down lost leads by cause.",
+        "reason": "Reason",
+        "note": "Note (optional)",
+        "noteHint": "A short context line shown on the lead detail page.",
+        "notePlaceholder": "e.g. spouse owns the car",
+        "confirm": "Mark as lost",
+        "errors": {
+          "reasonRequired": "Please pick a reason."
+        }
+      },
+      "lens": {
+        "pipeline": "Pipeline",
+        "default": "default",
+        "viewMode": "View",
+        "list": "List",
+        "kanban": "Kanban",
+        "kanbanComingNext": "Kanban view is being prepared in the next release. The list view below shows the same leads.",
+        "mobileFallback": "Kanban works best on a wider screen. We've switched to the list view automatically.",
+        "useKanbanAnyway": "Use Kanban anyway"
+      },
+      "kanban": {
+        "newButton": "New lead",
+        "unassigned": "Unassigned",
+        "terminal": "Terminal",
+        "columnEmpty": "No leads in this stage",
+        "cardsTotal": "{count, plural, one {# lead} other {# leads}}",
+        "moreInColumn": "+{count} more — open list view to see all",
+        "emptyPipeline": "This pipeline has no stages yet",
+        "emptyPipelineHint": "Add stages to the pipeline (Pipeline Builder) before opening the board.",
+        "emptyFiltered": "No leads match the current filters",
+        "emptyFilteredHint": "Clear filters above to see every lead in this pipeline.",
+        "moveFailed": "Couldn't move {name}"
+      },
       "empty": "No leads yet",
       "emptyHint": "Create the first lead to start working the funnel.",
       "emptyFiltered": "No leads match the filters",
@@ -290,6 +336,7 @@
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
+        "lostReasonLabel": "Lost reason",
         "viewCaptain": "View captain →",
         "quickActions": {
           "call": "Call",
@@ -350,6 +397,235 @@
       "movedTo": "Moved to {stage}",
       "moveFailed": "Move failed"
     },
+    "metaLeadSources": {
+      "title": "Meta lead sources",
+      "subtitle": "Map Meta lead-ad pages and forms onto CRM lead fields. The public webhook reads this list at ingest time.",
+      "webhookHint": "Point the Meta lead-gen webhook at /api/v1/webhooks/meta/leadgen — each Page must use the verify token configured below.",
+      "newButton": "New source",
+      "newTitle": "New Meta lead source",
+      "editTitle": "Edit Meta lead source",
+      "edit": "Edit",
+      "empty": "No Meta lead sources yet",
+      "emptyHint": "Add one for each Meta Page (and optionally a single form) so inbound leads land in the CRM.",
+      "created": "Meta lead source created.",
+      "updated": "Meta lead source updated.",
+      "deleted": "Meta lead source deleted.",
+      "confirmDelete": "Delete \"{name}\"? Inbound leads from this Page will stop ingesting.",
+      "cols": {
+        "name": "Name",
+        "pageIdLabel": "Page",
+        "formIdLabel": "Form",
+        "source": "Lead source",
+        "mapping": "Mapping",
+        "mappingFields": "fields",
+        "status": "Status",
+        "active": "Active",
+        "inactive": "Inactive"
+      },
+      "form": {
+        "displayName": "Display name",
+        "displayNamePlaceholder": "Egypt — Captain acquisition page",
+        "pageId": "Meta Page ID",
+        "pageIdHint": "Numeric ID from the Page's About → Page Transparency.",
+        "formId": "Meta Form ID (optional)",
+        "formIdHint": "Restrict to one form on the page; leave empty to accept all forms.",
+        "verifyToken": "Verify token",
+        "verifyTokenHint": "Random shared secret you also paste into Meta's webhook config.",
+        "verifyTokenEditHint": "Leave blank to keep the current token.",
+        "appSecret": "App secret (optional)",
+        "appSecretHint": "When set, the webhook signature is verified with HMAC-SHA256.",
+        "appSecretEditHint": "Leave blank to keep the current secret.",
+        "defaultSource": "Default lead source label",
+        "fieldMapping": "Field mapping (JSON)",
+        "fieldMappingHint": "Maps Meta field names → CRM lead fields. Required targets: name, phone. Optional: email.",
+        "isActive": "Active — receive new leads"
+      },
+      "errors": {
+        "mappingInvalid": "Field mapping must be valid JSON: an object of string → string.",
+        "mappingMissingTargets": "Field mapping must define at least one entry pointing to \"name\" and one to \"phone\".",
+        "verifyTokenRequired": "Verify token is required when creating a new source."
+      }
+    },
+    "distributionPage": {
+      "title": "Distribution Engine",
+      "subtitle": "Routing rules, per-agent capacity, and the routing-decision audit trail.",
+      "noAccess": "You don't have permission to view distribution settings.",
+      "tabs": {
+        "rules": "Rules",
+        "capacities": "Capacities",
+        "logs": "Routing logs"
+      },
+      "rules": {
+        "intro": "Rules are evaluated in priority order (lowest number wins). The first rule whose conditions match the lead picks the strategy.",
+        "newButton": "New rule",
+        "newTitle": "Create distribution rule",
+        "editTitle": "Edit distribution rule",
+        "edit": "Edit",
+        "matchesAll": "Matches every lead",
+        "statusActive": "Active",
+        "statusInactive": "Inactive",
+        "empty": "No distribution rules yet",
+        "emptyHint": "Add a rule to route specific lead sources, companies, or countries to a chosen team or agent.",
+        "created": "Rule created.",
+        "updated": "Rule updated.",
+        "deleted": "Rule deleted.",
+        "confirmDelete": "Delete the rule \"{name}\"?",
+        "cols": {
+          "priority": "Priority",
+          "name": "Name",
+          "conditions": "Conditions",
+          "strategy": "Strategy",
+          "status": "Status"
+        },
+        "field": {
+          "source": "source",
+          "company": "company",
+          "country": "country",
+          "team": "team"
+        },
+        "form": {
+          "name": "Name",
+          "namePlaceholder": "e.g. \"Egypt Meta leads → Activation team\"",
+          "priority": "Priority",
+          "priorityHint": "1 (highest) – 1000 (lowest). Default 100.",
+          "isActive": "Status",
+          "isActiveLabel": "Active",
+          "conditions": "Match conditions (all that are set must match)",
+          "conditionsHint": "Leave a field blank to match any value.",
+          "source": "Source",
+          "anySource": "Any source",
+          "company": "Company",
+          "anyCompany": "Any company",
+          "country": "Country",
+          "anyCountry": "Any country",
+          "team": "Target team",
+          "anyTeam": "Any team",
+          "strategySection": "Routing strategy",
+          "strategy": "Strategy",
+          "strategyHint": "How to pick an agent from the candidate pool.",
+          "targetUser": "Target user",
+          "targetUserHint": "Required when strategy is \"specific user\"."
+        },
+        "strategy": {
+          "specific_user": "Specific user",
+          "round_robin": "Round-robin",
+          "weighted": "Weighted (uses capacity weight)",
+          "capacity": "Least-busy (capacity-aware)"
+        },
+        "errors": {
+          "nameRequired": "Name is required.",
+          "priorityRange": "Priority must be between 1 and 1000.",
+          "targetUserRequired": "Target user is required when strategy is \"specific user\".",
+          "targetUserOnlyForSpecific": "Target user is only valid when strategy is \"specific user\"."
+        }
+      },
+      "capacities": {
+        "intro": "Per-agent capacity controls. Weight drives the weighted strategy; max active leads + availability + out-of-office gate every strategy.",
+        "edit": "Edit",
+        "editTitle": "Capacity — {name}",
+        "saved": "Capacity saved.",
+        "empty": "No active users to configure.",
+        "noCap": "No cap",
+        "available": "Available",
+        "unavailable": "Unavailable",
+        "cols": {
+          "user": "User",
+          "weight": "Weight",
+          "maxActive": "Max active",
+          "oof": "Out of office until",
+          "availability": "Availability"
+        },
+        "form": {
+          "weight": "Weight",
+          "weightHint": "0–100. Used by the weighted strategy.",
+          "maxActive": "Max active leads",
+          "maxActiveHint": "Leave empty for no cap. 0 means the agent is at capacity immediately.",
+          "maxActivePlaceholder": "(no cap)",
+          "oof": "Out of office until",
+          "oofHint": "Agent is excluded from routing until this time. Leave empty to clear.",
+          "isAvailable": "Available for new assignments"
+        },
+        "errors": {
+          "weightRange": "Weight must be between 0 and 100.",
+          "maxActiveRange": "Max active leads must be between 0 and 10,000.",
+          "oofInvalid": "Out-of-office time is not a valid date."
+        }
+      },
+      "logs": {
+        "intro": "Newest first. Filter by lead id and date to drill into a specific decision.",
+        "show": "Show",
+        "hide": "Hide",
+        "unassigned": "Unassigned",
+        "exclusionsTitle": "Excluded candidates",
+        "empty": "No routing decisions match the filters",
+        "emptyHint": "Try clearing filters or widening the date range.",
+        "filter": {
+          "leadId": "Lead id",
+          "leadIdPlaceholder": "uuid",
+          "from": "Decided from",
+          "limit": "Limit"
+        },
+        "cols": {
+          "decidedAt": "Decided at",
+          "lead": "Lead",
+          "strategy": "Strategy",
+          "assigned": "Assigned to",
+          "candidates": "Candidates",
+          "excluded": "Excluded"
+        },
+        "reasons": {
+          "not_eligible_role": "Not eligible (role)",
+          "inactive_user": "Inactive user",
+          "excluded_by_caller": "Excluded by caller",
+          "wrong_team": "Wrong team",
+          "unavailable": "Unavailable",
+          "out_of_office": "Out of office",
+          "outside_working_hours": "Outside working hours",
+          "at_capacity": "At capacity"
+        }
+      }
+    },
+    "lostReasons": {
+      "title": "Lost reasons",
+      "subtitle": "The catalogue of rejection reasons agents can pick when marking a lead as lost.",
+      "intro": "Codes are immutable once created. Labels and ordering can be changed any time. The 'other' reason is protected and always visible to agents.",
+      "noAccess": "You don't have permission to view lost reasons.",
+      "newButton": "New reason",
+      "newTitle": "New lost reason",
+      "editTitle": "Edit lost reason",
+      "edit": "Edit",
+      "deactivate": "Deactivate",
+      "activate": "Activate",
+      "protected": "Protected",
+      "created": "Reason created.",
+      "updated": "Reason updated.",
+      "empty": "No lost reasons configured",
+      "emptyHint": "The seed installs 7 reasons per tenant. If this list is empty something has been deleted manually — re-create at least one.",
+      "cols": {
+        "order": "#",
+        "code": "Code",
+        "labelEn": "Label (EN)",
+        "labelAr": "Label (AR)",
+        "status": "Status"
+      },
+      "form": {
+        "code": "Code",
+        "codeHint": "Lowercase snake_case. Permanent — choose carefully.",
+        "labelEn": "Label (English)",
+        "labelAr": "Label (Arabic)",
+        "displayOrder": "Order",
+        "displayOrderHint": "Lower numbers appear first in the agent picker.",
+        "isActive": "Status",
+        "isActiveLabel": "Active"
+      },
+      "errors": {
+        "codeRequired": "Code is required.",
+        "codeShape": "Code must be lowercase snake_case (a-z, 0-9, _).",
+        "labelsRequired": "Both English and Arabic labels are required.",
+        "orderInvalid": "Order must be a non-negative number.",
+        "cannotDeactivateProtected": "The 'other' reason is protected and cannot be deactivated."
+      }
+    },
     "whatsappTemplates": {
       "title": "WhatsApp templates",
       "subtitle": "Meta-approved templates the agent picker uses to start or re-open conversations.",
@@ -405,7 +681,24 @@
       "save": "Save",
       "saved": "Settings saved.",
       "loadFailed": "Failed to load settings.",
-      "saveFailed": "Failed to save settings."
+      "saveFailed": "Failed to save settings.",
+      "distributionMoved": {
+        "title": "Lead distribution moved",
+        "body": "Routing rules, per-agent capacity, and the routing-decision log now live on the dedicated Distribution page.",
+        "cta": "Open Distribution"
+      },
+      "distribution": {
+        "title": "Lead distribution rules",
+        "hint": "Route incoming leads of a specific source straight to a chosen agent. Anything without a rule falls back to round-robin.",
+        "add": "Add rule",
+        "remove": "Remove rule",
+        "empty": "No rules yet — every source is currently routed via round-robin.",
+        "source": "Source",
+        "assignee": "Assignee",
+        "fallback": "If a rule's agent is disabled or no longer eligible, auto-assign falls back to round-robin automatically.",
+        "allCovered": "Every source already has a rule.",
+        "noUsers": "Need at least one active user to add a rule."
+      }
     },
     "pipelineBuilder": {
       "title": "Pipeline Builder",
@@ -434,6 +727,11 @@
       "stageName": "Display name",
       "stageOrder": "Order",
       "stageTerminal": "Terminal (excluded from active KPIs)",
+      "stageTerminalKind": "Lifecycle outcome",
+      "stageTerminalKindHint": "Decides whether this terminal stage marks the lead as Won or Lost. Leave as None for archive-style stages.",
+      "stageTerminalKindNone": "None",
+      "stageTerminalKindWon": "Won",
+      "stageTerminalKindLost": "Lost",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "deleteStageConfirm": "Delete this stage?",
@@ -713,6 +1011,7 @@
       "emptyDayHint": "No follow-ups land on this day.",
       "openLead": "Open lead",
       "complete": "Complete",
+      "snooze": "Snooze",
       "done": "Done"
     },
     "workspace": {
@@ -765,12 +1064,43 @@
         "pending": "pending",
         "overdue": "overdue",
         "complete": "Done",
+        "snooze": "Snooze",
         "types": {
           "call": "Call",
           "whatsapp": "WhatsApp",
           "visit": "Visit",
           "other": "Other"
         }
+      }
+    },
+    "followUpBell": {
+      "ariaLabel": "Follow-ups: {overdue} overdue, {today} due today"
+    },
+    "followUpToast": {
+      "overdueTitle": "{count} overdue follow-up(s)",
+      "overdueBody": "Open the calendar to catch up.",
+      "snoozeApplied": "Snoozed until {when}",
+      "snoozeCleared": "Snooze cleared"
+    },
+    "snoozeModal": {
+      "title": "Snooze follow-up",
+      "titleNamed": "Snooze follow-up — {name}",
+      "intro": "Push this follow-up out of your overdue / due-today lists. It returns automatically when the snooze ends.",
+      "preset": "When",
+      "presets": {
+        "1h": "In 1 hour",
+        "3h": "In 3 hours",
+        "tomorrow9": "Tomorrow at 9:00 AM",
+        "custom": "Custom date and time"
+      },
+      "date": "Date",
+      "time": "Time",
+      "preview": "Resumes at {when}",
+      "confirm": "Snooze",
+      "clear": "Clear snooze",
+      "errors": {
+        "invalid": "Pick a valid date and time.",
+        "inPast": "Pick a time in the future."
       }
     },
     "inbox": {
@@ -823,7 +1153,35 @@
       "mediaMimeType": "MIME type (optional)",
       "mediaCaption": "Caption (optional)",
       "mediaUrlRequired": "Media URL is required.",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "handover": {
+        "cta": "Transfer",
+        "disabledClosed": "Conversation is closed — handover is disabled.",
+        "title": "Transfer this conversation",
+        "hint": "Reassigns the linked lead and writes an audit-trail entry.",
+        "newAssignee": "New assignee",
+        "pickAssignee": "Pick an agent…",
+        "modeLabel": "Transfer mode",
+        "modes": {
+          "full": {
+            "title": "Full transfer",
+            "body": "Keeps the chat open; lead reassigns to the new agent."
+          },
+          "clean": {
+            "title": "Clean handoff",
+            "body": "Closes the current conversation; the new agent starts fresh."
+          },
+          "summary": {
+            "title": "Summary",
+            "body": "Posts a handover note onto the lead so the new agent has context."
+          }
+        },
+        "summary": "Handover summary",
+        "summaryPlaceholder": "Outline what the new agent should know…",
+        "notify": "Notify the new agent (records intent in the audit log).",
+        "confirm": "Transfer",
+        "done": "Conversation transferred."
+      }
     }
   },
   "common": {

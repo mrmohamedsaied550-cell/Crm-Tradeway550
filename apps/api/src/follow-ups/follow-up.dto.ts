@@ -23,6 +23,25 @@ export const CreateFollowUpSchema = z
   .strict();
 export type CreateFollowUpDto = z.infer<typeof CreateFollowUpSchema>;
 
+/**
+ * Phase A — A5: PATCH /follow-ups/:id surface. Today the only
+ * patchable field is `snoozedUntil` (other field edits don't have a
+ * UI consumer yet); kept in a focused schema so adding more later
+ * is just an additional field. `null` clears the snooze.
+ */
+export const UpdateFollowUpSchema = z
+  .object({
+    /**
+     * Push the row out of the active / overdue / due-today windows
+     * until this time. Pass `null` to clear an existing snooze. Must
+     * be a future timestamp; the service rejects past values with
+     * `follow_up.snoozed_in_past`.
+     */
+    snoozedUntil: isoDateTime.nullable().optional(),
+  })
+  .strict();
+export type UpdateFollowUpDto = z.infer<typeof UpdateFollowUpSchema>;
+
 export const ListMyFollowUpsQuerySchema = z
   .object({
     /** `pending` = not completed; `overdue` = pending && dueAt < now;

@@ -104,7 +104,10 @@ describe('crm — captain conversion + reads (C18)', () => {
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
     const sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
+    // A5 — LeadsService no longer takes AssignmentService directly;
+    // captains tests don't exercise autoAssign so DistributionService
+    // is omitted.
+    leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     const tenant = await prisma.tenant.upsert({

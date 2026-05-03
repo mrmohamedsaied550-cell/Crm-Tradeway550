@@ -23,6 +23,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { BackupModule } from './backup/backup.module';
+import { DistributionModule } from './distribution/distribution.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -62,6 +63,7 @@ import { buildLoggerConfig } from './common/logger';
     IngestionModule,
     RealtimeModule,
     BackupModule,
+    DistributionModule,
     HealthModule,
   ],
   providers: [

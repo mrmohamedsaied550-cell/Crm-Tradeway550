@@ -5,15 +5,50 @@ import { AuditService } from '../audit/audit.service';
 import { getSlaMinutes } from '../crm/sla.config';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from './tenant-context';
-import type { UpdateTenantSettingsDto } from './tenant-settings.dto';
+import type { DistributionRule, UpdateTenantSettingsDto } from './tenant-settings.dto';
 
 export interface TenantSettings {
   tenantId: string;
   timezone: string;
   slaMinutes: number;
   defaultDialCode: string;
+  /**
+   * PL-3 — source→agent overrides consulted before round-robin in
+   * LeadsService.autoAssign. Always an array; never null. The
+   * fallback value is `[]` so callers can iterate without a guard.
+   */
+  distributionRules: DistributionRule[];
+  /**
+   * Phase 1A — fallback strategy when DistributionService.route()
+   * finds no matching rule. One of: 'capacity' | 'round_robin' |
+   * 'weighted'. Defaults to 'capacity' so existing tenants behave
+   * identically to today's behaviour.
+   */
+  defaultStrategy: 'capacity' | 'round_robin' | 'weighted';
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * PL-3 — narrow the JSON column into the typed shape, dropping any
+ * row that doesn't satisfy the runtime contract. Defensive against
+ * a hand-edited DB row or a stale row from an older schema.
+ */
+function parseRules(raw: unknown): DistributionRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DistributionRule[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const source = obj['source'];
+    const assigneeUserId = obj['assigneeUserId'];
+    if (typeof source !== 'string' || typeof assigneeUserId !== 'string') continue;
+    if (seen.has(source)) continue;
+    seen.add(source);
+    out.push({ source: source as DistributionRule['source'], assigneeUserId });
+  }
+  return out;
 }
 
 /**
@@ -57,7 +92,7 @@ export class TenantSettingsService {
     const row = await this.prisma.withTenant(tenantId, (tx) =>
       tx.tenantSettings.findUnique({ where: { tenantId } }),
     );
-    if (row) return row;
+    if (row) return this.normalize(row);
     return this.synthFallback(tenantId);
   }
 
@@ -70,7 +105,7 @@ export class TenantSettingsService {
     const row = await this.prisma.withTenant(tenantId, (tx) =>
       tx.tenantSettings.findUnique({ where: { tenantId } }),
     );
-    if (row) return row;
+    if (row) return this.normalize(row);
     return this.synthFallback(tenantId);
   }
 
@@ -81,7 +116,7 @@ export class TenantSettingsService {
    */
   async getInTx(tx: Prisma.TransactionClient, tenantId: string): Promise<TenantSettings> {
     const row = await tx.tenantSettings.findUnique({ where: { tenantId } });
-    if (row) return row;
+    if (row) return this.normalize(row);
     return this.synthFallback(tenantId);
   }
 
@@ -98,7 +133,7 @@ export class TenantSettingsService {
         update: {},
         create: { tenantId },
       });
-      return row;
+      return this.normalize(row);
     });
   }
 
@@ -111,12 +146,20 @@ export class TenantSettingsService {
           ...(dto.timezone !== undefined && { timezone: dto.timezone }),
           ...(dto.slaMinutes !== undefined && { slaMinutes: dto.slaMinutes }),
           ...(dto.defaultDialCode !== undefined && { defaultDialCode: dto.defaultDialCode }),
+          ...(dto.distributionRules !== undefined && {
+            distributionRules: dto.distributionRules as Prisma.InputJsonValue,
+          }),
+          ...(dto.defaultStrategy !== undefined && { defaultStrategy: dto.defaultStrategy }),
         },
         create: {
           tenantId,
           timezone: dto.timezone ?? TenantSettingsService.FALLBACK_TIMEZONE,
           slaMinutes: dto.slaMinutes ?? getSlaMinutes(),
           defaultDialCode: dto.defaultDialCode ?? TenantSettingsService.FALLBACK_DIAL_CODE,
+          ...(dto.distributionRules !== undefined && {
+            distributionRules: dto.distributionRules as Prisma.InputJsonValue,
+          }),
+          ...(dto.defaultStrategy !== undefined && { defaultStrategy: dto.defaultStrategy }),
         },
       });
       await this.audit.writeInTx(tx, tenantId, {
@@ -126,8 +169,39 @@ export class TenantSettingsService {
         actorUserId,
         payload: { changes: Object.keys(dto) } as Prisma.InputJsonValue,
       });
-      return updated;
+      return this.normalize(updated);
     });
+  }
+
+  /**
+   * Map a raw Prisma row into the typed surface used by callers.
+   * The `distributionRules` JSON column is parsed defensively via
+   * `parseRules` so a hand-edited DB row can never crash a request.
+   */
+  private normalize(row: {
+    tenantId: string;
+    timezone: string;
+    slaMinutes: number;
+    defaultDialCode: string;
+    distributionRules: unknown;
+    defaultStrategy: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }): TenantSettings {
+    return {
+      tenantId: row.tenantId,
+      timezone: row.timezone,
+      slaMinutes: row.slaMinutes,
+      defaultDialCode: row.defaultDialCode,
+      distributionRules: parseRules(row.distributionRules),
+      // Phase 1A — defensively narrow the text column to the typed
+      // union; an unknown value (e.g. legacy 'specific_user' typed
+      // by a hand-edit) silently falls back to 'capacity' so the
+      // engine has a sane default.
+      defaultStrategy: narrowDefaultStrategy(row.defaultStrategy),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
 
   /** Keep the synthesised row's shape identical to a real row. */
@@ -141,8 +215,16 @@ export class TenantSettingsService {
       // explicitly writes a settings row.
       slaMinutes: getSlaMinutes(),
       defaultDialCode: TenantSettingsService.FALLBACK_DIAL_CODE,
+      distributionRules: [],
+      defaultStrategy: 'capacity',
       createdAt: now,
       updatedAt: now,
     };
   }
+}
+
+/** Narrow `tenant_settings.default_strategy` text into the typed union. */
+function narrowDefaultStrategy(raw: string): 'capacity' | 'round_robin' | 'weighted' {
+  if (raw === 'round_robin' || raw === 'weighted' || raw === 'capacity') return raw;
+  return 'capacity';
 }

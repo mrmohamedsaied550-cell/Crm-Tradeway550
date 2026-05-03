@@ -14,9 +14,14 @@ import { MetaLeadgenController } from './meta-leadgen.controller';
  *   - public Meta Lead Ads webhook (cross-tenant; uses
  *     `meta_lead_sources` for routing).
  *
- * Depends on the global CRM module (PipelineService, AssignmentService,
- * SlaService) and the global PrismaService — both already provided
- * tenant-wide via @Global() modules.
+ * A5.5 — auto-assign for ingested leads now goes through
+ * LeadsService.autoAssign which delegates to DistributionService.
+ * Source / company / country / team rules apply identically to
+ * manually-created leads. Pre-A5.5, ingestion called
+ * AssignmentService directly and bypassed rule consultation.
+ *
+ * Depends on the global CRM + Distribution + Tenants modules — all
+ * provided tenant-wide via @Global() so no explicit imports here.
  */
 @Module({
   controllers: [LeadImportController, MetaLeadSourcesController, MetaLeadgenController],

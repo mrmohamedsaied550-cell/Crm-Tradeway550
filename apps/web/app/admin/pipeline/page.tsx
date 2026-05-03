@@ -194,7 +194,9 @@ export default function PipelinePage(): JSX.Element {
     setNotice(null);
 
     try {
-      await leadsApi.moveStage(leadId, targetStage.code as LeadStageCode);
+      // Phase 1B — pass the stage UUID so the server-side guard
+      // catches accidental cross-pipeline drags.
+      await leadsApi.moveStage(leadId, { pipelineStageId: targetStage.id });
       setNotice(t('movedTo', { stage: targetStage.name }));
     } catch (err) {
       // Roll back local state.

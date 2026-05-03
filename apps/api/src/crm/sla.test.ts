@@ -24,6 +24,10 @@ import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import { AgentCapacitiesService } from '../distribution/capacities.service';
+import { DistributionService } from '../distribution/distribution.service';
+import { LeadRoutingLogService } from '../distribution/routing-log.service';
+import { DistributionRulesService } from '../distribution/rules.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
@@ -122,8 +126,25 @@ describe('crm — response-SLA engine (C11)', () => {
     const assignment = new AssignmentService(prismaSvc);
     const audit = new AuditService(prismaSvc);
     const tenantSettings = new TenantSettingsService(prismaSvc, audit);
-    sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings);
-    leads = new LeadsService(prismaSvc, pipeline, assignment, sla, tenantSettings);
+    // A5.5 — wire DistributionService so breach reassignment runs
+    // through the new engine. Constructed with the same dep graph
+    // production uses; bypassRules=true is set internally when the
+    // breach path calls route().
+    const rulesSvc = new DistributionRulesService(prismaSvc);
+    const capacitiesSvc = new AgentCapacitiesService(prismaSvc);
+    const routingLogSvc = new LeadRoutingLogService(prismaSvc);
+    const distribution = new DistributionService(
+      prismaSvc,
+      rulesSvc,
+      capacitiesSvc,
+      routingLogSvc,
+      tenantSettings,
+    );
+    sla = new SlaService(prismaSvc, assignment, undefined, tenantSettings, undefined, distribution);
+    // A5 — LeadsService no longer takes AssignmentService directly;
+    // SLA tests don't exercise autoAssign, so DistributionService is
+    // omitted here too.
+    leads = new LeadsService(prismaSvc, pipeline, sla, tenantSettings);
     captains = new CaptainsService(prismaSvc, pipeline, leads);
 
     const tenant = await prisma.tenant.upsert({
@@ -293,7 +314,7 @@ describe('crm — response-SLA engine (C11)', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'SLA-C', phone: '+201112000003', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
     // sanity: paused
     let row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
@@ -322,7 +343,7 @@ describe('crm — response-SLA engine (C11)', () => {
       }),
     );
 
-    await inTenant(() => leads.moveStage(lead.id, 'contacted', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'contacted' }, actorUserId));
     const row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
     );
@@ -334,7 +355,7 @@ describe('crm — response-SLA engine (C11)', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'SLA-E', phone: '+201112000005', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
     const row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
     );
@@ -392,7 +413,7 @@ describe('crm — response-SLA engine (C11)', () => {
 
     await expireLeadSla(tenantId, overdue.id);
     // terminal: move to lost — SLA paused.
-    await inTenant(() => leads.moveStage(terminal.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(terminal.id, { stageCode: 'lost' }, actorUserId));
     // Even if we forcibly back-date the (now paused) one, it must stay
     // out of the result set because slaStatus !== 'active'.
     await withTenantRaw(tenantId, (tx) =>
@@ -491,6 +512,63 @@ describe('crm — response-SLA engine (C11)', () => {
     );
     await withTenantRaw(tenantId, (tx) =>
       tx.user.update({ where: { id: actorUserId }, data: { status: 'active' } }),
+    );
+  });
+
+  it('A5.5 — breach reassignment bypasses rules + writes a routing log row', async () => {
+    // Plant a specific_user rule that targets agent A. Assign the
+    // lead to A, expire SLA. Without bypassRules, the rule would
+    // re-pick A; with bypassRules=true (which the SLA path uses),
+    // the rule is ignored, the engine falls back to capacity, and
+    // the lead is reassigned to a different agent.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.create({
+        data: {
+          tenantId,
+          name: 'Test: source meta → A (should be bypassed by SLA breach)',
+          strategy: 'specific_user',
+          source: 'meta',
+          targetUserId: agentAId,
+          updatedAt: new Date(),
+        },
+      }),
+    );
+
+    const lead = await inTenant(() =>
+      leads.create({ name: 'SLA-Bypass', phone: '+201112000099', source: 'meta' }, actorUserId),
+    );
+    await inTenant(() => leads.assign(lead.id, agentAId, actorUserId));
+    await expireLeadSla(tenantId, lead.id);
+
+    const results = await inTenant(() => sla.runReassignmentForBreaches(actorUserId));
+    const mine = results.find((r) => r.leadId === lead.id);
+    assert.ok(mine, 'breach result must include our lead');
+    assert.equal(mine?.outcome, 'reassigned');
+    assert.notEqual(
+      mine?.toUserId,
+      agentAId,
+      'breach must NOT route back to agent A even though a rule targets them',
+    );
+
+    // Routing log row written by DistributionService inside the
+    // breach reassignment tx.
+    const logs = await withTenantRaw(tenantId, (tx) =>
+      tx.leadRoutingLog.findMany({ where: { leadId: lead.id } }),
+    );
+    assert.equal(logs.length, 1, 'exactly one routing log row per breach reassignment');
+    assert.equal(logs[0]!.ruleId, null, 'bypassRules → no rule recorded');
+    assert.equal(
+      logs[0]!.strategy,
+      'capacity',
+      'tenant default strategy fires when rules are bypassed',
+    );
+    assert.equal(logs[0]!.chosenUserId, mine?.toUserId);
+
+    // Cleanup the rule so subsequent tests aren't affected.
+    await withTenantRaw(tenantId, (tx) =>
+      tx.distributionRule.deleteMany({
+        where: { tenantId, name: { startsWith: 'Test: source meta → A' } },
+      }),
     );
   });
 

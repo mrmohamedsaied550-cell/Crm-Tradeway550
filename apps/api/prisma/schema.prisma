@@ -65,6 +65,12 @@ model Tenant {
   metaLeadSources       MetaLeadSource[]
   captainDocuments      CaptainDocument[]
   captainTrips          CaptainTrip[]
+  /// Phase 1A — distribution engine back-relations.
+  distributionRules     DistributionRule[]
+  agentCapacities       AgentCapacity[]
+  leadRoutingLogs       LeadRoutingLog[]
+  /// Phase A — per-tenant rejection-reason catalogue.
+  lostReasons           LostReason[]
 
   @@map("tenants")
 }
@@ -168,6 +174,10 @@ model User {
   lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
   failedLoginCount Int       @default(0) @map("failed_login_count")
   lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(6)
+  /// Phase 1A — feeds the round_robin distribution strategy. NULL =
+  /// "never assigned via the engine", treated as oldest by the picker
+  /// so brand-new agents enter the rotation first.
+  lastAssignedAt   DateTime? @map("last_assigned_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -194,6 +204,11 @@ model User {
   /// P2-09 — captain-document review trail.
   reviewedDocuments  CaptainDocument[] @relation("CaptainDocumentReviewer")
   uploadedDocuments  CaptainDocument[] @relation("CaptainDocumentUploader")
+  /// Phase 1A — distribution engine back-relations.
+  agentCapacity      AgentCapacity?
+  routedLeads        LeadRoutingLog[]      @relation("LeadRoutingLogChosen")
+  authoredDistributionRules DistributionRule[] @relation("DistributionRuleAuthor")
+  targetedByDistributionRules DistributionRule[] @relation("DistributionRuleTargetUser")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -269,6 +284,8 @@ model Pipeline {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   stages PipelineStage[]
+  /// Phase 1B — leads denormalised onto the pipeline they currently run on.
+  leads  Lead[]
 
   // A given (tenant, company, country) pair can have at most one
   // pipeline row. The tenant-default sits at (tenantId, NULL, NULL)
@@ -297,6 +314,11 @@ model PipelineStage {
   name       String
   order      Int
   isTerminal Boolean  @default(false) @map("is_terminal")
+  /// Phase A — A1: classifies a terminal stage as 'won' or 'lost'.
+  /// Drives `Lead.lifecycleState` on stage moves. NULL on non-terminal
+  /// stages and on terminal stages that are neither (rare; admin can
+  /// configure later via Pipeline Builder).
+  terminalKind String? @map("terminal_kind")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -323,8 +345,27 @@ model Lead {
   email        String?
   source       String   @default("manual")
 
+  /// Phase 1B — B1: explicit (company, country) scope on the lead.
+  /// Both nullable: a lead with NULL/NULL falls back to the tenant's
+  /// default pipeline at read time (preserves pre-1B behaviour).
+  /// Once the Pipeline Builder is the canonical surface, new leads
+  /// get these populated based on the source / form they came from.
+  companyId    String?  @map("company_id") @db.Uuid
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  countryId    String?  @map("country_id") @db.Uuid
+  country      Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+
   stageId      String   @map("stage_id") @db.Uuid
   stage        PipelineStage @relation(fields: [stageId], references: [id])
+
+  /// Phase 1B — B1: denormalised pipeline pointer. Always equal to
+  /// `stage.pipelineId`; kept on the row so Kanban / reporting can
+  /// filter by pipeline without joining stages, and so a stage move
+  /// guard can catch cross-pipeline transitions cheaply.
+  /// Nullable today; will be promoted to NOT NULL after B3 ships
+  /// and a backfill window closes.
+  pipelineId   String?  @map("pipeline_id") @db.Uuid
+  pipeline     Pipeline? @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
 
   assignedToId String?  @map("assigned_to_id") @db.Uuid
   assignedTo   User?    @relation("LeadAssignee", fields: [assignedToId], references: [id])
@@ -356,6 +397,33 @@ model Lead {
   lastActivityAt  DateTime? @map("last_activity_at") @db.Timestamptz(6)
   nextActionDueAt DateTime? @map("next_action_due_at") @db.Timestamptz(6)
 
+  /// Phase A — A1: lifecycle classifier derived from the lead's
+  /// current stage's `terminalKind`. Single source of truth for
+  /// "is this lead in the funnel, won, or lost?" — used by reports,
+  /// dashboards, and capacity calculations. NEVER set directly via
+  /// the API; only LeadsService.moveStage / convertToCaptain may
+  /// write it.
+  ///   'open'     — non-terminal stage; agent is working it.
+  ///   'won'      — entered a stage with terminalKind='won' (e.g. converted).
+  ///   'lost'     — entered a stage with terminalKind='lost'; requires lostReasonId.
+  ///   'archived' — manually retired (rare; admin-only undo path).
+  lifecycleState String @default("open") @map("lifecycle_state")
+
+  /// Phase A — A1: required when lifecycleState='lost'. References
+  /// the per-tenant `lost_reasons` catalogue. Cleared automatically
+  /// when the lead is moved back to a non-lost stage.
+  lostReasonId String?     @map("lost_reason_id") @db.Uuid
+  lostReason   LostReason? @relation(fields: [lostReasonId], references: [id], onDelete: Restrict)
+  /// Optional free-text elaboration on the lost reason.
+  lostNote     String?     @map("lost_note")
+
+  /// Phase A — A1: rich attribution payload (source, campaign, ad
+  /// set, ad, UTM). Populated on every create path (Meta webhook,
+  /// CSV import, manual). Distribution rules + reporting will read
+  /// from this in Phase D. Backfilled to `{ source: <flat source> }`
+  /// for legacy rows; `Lead.source` is preserved for backward compat.
+  attribution  Json?       @map("attribution")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -363,6 +431,8 @@ model Lead {
   activities LeadActivity[]
   whatsappConversations WhatsAppConversation[]
   followUps  LeadFollowUp[]
+  /// Phase 1A — append-only routing decisions for this lead.
+  routingLogs LeadRoutingLog[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
@@ -372,6 +442,12 @@ model Lead {
   @@index([tenantId, slaStatus, slaDueAt])
   // C37 — overdue / due-today scans by assignee + next action.
   @@index([tenantId, assignedToId, nextActionDueAt])
+  // Phase 1B — Kanban: "all leads in pipeline X grouped by stage".
+  @@index([tenantId, pipelineId, stageId])
+  // Phase 1B — reporting + admin filters by (company, country).
+  @@index([tenantId, companyId, countryId])
+  // Phase A — workspace + reports filter by lifecycle state.
+  @@index([tenantId, lifecycleState])
   @@map("leads")
 }
 
@@ -557,6 +633,10 @@ model Company {
   bonusRules   BonusRule[]
   competitions Competition[]
   pipelines    Pipeline[]
+  /// Phase 1A — distribution rules scoped to this company.
+  distributionRules DistributionRule[]
+  /// Phase 1B — leads explicitly scoped to this company.
+  leads        Lead[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -586,6 +666,10 @@ model Country {
   bonusRules   BonusRule[]
   competitions Competition[]
   pipelines    Pipeline[]
+  /// Phase 1A — distribution rules scoped to this country.
+  distributionRules DistributionRule[]
+  /// Phase 1B — leads explicitly scoped to this country.
+  leads        Lead[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.
@@ -615,6 +699,8 @@ model Team {
   captains     Captain[]
   bonusRules   BonusRule[]
   competitions Competition[]
+  /// Phase 1A — distribution rules that target this team's pool.
+  distributionRules DistributionRule[]
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
@@ -1013,6 +1099,10 @@ model LeadFollowUp {
   dueAt       DateTime @map("due_at") @db.Timestamptz(6)
   note        String?
   completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  /// Phase A — A1: when set + > now, the row is hidden from
+  /// "overdue" / "due-today" counters until snoozedUntil passes.
+  /// Cleared on completion.
+  snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
 
   assignedToId String? @map("assigned_to_id") @db.Uuid
   assignedTo   User?   @relation("LeadFollowUpAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
@@ -1026,6 +1116,38 @@ model LeadFollowUp {
   // Hot path: "my open follow-ups, soonest first" + the overdue scan.
   @@index([tenantId, assignedToId, completedAt, dueAt])
   @@map("lead_followups")
+}
+
+/// LostReason (Phase A — A1) — per-tenant configurable list of
+/// rejection reasons. Required when a lead is moved to a stage with
+/// `terminalKind = 'lost'`. Multi-language at the row level
+/// (labelEn / labelAr); future locales add columns without a
+/// migration of existing rows.
+///
+/// `code` is a stable machine identifier (e.g. 'no_vehicle');
+/// labels are display-only and may be edited freely. The seed
+/// installs 7 canonical reasons per tenant; admins can add /
+/// rename / reorder / deactivate via /admin/lost-reasons. The
+/// 'other' code is protected from deactivation as a fallback.
+model LostReason {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String
+  labelEn      String   @map("label_en")
+  labelAr      String   @map("label_ar")
+  isActive     Boolean  @default(true) @map("is_active")
+  displayOrder Int      @default(100) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Leads currently lost for this reason. ON DELETE RESTRICT on the
+  /// FK forbids deleting an in-use reason — admin must deactivate.
+  leads Lead[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, isActive, displayOrder])
+  @@map("lost_reasons")
 }
 
 /// Competition (C33) — admin-managed agent / team contest definition.
@@ -1132,8 +1254,124 @@ model TenantSettings {
   timezone        String   @default("Africa/Cairo")
   slaMinutes      Int      @default(60) @map("sla_minutes")
   defaultDialCode String   @default("+20") @map("default_dial_code")
+  /// PL-3 — legacy `{source, assigneeUserId}` JSONB. Phase 1A migrates
+  /// these into the relational `distribution_rules` table; the column is
+  /// kept for one release as a rollback safety net but services no
+  /// longer read it. Drop in a future migration.
+  distributionRules Json   @default("[]") @map("distribution_rules")
+  /// Phase 1A — fallback strategy when DistributionService.route() finds
+  /// no matching rule. One of: 'capacity' | 'round_robin' | 'weighted'.
+  /// `specific_user` is intentionally excluded here (it requires a per-rule
+  /// target). Defaults to 'capacity' so existing tenants behave identically
+  /// to today's implementation.
+  defaultStrategy String   @default("capacity") @map("default_strategy")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("tenant_settings")
+}
+
+/// Phase 1A — DistributionRule.
+///
+/// One row per routing rule. NULL on a match column means wildcard.
+/// The DistributionService picks the highest-priority active rule whose
+/// non-NULL conditions all match the lead context (lower priority = higher
+/// precedence). Ties are broken by `createdAt` ascending.
+///
+/// Strategies:
+///   - `specific_user` — route directly to `targetUserId` if eligible.
+///   - `round_robin`   — turn-based; oldest `users.lastAssignedAt` wins.
+///   - `weighted`      — probabilistic by `agent_capacities.weight`.
+///   - `capacity`      — lowest active-lead count among eligible.
+///
+/// `targetTeamId` (when set) restricts the candidate pool to that team
+/// regardless of strategy.
+model DistributionRule {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  isActive      Boolean  @default(true) @map("is_active")
+  priority      Int      @default(100)
+
+  /// Match conditions (NULL = any). All non-NULL fields must match.
+  source        String?
+  companyId     String?  @map("company_id") @db.Uuid
+  company       Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  countryId     String?  @map("country_id") @db.Uuid
+  country       Country? @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  targetTeamId  String?  @map("target_team_id") @db.Uuid
+  targetTeam    Team?    @relation(fields: [targetTeamId], references: [id], onDelete: SetNull)
+
+  /// Strategy + per-strategy target.
+  strategy      String
+  targetUserId  String?  @map("target_user_id") @db.Uuid
+  targetUser    User?    @relation("DistributionRuleTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdBy     User?    @relation("DistributionRuleAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  routingLogs   LeadRoutingLog[]
+
+  @@index([tenantId, priority, isActive])
+  @@index([tenantId, source])
+  @@map("distribution_rules")
+}
+
+/// Phase 1A — AgentCapacity.
+///
+/// Optional per-user configuration consumed by the candidate filter
+/// pipeline + the weighted strategy. A user without a row uses the
+/// defaults synthesised in `CapacitiesService.getEffective`:
+///   { maxActiveLeads: null, weight: 1, isAvailable: true,
+///     outOfOfficeUntil: null, workingHours: null }.
+///
+/// `workingHours` shape (when set):
+///   { mon: { start: "09:00", end: "18:00" }, tue: { ... }, ... }
+/// Times are in the tenant's IANA timezone (`tenant_settings.timezone`).
+model AgentCapacity {
+  userId            String    @id @map("user_id") @db.Uuid
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId          String    @map("tenant_id") @db.Uuid
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  maxActiveLeads    Int?      @map("max_active_leads")
+  weight            Int       @default(1)
+  isAvailable       Boolean   @default(true) @map("is_available")
+  outOfOfficeUntil  DateTime? @map("out_of_office_until") @db.Timestamptz(6)
+  workingHours      Json?     @map("working_hours")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, isAvailable])
+  @@map("agent_capacities")
+}
+
+/// Phase 1A — LeadRoutingLog.
+///
+/// Append-only audit row written for every DistributionService.route()
+/// call, including no-eligible-agent outcomes (which are precisely the
+/// cases ops needs to see). `excludedReasons` is keyed by user id so
+/// the UI can render "candidate Bob excluded — out_of_office".
+model LeadRoutingLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId          String   @map("lead_id") @db.Uuid
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  ruleId          String?  @map("rule_id") @db.Uuid
+  rule            DistributionRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  strategy        String
+  chosenUserId    String?  @map("chosen_user_id") @db.Uuid
+  chosenUser      User?    @relation("LeadRoutingLogChosen", fields: [chosenUserId], references: [id], onDelete: SetNull)
+  candidateCount  Int      @map("candidate_count")
+  excludedCount   Int      @map("excluded_count")
+  excludedReasons Json     @default("{}") @map("excluded_reasons")
+  decidedAt       DateTime @default(now()) @map("decided_at") @db.Timestamptz(6)
+  requestId       String?  @map("request_id")
+
+  @@index([tenantId, leadId, decidedAt(sort: Desc)])
+  @@index([tenantId, decidedAt(sort: Desc)])
+  @@map("lead_routing_logs")
 }

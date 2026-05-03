@@ -1,12 +1,15 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
+import { ArrowRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, tenantSettingsApi } from '@/lib/api';
 import type { TenantSettingsRow } from '@/lib/api-types';
 
@@ -16,13 +19,19 @@ import type { TenantSettingsRow } from '@/lib/api-types';
  *   - SLA window in minutes (1..1440)
  *   - default dial code (E.164 prefix)
  *
- * Reads `pipeline.read`-equivalent visibility (every CRM-touching role
- * has `tenant.settings.read`); the Save button is wired to
- * `tenant.settings.write` on the server, so non-admin users see the
- * form populated but get a 403 if they submit.
+ * Phase 1A — A10: the legacy inline distribution-rules editor (PL-3)
+ * has been replaced by the dedicated /admin/distribution page, which
+ * supports the full rule shape (priority, conditions on company /
+ * country / team, four routing strategies, capacities, audit log).
+ * The `tenantSettings.distributionRules` JSONB column is intentionally
+ * left in place — older tenants that still hold legacy values can
+ * read them via the API, but new tenants should manage routing
+ * exclusively through the new page.
  */
+
 export default function TenantSettingsPage(): JSX.Element {
   const t = useTranslations('admin.tenantSettings');
+  const { toast } = useToast();
 
   const [row, setRow] = useState<TenantSettingsRow | null>(null);
   const [form, setForm] = useState<{
@@ -33,7 +42,6 @@ export default function TenantSettingsPage(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -61,7 +69,6 @@ export default function TenantSettingsPage(): JSX.Element {
     e.preventDefault();
     setSaving(true);
     setError(null);
-    setNotice(null);
     const minutes = Number.parseInt(form.slaMinutes, 10);
     try {
       const updated = await tenantSettingsApi.update({
@@ -70,7 +77,7 @@ export default function TenantSettingsPage(): JSX.Element {
         defaultDialCode: form.defaultDialCode.trim(),
       });
       setRow(updated);
-      setNotice(t('saved'));
+      toast({ tone: 'success', title: t('saved') });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('saveFailed'));
     } finally {
@@ -83,11 +90,10 @@ export default function TenantSettingsPage(): JSX.Element {
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
 
       {error ? <Notice tone="error">{error}</Notice> : null}
-      {notice ? <Notice tone="success">{notice}</Notice> : null}
 
       <form
         onSubmit={onSubmit}
-        className="flex max-w-xl flex-col gap-4 rounded-lg border border-surface-border bg-surface-card p-4 shadow-card"
+        className="flex max-w-3xl flex-col gap-4 rounded-lg border border-surface-border bg-surface-card p-4 shadow-card"
       >
         <Field label={t('timezone')} hint={t('timezoneHint')} required>
           <Input
@@ -119,12 +125,35 @@ export default function TenantSettingsPage(): JSX.Element {
             placeholder="+20"
           />
         </Field>
+
         <div className="flex items-center justify-end gap-2">
           <Button type="submit" loading={saving} disabled={loading || saving || row === null}>
             {t('save')}
           </Button>
         </div>
       </form>
+
+      {/* Phase 1A — A10: the legacy inline rules editor moved to
+          /admin/distribution. Keep a visible deprecation pointer here
+          so admins who deep-link or bookmark the old surface know
+          where the controls went. */}
+      <Notice tone="info">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold text-ink-primary">
+              {t('distributionMoved.title')}
+            </span>
+            <span className="text-xs text-ink-secondary">{t('distributionMoved.body')}</span>
+          </div>
+          <Link
+            href="/admin/distribution"
+            className="inline-flex items-center gap-1 self-start text-sm font-medium text-brand-700 hover:text-brand-800 sm:self-auto"
+          >
+            {t('distributionMoved.cta')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      </Notice>
     </div>
   );
 }
