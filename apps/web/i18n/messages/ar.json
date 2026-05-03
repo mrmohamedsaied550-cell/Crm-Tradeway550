@@ -341,8 +341,52 @@
         "quickActions": {
           "call": "اتصال",
           "addNote": "إضافة ملاحظة",
+          "addFollowUp": "+ متابعة",
           "moveStage": "نقل المرحلة",
           "terminalHint": "العميل المحتمل في مرحلة نهائية"
+        },
+        "nextAction": {
+          "title": "الإجراء التالي",
+          "emptyHint": "لا توجد متابعة مجدولة. جدول واحدة حتى لا يضيع هذا العميل.",
+          "addCta": "جدولة متابعة",
+          "addAnother": "إضافة أخرى",
+          "complete": "تمت",
+          "snooze": "تأجيل",
+          "snoozed": "مؤجَّلة",
+          "dueIn": "بعد {rel}",
+          "overdueBy": "متأخّرة {rel}",
+          "dueAt": "مستحقة {when}",
+          "completedToast": "تم إنهاء المتابعة",
+          "snoozedToast": "تم التأجيل حتى {when}",
+          "snoozeClearedToast": "تم إلغاء التأجيل"
+        },
+        "lastActivity": {
+          "label": "آخر نشاط",
+          "empty": "لا يوجد نشاط بعد"
+        },
+        "attribution": {
+          "label": "الإسناد",
+          "empty": "لا توجد بيانات إسناد"
+        },
+        "adminActions": {
+          "title": "إجراءات إدارية"
+        },
+        "followUpModal": {
+          "title": "جدولة متابعة",
+          "titleNamed": "جدولة متابعة — {name}",
+          "intro": "اختر النوع والوقت وأضف ملاحظة قصيرة.",
+          "actionType": "النوع",
+          "date": "التاريخ",
+          "time": "الوقت",
+          "note": "ملاحظة (اختياري)",
+          "noteHint": "حتى 500 حرف.",
+          "notePlaceholder": "تأكيد مستندات المركبة / إرسال قالب واتساب / …",
+          "save": "جدولة",
+          "created": "تمت جدولة المتابعة",
+          "errors": {
+            "invalid": "اختر تاريخاً ووقتاً صحيحَين.",
+            "inPast": "اختر وقتاً في المستقبل."
+          }
         },
         "createdLabel": "تاريخ الإنشاء",
         "lastResponseLabel": "آخر استجابة",

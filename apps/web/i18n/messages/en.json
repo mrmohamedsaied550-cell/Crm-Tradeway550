@@ -341,8 +341,52 @@
         "quickActions": {
           "call": "Call",
           "addNote": "Add note",
+          "addFollowUp": "+ Follow-up",
           "moveStage": "Move stage",
           "terminalHint": "Lead is in a terminal stage"
+        },
+        "nextAction": {
+          "title": "Next action",
+          "emptyHint": "No follow-up scheduled. Schedule one so this lead doesn't fall through.",
+          "addCta": "Schedule follow-up",
+          "addAnother": "Add another",
+          "complete": "Mark done",
+          "snooze": "Snooze",
+          "snoozed": "Snoozed",
+          "dueIn": "Due in {rel}",
+          "overdueBy": "Overdue {rel}",
+          "dueAt": "Due {when}",
+          "completedToast": "Follow-up marked done",
+          "snoozedToast": "Snoozed until {when}",
+          "snoozeClearedToast": "Snooze cleared"
+        },
+        "lastActivity": {
+          "label": "Last activity",
+          "empty": "No activity yet"
+        },
+        "attribution": {
+          "label": "Attribution",
+          "empty": "No attribution data"
+        },
+        "adminActions": {
+          "title": "Admin actions"
+        },
+        "followUpModal": {
+          "title": "Schedule follow-up",
+          "titleNamed": "Schedule follow-up — {name}",
+          "intro": "Pick a type, when, and a short note.",
+          "actionType": "Type",
+          "date": "Date",
+          "time": "Time",
+          "note": "Note (optional)",
+          "noteHint": "Up to 500 characters.",
+          "notePlaceholder": "Confirm vehicle docs / Send WhatsApp template / …",
+          "save": "Schedule",
+          "created": "Follow-up scheduled",
+          "errors": {
+            "invalid": "Pick a valid date and time.",
+            "inPast": "Pick a time in the future."
+          }
         },
         "createdLabel": "Created",
         "lastResponseLabel": "Last response",
