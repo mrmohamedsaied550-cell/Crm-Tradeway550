@@ -243,6 +243,12 @@
       "stage": "Stage",
       "assignee": "Assignee",
       "sla": "SLA",
+      "nextAction": "Next action",
+      "nextActionCell": {
+        "overdueBy": "Overdue {rel}",
+        "today": "Today {time}",
+        "tomorrow": "Tomorrow {time}"
+      },
       "filterByStage": "Filter by stage",
       "search": "Search name / phone / email",
       "bulk": {
@@ -1120,6 +1126,7 @@
         "name": "Lead",
         "source": "Source",
         "stage": "Stage",
+        "nextAction": "Next action",
         "sla": "SLA",
         "actions": "Actions"
       },

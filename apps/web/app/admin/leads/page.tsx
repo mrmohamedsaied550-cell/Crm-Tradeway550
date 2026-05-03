@@ -16,6 +16,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
 import { LeadPreviewDrawer } from '@/components/admin/lead-preview-drawer';
+import { NextActionCell } from '@/components/admin/next-action-cell';
 import { useIsMobile } from '@/lib/use-media-query';
 import { buildListSignature, saveListContext } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
@@ -701,6 +702,10 @@ export default function LeadsPage(): JSX.Element {
     }
   }
 
+  // Now reference for the NextActionCell column. Recomputed on
+  // every render so relative labels track the wall clock without a
+  // dedicated tick (the list reloads whenever the user acts).
+  const tableNow = new Date();
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
@@ -728,6 +733,11 @@ export default function LeadsPage(): JSX.Element {
         ) : (
           <span className="text-ink-tertiary">{t('unassigned')}</span>
         ),
+    },
+    {
+      key: 'nextAction',
+      header: t('nextAction'),
+      render: (r) => <NextActionCell dueAt={r.nextActionDueAt} now={tableNow} />,
     },
     {
       key: 'sla',

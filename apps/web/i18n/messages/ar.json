@@ -243,6 +243,12 @@
       "stage": "المرحلة",
       "assignee": "المُسنَد إليه",
       "sla": "اتفاقية المستوى",
+      "nextAction": "الإجراء التالي",
+      "nextActionCell": {
+        "overdueBy": "متأخّرة {rel}",
+        "today": "اليوم {time}",
+        "tomorrow": "غداً {time}"
+      },
       "filterByStage": "تصفية حسب المرحلة",
       "search": "بحث في الاسم / الهاتف / البريد",
       "bulk": {
@@ -1120,6 +1126,7 @@
         "name": "العميل",
         "source": "المصدر",
         "stage": "المرحلة",
+        "nextAction": "الإجراء التالي",
         "sla": "SLA",
         "actions": "إجراءات"
       },

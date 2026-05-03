@@ -23,6 +23,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
+import { NextActionCell } from '@/components/admin/next-action-cell';
 import { SnoozeModal } from '@/components/agent/snooze-modal';
 import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
 import type {
@@ -280,6 +281,11 @@ export default function AgentWorkspacePage(): JSX.Element {
     });
   }
 
+  // B3 — Now ref for the NextActionCell column. Re-derived per
+  // render so relative labels track the wall clock (the worklist
+  // reloads on lead.assigned realtime + on every user action).
+  const tableNow = new Date();
+
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
@@ -315,6 +321,11 @@ export default function AgentWorkspacePage(): JSX.Element {
           {l.stage.name}
         </span>
       ),
+    },
+    {
+      key: 'nextAction',
+      header: t('cols.nextAction'),
+      render: (l) => <NextActionCell dueAt={l.nextActionDueAt} now={tableNow} />,
     },
     {
       key: 'sla',
