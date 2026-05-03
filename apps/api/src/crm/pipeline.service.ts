@@ -43,6 +43,16 @@ export class PipelineService {
     });
   }
 
+  /**
+   * @deprecated Phase 1B — resolves codes against the tenant DEFAULT
+   * pipeline only. Use `findCodeInPipelineOrThrow(pipelineId, code)`
+   * with the lead's actual pipeline whenever possible. Kept on the
+   * surface because:
+   *   • the `list` filter falls back here when the caller passes
+   *     `stageCode` (legacy code-based filter),
+   *   • the CSV import + Meta webhook resolve `'new'` here as the
+   *     entry point (both currently land on the tenant default).
+   */
   async findByCodeOrThrow(code: string) {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, async (tx) => {
@@ -97,10 +107,7 @@ export class PipelineService {
    * blocked by `pipeline.default_must_stay_active` at the admin
    * surface anyway.)
    */
-  async resolveForLead(scope: {
-    companyId?: string | null;
-    countryId?: string | null;
-  }): Promise<{
+  async resolveForLead(scope: { companyId?: string | null; countryId?: string | null }): Promise<{
     id: string;
     isDefault: boolean;
     companyId: string | null;

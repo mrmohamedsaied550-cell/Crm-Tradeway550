@@ -81,9 +81,13 @@ export interface PipelineStage {
 /**
  * Phase 1B — well-known stage codes seeded into the tenant default
  * pipeline. Custom pipelines may define any other codes; the API
- * treats `stage.code` as an open string. Use `WELL_KNOWN_STAGE_CODES`
- * for callers that need to special-case the canonical 5 (e.g. UI
- * shows the "convert to captain" CTA when stage code is `'converted'`).
+ * treats `stage.code` as an open string.
+ *
+ * `LeadStageCode` is intentionally `string` (not a literal union)
+ * so callers can pass codes from custom pipelines. Use
+ * `WELL_KNOWN_STAGE_CODES` / `WellKnownLeadStageCode` when you need
+ * to special-case one of the canonical 5 (e.g. show the "convert to
+ * captain" CTA only when `stage.code === 'converted'`).
  */
 export type LeadStageCode = string;
 export const WELL_KNOWN_STAGE_CODES = [
