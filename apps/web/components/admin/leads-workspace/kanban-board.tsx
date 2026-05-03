@@ -118,11 +118,18 @@ export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX
 
   /**
    * Optimistic move: immediately relocate the card in local state,
-   * then call the API. On failure roll back + toast. The server-side
-   * cross-pipeline guard (B3) catches accidental drops onto stages
-   * from a different pipeline — but our DnD only allows drops onto
-   * columns of the SAME board, so cross-pipeline can only happen if
-   * the data races with a pipeline change (rare; surfaced as toast).
+   * then call the API.
+   *
+   * Q3 — surgical rollback: on failure we reverse THIS lead's move
+   * specifically (remove from the target column it was placed in,
+   * re-insert into the source column, swap the count deltas). The
+   * old "save the entire previous state, restore on error" approach
+   * could undo unrelated successful moves that happened concurrently.
+   *
+   * Q3 — post-success merge: the API returns the updated Lead with
+   * refreshed SLA fields (slaDueAt / slaStatus / lastResponseAt).
+   * Merge that into the bucket so the card reflects server truth
+   * without an extra round-trip.
    */
   const onDragStart = useCallback((e: DragStartEvent) => {
     setDraggingId(String(e.active.id));
@@ -145,48 +152,24 @@ export function KanbanBoard({ filters, users, onCreate }: KanbanBoardProps): JSX
       const movedLead = sourceBucket.leads.find((l) => l.id === leadId);
       if (!movedLead) return;
 
-      // 1. Optimistic update.
-      const previous = buckets;
-      const next: StageBucket[] = buckets.map((b) => {
-        if (b.stage.id === sourceBucket.stage.id) {
-          return {
-            ...b,
-            totalCount: b.totalCount - 1,
-            leads: b.leads.filter((l) => l.id !== leadId),
-          };
-        }
-        if (b.stage.id === targetBucket.stage.id) {
-          // Update the lead's stage on the in-flight optimistic copy
-          // so the card renders in the right column with the right
-          // stage badge.
-          const optimisticLead: Lead = {
-            ...movedLead,
-            stageId: targetBucket.stage.id,
-            stage: {
-              code: targetBucket.stage.code,
-              name: targetBucket.stage.name,
-              order: targetBucket.stage.order,
-              isTerminal: targetBucket.stage.isTerminal,
-            },
-          };
-          return {
-            ...b,
-            totalCount: b.totalCount + 1,
-            leads: [optimisticLead, ...b.leads],
-          };
-        }
-        return b;
-      });
-      setBuckets(next);
+      const sourceStageId = sourceBucket.stage.id;
+
+      // 1. Optimistic update — move the card from source to target.
+      setBuckets((prev) => prev && applyMove(prev, leadId, sourceStageId, targetBucket, movedLead));
 
       // 2. Fire the mutation.
       void (async () => {
         try {
-          await leadsApi.moveStage(leadId, { pipelineStageId: targetStageId });
+          const updated = await leadsApi.moveStage(leadId, { pipelineStageId: targetStageId });
+          // Merge the server's truth into the optimistic card. Replace
+          // by id in whatever column it currently lives in (defensively
+          // handles the case where another concurrent drag moved it
+          // again before we got here).
+          setBuckets((prev) => prev && replaceLeadById(prev, updated));
         } catch (err) {
-          // Roll back. Toast the reason — server-side error codes
-          // surface as `err.message` via ApiError.
-          setBuckets(previous);
+          // Surgical rollback: take whatever the latest state is and
+          // reverse only this lead's move.
+          setBuckets((prev) => prev && reverseMove(prev, leadId, sourceBucket, movedLead));
           toast({
             tone: 'error',
             title: t('moveFailed', { name: movedLead.name }),
@@ -468,4 +451,113 @@ function formatRelative(target: Date, now: Date): string {
   if (diff > hour) return `${Math.floor(diff / hour)}h ago`;
   if (diff > min) return `${Math.floor(diff / min)}m ago`;
   return 'just now';
+}
+
+// ─── Bucket mutators (Q3) ─────────────────────────────────────────────
+//
+// Pure helpers used by onDragEnd. Kept outside the component so they
+// don't capture stale state via closure — every call runs against the
+// `prev` snapshot the React state setter passes in.
+
+/**
+ * Move a lead from `sourceStageId` to `targetBucket`'s column. Returns
+ * a new buckets array; never mutates input. Used for the optimistic
+ * update at the start of a drop.
+ */
+function applyMove(
+  buckets: StageBucket[],
+  leadId: string,
+  sourceStageId: string,
+  targetBucket: StageBucket,
+  movedLead: Lead,
+): StageBucket[] {
+  return buckets.map((b) => {
+    if (b.stage.id === sourceStageId) {
+      return {
+        ...b,
+        totalCount: Math.max(0, b.totalCount - 1),
+        leads: b.leads.filter((l) => l.id !== leadId),
+      };
+    }
+    if (b.stage.id === targetBucket.stage.id) {
+      const optimisticLead: Lead = {
+        ...movedLead,
+        stageId: targetBucket.stage.id,
+        stage: {
+          code: targetBucket.stage.code,
+          name: targetBucket.stage.name,
+          order: targetBucket.stage.order,
+          isTerminal: targetBucket.stage.isTerminal,
+        },
+      };
+      return {
+        ...b,
+        totalCount: b.totalCount + 1,
+        leads: [optimisticLead, ...b.leads],
+      };
+    }
+    return b;
+  });
+}
+
+/**
+ * Surgical inverse of `applyMove`. Find the lead wherever it
+ * currently lives, remove it from there, then put it back into the
+ * `originalSourceBucket` (the column it was in before the failed
+ * drop). Counts are decremented on the current container and
+ * incremented on the original source.
+ *
+ * Defensively handles the case where the lead is no longer present
+ * (server reload or concurrent move removed it) by simply re-
+ * inserting into the source — never throws on missing leads.
+ */
+function reverseMove(
+  buckets: StageBucket[],
+  leadId: string,
+  originalSourceBucket: StageBucket,
+  movedLead: Lead,
+): StageBucket[] {
+  const currentContainer = buckets.find((b) => b.leads.some((l) => l.id === leadId));
+  return buckets.map((b) => {
+    if (currentContainer && b.stage.id === currentContainer.stage.id) {
+      return {
+        ...b,
+        totalCount: Math.max(0, b.totalCount - 1),
+        leads: b.leads.filter((l) => l.id !== leadId),
+      };
+    }
+    if (b.stage.id === originalSourceBucket.stage.id) {
+      // Restore with the ORIGINAL stage shape — the optimistic copy
+      // had been mutated to reflect the target stage.
+      const restored: Lead = {
+        ...movedLead,
+        stageId: originalSourceBucket.stage.id,
+        stage: {
+          code: originalSourceBucket.stage.code,
+          name: originalSourceBucket.stage.name,
+          order: originalSourceBucket.stage.order,
+          isTerminal: originalSourceBucket.stage.isTerminal,
+        },
+      };
+      return {
+        ...b,
+        totalCount: b.totalCount + 1,
+        leads: [restored, ...b.leads.filter((l) => l.id !== leadId)],
+      };
+    }
+    return b;
+  });
+}
+
+/**
+ * Replace a lead by id with the server's authoritative copy. Used
+ * after a successful moveStage so refreshed SLA fields land in the
+ * UI without a full reload. Searches every bucket because the lead
+ * could have been moved again concurrently.
+ */
+function replaceLeadById(buckets: StageBucket[], updated: Lead): StageBucket[] {
+  return buckets.map((b) => ({
+    ...b,
+    leads: b.leads.map((l) => (l.id === updated.id ? updated : l)),
+  }));
 }

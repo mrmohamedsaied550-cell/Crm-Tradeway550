@@ -186,6 +186,15 @@ export default function LeadsPage(): JSX.Element {
 
   const [filterStage, setFilterStage] = useState<LeadStageCode | ''>('');
   const [search, setSearch] = useState<string>('');
+  // Q3 — debounced mirror of `search`. The text input updates
+  // `search` synchronously (responsive typing), but the API calls
+  // and Kanban refetches read `debouncedSearch`, throttling actual
+  // network traffic to one request per 250 ms of typing pause.
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(search), 250);
+    return () => window.clearTimeout(id);
+  }, [search]);
   // P3-03 — advanced filters. Empty string means "any" (mapped to
   // `undefined` on the wire so the API treats them as not-passed).
   const [filterSource, setFilterSource] = useState<LeadSource | ''>('');
@@ -237,7 +246,8 @@ export default function LeadsPage(): JSX.Element {
           // pipeline the user thought they were looking at.
           pipelineId: activePipelineId ?? undefined,
           stageCode: filterStage || undefined,
-          q: search.trim() || undefined,
+          // Q3 — `debouncedSearch` is `search` lagged by 250 ms.
+          q: debouncedSearch.trim() || undefined,
           source: filterSource || undefined,
           slaStatus: filterSla || undefined,
           assignedToId,
@@ -274,7 +284,7 @@ export default function LeadsPage(): JSX.Element {
   }, [
     activePipelineId,
     filterStage,
-    search,
+    debouncedSearch,
     filterSource,
     filterSla,
     filterAssignee,
@@ -347,7 +357,9 @@ export default function LeadsPage(): JSX.Element {
       activePipelineId
         ? {
             pipelineId: activePipelineId,
-            ...(search.trim() && { q: search.trim() }),
+            // Q3 — debounced source so the Kanban refetch doesn't
+            // fire on every keystroke.
+            ...(debouncedSearch.trim() && { q: debouncedSearch.trim() }),
             ...(filterSource && { source: filterSource }),
             ...(filterSla && { slaStatus: filterSla }),
             ...(filterAssignee &&
@@ -364,7 +376,7 @@ export default function LeadsPage(): JSX.Element {
         : null,
     [
       activePipelineId,
-      search,
+      debouncedSearch,
       filterSource,
       filterSla,
       filterAssignee,
