@@ -411,12 +411,25 @@ export interface LeadFollowUp {
   dueAt: string;
   note: string | null;
   completedAt: string | null;
+  /**
+   * Phase A — A5: when set + > now, the row is hidden from `pending`
+   * / `overdue` lists and from the bell-badge counters. The lead's
+   * `nextActionDueAt` uses `MAX(dueAt, snoozedUntil)` for display.
+   * `null` (or in the past) means no active snooze.
+   */
+  snoozedUntil: string | null;
   assignedToId: string | null;
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
   /** Present on /follow-ups/mine. */
   lead?: { id: string; name: string; phone: string };
+}
+
+/** Phase A — A5: bell-badge counters payload from `/follow-ups/me/summary`. */
+export interface FollowUpSummary {
+  overdueCount: number;
+  dueTodayCount: number;
 }
 
 // ───── WhatsApp accounts (C24A) — read-only client view ─────

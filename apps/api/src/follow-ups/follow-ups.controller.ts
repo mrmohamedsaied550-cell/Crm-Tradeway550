@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -25,9 +26,11 @@ import {
   CalendarFollowUpsQuerySchema,
   CreateFollowUpSchema,
   ListMyFollowUpsQuerySchema,
+  UpdateFollowUpSchema,
 } from './follow-up.dto';
 
 class CreateFollowUpDto extends createZodDto(CreateFollowUpSchema) {}
+class UpdateFollowUpDto extends createZodDto(UpdateFollowUpSchema) {}
 class ListMyFollowUpsQueryDto extends createZodDto(ListMyFollowUpsQuerySchema) {}
 class CalendarFollowUpsQueryDto extends createZodDto(CalendarFollowUpsQuerySchema) {}
 
@@ -42,6 +45,21 @@ export class FollowUpsController {
   @ApiOperation({ summary: "List the calling user's follow-ups (default: pending only)" })
   mine(@Query() query: ListMyFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.followUps.listMine(user.sub, query);
+  }
+
+  /**
+   * Phase A — A5: bell-badge counters for the calling user's
+   * follow-ups. `dueTodayCount` is computed in the tenant's IANA
+   * timezone so Cairo + Riyadh agents see "today" matching their
+   * local wall-clock.
+   */
+  @Get('follow-ups/me/summary')
+  @RequireCapability('followup.read')
+  @ApiOperation({
+    summary: 'Counts of overdue + due-today follow-ups for the calling user',
+  })
+  summary(@CurrentUser() user: AccessTokenClaims) {
+    return this.followUps.summaryForUser(user.sub);
   }
 
   /**
@@ -82,6 +100,24 @@ export class FollowUpsController {
   @ApiOperation({ summary: 'Mark a follow-up as completed (now)' })
   complete(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
     return this.followUps.complete(id, user.sub);
+  }
+
+  /**
+   * Phase A — A5: PATCH a follow-up. Today the only patchable field
+   * is `snoozedUntil` (push the row out of active windows until the
+   * given time, or `null` to clear). Future fields plug in here.
+   * Capability: `followup.write` — same as create.
+   */
+  @Patch('follow-ups/:id')
+  @RequireCapability('followup.write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update a follow-up (currently: snoozedUntil)' })
+  update(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: UpdateFollowUpDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.followUps.update(id, body, user.sub);
   }
 
   @Delete('follow-ups/:id')

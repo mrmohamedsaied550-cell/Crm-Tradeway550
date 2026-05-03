@@ -56,6 +56,7 @@ import type {
   CompetitionMetric,
   CompetitionStatus,
   FollowUpActionType,
+  FollowUpSummary,
   LeadFollowUp,
   MetaLeadSource,
   Pipeline,
@@ -1179,6 +1180,12 @@ export const followUpsApi = {
     query: { status?: 'pending' | 'overdue' | 'done' | 'all'; limit?: number } = {},
   ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/follow-ups/mine', { query }),
   /**
+   * Phase A — A5: bell-badge counters. Returns
+   * `{ overdueCount, dueTodayCount }` for the calling user.
+   * `dueToday` is computed in the tenant's IANA timezone.
+   */
+  meSummary: (): Promise<FollowUpSummary> => apiFetch<FollowUpSummary>('/follow-ups/me/summary'),
+  /**
    * P3-04 — calendar feed. `from` and `to` are ISO datetimes; `mine`
    * defaults to '1' (caller only). The web calendar passes the
    * month-grid bounds as the window.
@@ -1193,6 +1200,13 @@ export const followUpsApi = {
     apiFetch<LeadFollowUp[]>(`/leads/${leadId}/follow-ups`),
   create: (leadId: string, input: CreateFollowUpInput): Promise<LeadFollowUp> =>
     apiFetch<LeadFollowUp>(`/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  /**
+   * Phase A — A5: snooze (push the row out of active windows) or
+   * un-snooze a follow-up. Pass `snoozedUntil: null` to clear.
+   * Server rejects past timestamps with `follow_up.snoozed_in_past`.
+   */
+  update: (id: string, input: { snoozedUntil?: string | null }): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/follow-ups/${id}`, { method: 'PATCH', body: input }),
   complete: (id: string): Promise<LeadFollowUp> =>
     apiFetch<LeadFollowUp>(`/follow-ups/${id}/complete`, { method: 'POST' }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/follow-ups/${id}`, { method: 'DELETE' }),

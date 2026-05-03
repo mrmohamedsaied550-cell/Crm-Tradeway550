@@ -19,6 +19,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../identity/password.util';
 import { tenantContext } from '../tenants/tenant-context';
+import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PIPELINE_STAGE_DEFINITIONS } from '../crm/pipeline.registry';
 import { FollowUpsService } from './follow-ups.service';
 
@@ -51,7 +52,8 @@ describe('FollowUpsService.listInRange (P3-04 calendar)', () => {
     prismaSvc = new PrismaService();
     const audit = new AuditService(prismaSvc);
     const notifications = new NotificationsService(prismaSvc);
-    svc = new FollowUpsService(prismaSvc, audit, notifications);
+    const tenantSettings = new TenantSettingsService(prismaSvc, audit);
+    svc = new FollowUpsService(prismaSvc, audit, notifications, tenantSettings);
 
     const tenant = await prisma.tenant.upsert({
       where: { code: TENANT_CODE },
