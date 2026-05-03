@@ -116,7 +116,17 @@ export class CaptainsService {
       await this.assertTeamInTenant(dto.teamId);
     }
 
-    const convertedStage = await this.pipeline.findByCodeOrThrow(CONVERTED_STAGE_CODE);
+    // Phase 1B — resolve "converted" against the LEAD'S OWN pipeline
+    // rather than the tenant default. Custom pipelines may use the
+    // same canonical code; the conversion should land in the right
+    // terminal stage regardless of which pipeline the lead is on.
+    // Falls back to the stage's pipeline when lead.pipelineId is
+    // still NULL (legacy rows pre-B3).
+    const leadPipelineId = lead.pipelineId ?? lead.stage.pipelineId;
+    const convertedStage = await this.pipeline.findCodeInPipelineOrThrow(
+      leadPipelineId,
+      CONVERTED_STAGE_CODE,
+    );
 
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {

@@ -115,6 +115,12 @@ export class LeadIngestionService {
     }
 
     const stage = await this.pipeline.findByCodeOrThrow(DEFAULT_STAGE_CODE);
+    // Phase 1B — CSV import currently always lands on the tenant
+    // default pipeline (no company/country mapping yet). Per-import
+    // pipeline selection ships in a follow-up.
+    const defaultPipelineId = await this.prisma.withTenant(tenantId, (tx) =>
+      this.pipeline.findDefaultPipelineIdInTx(tx),
+    );
     const settings = await this.tenantSettings.getCurrent();
     const errors: { row: number; reason: string }[] = [];
     let created = 0;
@@ -127,6 +133,7 @@ export class LeadIngestionService {
         const lineNumber = i + 2; // header is line 1
         const result = await this.tryCreateLead(tx, {
           tenantId,
+          pipelineId: defaultPipelineId,
           stageId: stage.id,
           stageIsTerminal: stage.isTerminal,
           name: (row[mapping.name] ?? '').trim(),
@@ -234,6 +241,10 @@ export class LeadIngestionService {
 
       const r = await this.tryCreateLead(tx, {
         tenantId: input.tenantId,
+        // Phase 1B — webhook ingest also lands on the tenant default
+        // until per-source mapping (Track B) lets a Meta source bind
+        // to a specific (company, country) → pipeline tuple.
+        pipelineId: defaultPipeline.id,
         stageId: stage.id,
         stageIsTerminal: stage.isTerminal,
         defaultDialCode: settings.defaultDialCode,
@@ -275,6 +286,12 @@ export class LeadIngestionService {
     tx: Prisma.TransactionClient,
     input: {
       tenantId: string;
+      /**
+       * Phase 1B — denormalised pipeline id; persisted on the lead so
+       * Kanban + reporting can filter without joining stages. Always
+       * equals the parent of `stageId`.
+       */
+      pipelineId: string;
       stageId: string;
       stageIsTerminal: boolean;
       name: string;
@@ -336,6 +353,11 @@ export class LeadIngestionService {
         phone,
         email: input.email,
         source: input.source,
+        // Phase 1B — populate the denormalised pipeline pointer so
+        // ingested leads participate in Kanban + reporting from day
+        // one. company/country stay NULL until per-source mapping
+        // ships in a follow-up (Track B).
+        pipelineId: input.pipelineId,
         stageId: input.stageId,
         assignedToId: null,
         createdById: input.actorUserId,

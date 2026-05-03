@@ -269,17 +269,24 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'E', phone: '+201001116666', source: 'manual' }, actorUserId),
     );
-    const moved = await inTenant(() => leads.moveStage(lead.id, 'contacted', actorUserId));
+    const moved = await inTenant(() =>
+      leads.moveStage(lead.id, { stageCode: 'contacted' }, actorUserId),
+    );
     assert.equal(moved.stage.code, 'contacted');
 
     const acts = await inTenant(() => leads.listActivities(lead.id));
     const stageChange = acts.find((a) => a.type === 'stage_change');
     assert.ok(stageChange);
-    assert.deepEqual(stageChange?.payload, {
-      event: 'stage_change',
-      fromStageCode: 'new',
-      toStageCode: 'contacted',
-    });
+    // Phase 1B — payload now also carries the explicit fromStageId /
+    // toStageId so consumers (Kanban / reports) don't have to re-resolve
+    // codes against a possibly-renamed pipeline. Asserting the
+    // semantically meaningful subset.
+    const p = stageChange?.payload as Record<string, unknown>;
+    assert.equal(p?.event, 'stage_change');
+    assert.equal(p?.fromStageCode, 'new');
+    assert.equal(p?.toStageCode, 'contacted');
+    assert.equal(typeof p?.fromStageId, 'string');
+    assert.equal(typeof p?.toStageId, 'string');
   });
 
   it('moveStage to the same stage is a no-op (no extra activity row)', async () => {
@@ -287,7 +294,7 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
       leads.create({ name: 'F', phone: '+201001117777', source: 'manual' }, actorUserId),
     );
     const before = await inTenant(() => leads.listActivities(lead.id));
-    await inTenant(() => leads.moveStage(lead.id, 'new', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'new' }, actorUserId));
     const after = await inTenant(() => leads.listActivities(lead.id));
     assert.equal(before.length, after.length);
   });
@@ -636,7 +643,7 @@ describe('crm — lead lifecycle on a throwaway tenant', () => {
     );
     await inTenant(() => leads.update(lead.id, { name: 'C20 Audit (renamed)' }, actorUserId));
     await inTenant(() => leads.assign(lead.id, assigneeUserId, actorUserId));
-    await inTenant(() => leads.moveStage(lead.id, 'contacted', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'contacted' }, actorUserId));
     await inTenant(() =>
       leads.addActivity(lead.id, { type: 'note', body: 'spoke briefly' }, actorUserId),
     );

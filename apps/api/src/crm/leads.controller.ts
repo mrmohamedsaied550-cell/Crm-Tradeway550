@@ -176,7 +176,13 @@ export class LeadsController {
     @Body() body: MoveStageDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.moveStage(id, body.stageCode, user.sub);
+    return this.leads.moveStage(
+      id,
+      body.pipelineStageId
+        ? { pipelineStageId: body.pipelineStageId }
+        : { stageCode: body.stageCode! },
+      user.sub,
+    );
   }
 
   @Get('leads/:id/activities')

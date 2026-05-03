@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LEAD_SOURCES, ALL_STAGE_CODES, ACTIVITY_TYPES } from './pipeline.registry';
+import { LEAD_SOURCES, ACTIVITY_TYPES } from './pipeline.registry';
 
 /**
  * CRM DTOs.
@@ -24,16 +24,39 @@ const phoneInput = z
   .max(32)
   .regex(/^[\d+\s\-()]+$/u, 'phone may only contain digits, spaces, dashes, parens, or +');
 
-export const CreateLeadSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  phone: phoneInput,
-  email: z.string().trim().email().max(254).optional(),
-  source: z.enum(LEAD_SOURCES).default('manual'),
-  /** Optional override; defaults to the `new` stage if omitted. */
-  stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]).optional(),
-  /** Optional initial assignment (must be a user id in the same tenant). */
-  assignedToId: z.string().uuid().optional(),
-});
+export const CreateLeadSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    phone: phoneInput,
+    email: z.string().trim().email().max(254).optional(),
+    source: z.enum(LEAD_SOURCES).default('manual'),
+    /**
+     * Phase 1B — initial stage. Two ways to set it (mutually exclusive):
+     *   • `pipelineStageId` — preferred; an explicit stage UUID. Must
+     *     belong to the pipeline that gets resolved for this lead.
+     *   • `stageCode` — legacy; resolved against the lead's pipeline
+     *     (or the tenant default when no pipeline scope is set).
+     * Omitting both defaults to the pipeline's first non-terminal stage
+     * (the resolver picks the canonical "new" entry-point).
+     */
+    stageCode: z.string().trim().min(1).max(64).optional(),
+    pipelineStageId: z.string().uuid().optional(),
+    /**
+     * Phase 1B — explicit (company × country) scope on the lead. Both
+     * optional; the pipeline resolver falls back to the tenant default
+     * when either is missing. Cross-tenant ids are rejected at the
+     * service layer (RLS returns null on the lookup).
+     */
+    companyId: z.string().uuid().optional(),
+    countryId: z.string().uuid().optional(),
+    /** Optional initial assignment (must be a user id in the same tenant). */
+    assignedToId: z.string().uuid().optional(),
+  })
+  .strict()
+  .refine((v) => !(v.stageCode && v.pipelineStageId), {
+    message: 'pass either stageCode or pipelineStageId, not both',
+    path: ['pipelineStageId'],
+  });
 export type CreateLeadDto = z.infer<typeof CreateLeadSchema>;
 
 export const UpdateLeadSchema = z
@@ -52,9 +75,23 @@ export const AssignLeadSchema = z.object({
 });
 export type AssignLeadDto = z.infer<typeof AssignLeadSchema>;
 
-export const MoveStageSchema = z.object({
-  stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]),
-});
+/**
+ * Phase 1B — move stage accepts either:
+ *   • `pipelineStageId` (preferred) — explicit stage UUID; rejected
+ *     if it doesn't belong to the lead's pipeline.
+ *   • `stageCode` (legacy) — resolved against the lead's pipeline.
+ * Exactly one must be provided.
+ */
+export const MoveStageSchema = z
+  .object({
+    stageCode: z.string().trim().min(1).max(64).optional(),
+    pipelineStageId: z.string().uuid().optional(),
+  })
+  .strict()
+  .refine((v) => Boolean(v.stageCode) !== Boolean(v.pipelineStageId), {
+    message: 'pass either stageCode or pipelineStageId (exactly one)',
+    path: ['pipelineStageId'],
+  });
 export type MoveStageDto = z.infer<typeof MoveStageSchema>;
 
 export const AddActivitySchema = z
@@ -97,7 +134,21 @@ export type ListCaptainsQueryDto = z.infer<typeof ListCaptainsQuerySchema>;
 
 export const ListLeadsQuerySchema = z
   .object({
-    stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]).optional(),
+    /**
+     * Phase 1B — filter by stage. Three flavours; pass at most one:
+     *   • `pipelineStageId` — exact stage row (preferred for Kanban).
+     *   • `pipelineId`      — every lead currently in this pipeline
+     *                         (Kanban "all columns" view).
+     *   • `stageCode`       — legacy code-based filter; resolved
+     *                         against the tenant default pipeline for
+     *                         backward compatibility with old clients.
+     */
+    pipelineStageId: z.string().uuid().optional(),
+    pipelineId: z.string().uuid().optional(),
+    stageCode: z.string().trim().min(1).max(64).optional(),
+    /** Phase 1B — narrow by (company, country). */
+    companyId: z.string().uuid().optional(),
+    countryId: z.string().uuid().optional(),
     assignedToId: z.string().uuid().optional(),
     /** Free-text match across name + phone + email. */
     q: z.string().trim().min(1).max(120).optional(),
@@ -152,12 +203,24 @@ export const BulkAssignSchema = z
   .strict();
 export type BulkAssignDto = z.infer<typeof BulkAssignSchema>;
 
+/**
+ * Phase 1B — bulk stage moves accept either a stage code OR an
+ * explicit pipeline stage id. Code-based bulk moves are kept for
+ * the existing UI's bulk action and resolve per-lead against the
+ * lead's own pipeline (so the same code in different pipelines
+ * lands in the right place).
+ */
 export const BulkMoveStageSchema = z
   .object({
     leadIds: bulkLeadIds,
-    stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]),
+    stageCode: z.string().trim().min(1).max(64).optional(),
+    pipelineStageId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => Boolean(v.stageCode) !== Boolean(v.pipelineStageId), {
+    message: 'pass either stageCode or pipelineStageId (exactly one)',
+    path: ['pipelineStageId'],
+  });
 export type BulkMoveStageDto = z.infer<typeof BulkMoveStageSchema>;
 
 export const BulkDeleteSchema = z

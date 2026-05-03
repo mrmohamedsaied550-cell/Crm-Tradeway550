@@ -13,7 +13,7 @@ import type { RoutingContext } from '../distribution/distribution.types';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { PipelineService } from './pipeline.service';
-import { DEFAULT_STAGE_CODE, isSlaResetting, type ActivityType } from './pipeline.registry';
+import { isSlaResetting, type ActivityType } from './pipeline.registry';
 import { normalizeE164WithDefault } from './phone.util';
 import { dayBoundsInTimezone } from './time.util';
 import { SlaService } from './sla.service';
@@ -65,7 +65,6 @@ export class LeadsService {
 
   async create(dto: CreateLeadDto, actorUserId: string) {
     const tenantId = requireTenantId();
-    const stage = await this.pipeline.findByCodeOrThrow(dto.stageCode ?? DEFAULT_STAGE_CODE);
     const settings = await this.tenantSettings.getCurrent();
 
     // P2-08 — the DTO only sanity-checks the shape; full E.164
@@ -89,6 +88,63 @@ export class LeadsService {
 
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
+        // Phase 1B — resolve the pipeline first, then resolve / validate
+        // the stage *within* that pipeline. Three input paths:
+        //   1. pipelineStageId  → load stage; pipeline is stage.pipelineId
+        //                          (companyId/countryId are advisory, must
+        //                          match the stage's pipeline scope or be
+        //                          omitted).
+        //   2. stageCode        → resolve pipeline from (company, country)
+        //                          then look up the code in it.
+        //   3. neither          → resolve pipeline; pick its first
+        //                          non-terminal stage (lowest order).
+        let pipelineId: string;
+        let stage: { id: string; code: string; name: string; isTerminal: boolean };
+
+        if (dto.pipelineStageId) {
+          const row = await tx.pipelineStage.findUnique({
+            where: { id: dto.pipelineStageId },
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              isTerminal: true,
+              pipelineId: true,
+            },
+          });
+          if (!row) {
+            throw new NotFoundException({
+              code: 'pipeline.stage.not_found',
+              message: `Pipeline stage not found: ${dto.pipelineStageId}`,
+            });
+          }
+          pipelineId = row.pipelineId;
+          stage = row;
+        } else {
+          const pipeline = await this.pipeline.resolveForLeadInTx(tx, {
+            companyId: dto.companyId ?? null,
+            countryId: dto.countryId ?? null,
+          });
+          pipelineId = pipeline.id;
+          if (dto.stageCode) {
+            stage = await this.pipeline.findCodeInPipelineOrThrow(pipelineId, dto.stageCode);
+          } else {
+            // First non-terminal stage by order.
+            const first = await tx.pipelineStage.findFirst({
+              where: { pipelineId, isTerminal: false },
+              orderBy: { order: 'asc' },
+              select: { id: true, code: true, name: true, isTerminal: true },
+            });
+            if (!first) {
+              throw new BadRequestException({
+                code: 'pipeline.no_entry_stage',
+                message: `Pipeline ${pipelineId} has no non-terminal stage to use as entry point`,
+              });
+            }
+            stage = first;
+          }
+        }
+
         const now = new Date();
         // Non-terminal new lead → SLA starts ticking immediately. Terminal
         // (rare on create — admin import case) → SLA paused.
@@ -102,6 +158,9 @@ export class LeadsService {
             phone,
             email: dto.email ?? null,
             source: dto.source,
+            companyId: dto.companyId ?? null,
+            countryId: dto.countryId ?? null,
+            pipelineId,
             stageId: stage.id,
             assignedToId: dto.assignedToId ?? null,
             createdById: actorUserId,
@@ -115,7 +174,13 @@ export class LeadsService {
           leadId: lead.id,
           type: 'system',
           body: `Lead created in stage "${stage.code}"`,
-          payload: { event: 'created', stageCode: stage.code, source: dto.source },
+          payload: {
+            event: 'created',
+            stageCode: stage.code,
+            stageId: stage.id,
+            pipelineId,
+            source: dto.source,
+          },
           createdById: actorUserId,
         });
         return lead;
@@ -140,7 +205,20 @@ export class LeadsService {
       tx.lead.findUnique({
         where: { id },
         include: {
-          stage: { select: { id: true, code: true, name: true, order: true, isTerminal: true } },
+          stage: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              order: true,
+              isTerminal: true,
+              // Phase 1B — moveStage falls back to the stage's own
+              // pipelineId for legacy leads whose `pipelineId` column
+              // is still NULL. Keep the include so that fallback works
+              // without a second query.
+              pipelineId: true,
+            },
+          },
           captain: true,
         },
       }),
@@ -157,9 +235,20 @@ export class LeadsService {
 
   async list(query: ListLeadsQueryDto) {
     const tenantId = requireTenantId();
-    const stageId = query.stageCode
-      ? (await this.pipeline.findByCodeOrThrow(query.stageCode)).id
-      : undefined;
+
+    // Phase 1B — three stage-filter inputs (mutually exclusive in
+    // practice; the controller already validates only one is sent):
+    //   pipelineStageId — exact stage row
+    //   stageCode       — legacy code; resolved against tenant default
+    //                     pipeline so old clients keep working without
+    //                     change. New UI uses pipelineStageId.
+    //   pipelineId      — every lead currently in the pipeline (Kanban)
+    let stageIdFilter: string | undefined;
+    if (query.pipelineStageId) {
+      stageIdFilter = query.pipelineStageId;
+    } else if (query.stageCode) {
+      stageIdFilter = (await this.pipeline.findByCodeOrThrow(query.stageCode)).id;
+    }
 
     // P3-03 — `assignedToId` and `unassigned` are mutually exclusive;
     // when both are passed the explicit `assignedToId` wins (most
@@ -183,7 +272,10 @@ export class LeadsService {
         : undefined;
 
     const where: Prisma.LeadWhereInput = {
-      ...(stageId && { stageId }),
+      ...(stageIdFilter && { stageId: stageIdFilter }),
+      ...(query.pipelineId && { pipelineId: query.pipelineId }),
+      ...(query.companyId && { companyId: query.companyId }),
+      ...(query.countryId && { countryId: query.countryId }),
       ...assigneeFilter,
       ...(query.source && { source: query.source }),
       ...(query.slaStatus && { slaStatus: query.slaStatus }),
@@ -475,16 +567,22 @@ export class LeadsService {
     };
 
     const result = await this.prisma.withTenant(tenantId, async (tx) => {
-      // Resolve company / country from the lead's pipeline. NOT all
-      // pipelines have these set (manual create with the default
-      // pipeline), in which case the rule matcher treats them as
-      // wildcards via NULL.
-      const stageRow = await tx.pipelineStage.findUnique({
-        where: { id: before.stageId },
-        select: { pipeline: { select: { companyId: true, countryId: true } } },
-      });
-      routeCtx.companyId = stageRow?.pipeline?.companyId ?? null;
-      routeCtx.countryId = stageRow?.pipeline?.countryId ?? null;
+      // Phase 1B — prefer the lead's own (companyId, countryId) when
+      // populated; fall back to the pipeline's scope for legacy leads
+      // that pre-date B3. The fallback exists so old rows still match
+      // company/country distribution rules through the pipeline they
+      // were placed on.
+      if (before.companyId || before.countryId) {
+        routeCtx.companyId = before.companyId;
+        routeCtx.countryId = before.countryId;
+      } else {
+        const stageRow = await tx.pipelineStage.findUnique({
+          where: { id: before.stageId },
+          select: { pipeline: { select: { companyId: true, countryId: true } } },
+        });
+        routeCtx.companyId = stageRow?.pipeline?.companyId ?? null;
+        routeCtx.countryId = stageRow?.pipeline?.countryId ?? null;
+      }
 
       // 1. Run the engine — writes lead_routing_logs row in this tx.
       const decision = await this.distribution!.route(routeCtx, tx);
@@ -562,10 +660,69 @@ export class LeadsService {
   // move stage
   // ───────────────────────────────────────────────────────────────────────
 
-  async moveStage(id: string, toStageCode: string, actorUserId: string) {
+  /**
+   * Phase 1B — accept either a stage UUID or a stage code. The lookup
+   * is scoped to the lead's own pipeline, so two pipelines that
+   * happen to share a stage code (e.g. both have "contacted") never
+   * cross-pollinate. A stage UUID from the wrong pipeline is rejected
+   * with `pipeline.stage.cross_pipeline_move`.
+   *
+   * For backward compatibility with pre-1B leads that don't yet
+   * carry `pipelineId`, we fall back to the stage's own pipeline (the
+   * stage is the source of truth — `Lead.pipelineId` is denormalised).
+   */
+  async moveStage(
+    id: string,
+    target: { stageCode?: string; pipelineStageId?: string },
+    actorUserId: string,
+  ) {
+    if (Boolean(target.stageCode) === Boolean(target.pipelineStageId)) {
+      throw new BadRequestException({
+        code: 'lead.move_stage.invalid_target',
+        message: 'pass exactly one of stageCode or pipelineStageId',
+      });
+    }
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
-    const toStage = await this.pipeline.findByCodeOrThrow(toStageCode);
+    // Lead's pipeline — denormalised column is the fast path; fall
+    // back to the stage row for legacy leads still on NULL.
+    const leadPipelineId = before.pipelineId ?? before.stage.pipelineId;
+
+    let toStage: { id: string; code: string; name: string; isTerminal: boolean };
+    if (target.pipelineStageId) {
+      // Explicit UUID path — verify it belongs to the lead's pipeline.
+      try {
+        toStage = await this.pipeline.findStageInPipelineOrThrow(
+          leadPipelineId,
+          target.pipelineStageId,
+        );
+      } catch (err) {
+        // Re-shape into the user-facing "cross-pipeline" error so the
+        // caller can branch on `code` independently of generic 404s.
+        if (
+          err &&
+          typeof err === 'object' &&
+          'getResponse' in err &&
+          typeof (err as { getResponse: unknown }).getResponse === 'function'
+        ) {
+          const r = (err as { getResponse: () => unknown }).getResponse();
+          if (
+            r &&
+            typeof r === 'object' &&
+            (r as Record<string, unknown>).code === 'pipeline.stage.not_in_pipeline'
+          ) {
+            throw new BadRequestException({
+              code: 'pipeline.stage.cross_pipeline_move',
+              message: `Stage ${target.pipelineStageId} does not belong to this lead's pipeline (${leadPipelineId})`,
+            });
+          }
+        }
+        throw err;
+      }
+    } else {
+      // Code path — resolved against the lead's pipeline only.
+      toStage = await this.pipeline.findCodeInPipelineOrThrow(leadPipelineId, target.stageCode!);
+    }
 
     if (before.stageId === toStage.id) {
       // No-op transitions are silently accepted to keep the flow idempotent
@@ -600,7 +757,9 @@ export class LeadsService {
         payload: {
           event: 'stage_change',
           fromStageCode: before.stage.code,
+          fromStageId: before.stageId,
           toStageCode: toStage.code,
+          toStageId: toStage.id,
         },
         createdById: actorUserId,
       });
@@ -723,9 +882,15 @@ export class LeadsService {
   async bulkMoveStage(dto: BulkMoveStageDto, actorUserId: string) {
     const updated: string[] = [];
     const failed: Array<{ id: string; code: string; message: string }> = [];
+    // Phase 1B — re-shape the input so each call passes the correct
+    // discriminator; per-lead pipeline resolution lives inside
+    // moveStage.
+    const target = dto.pipelineStageId
+      ? { pipelineStageId: dto.pipelineStageId }
+      : { stageCode: dto.stageCode! };
     for (const id of dto.leadIds) {
       try {
-        await this.moveStage(id, dto.stageCode, actorUserId);
+        await this.moveStage(id, target, actorUserId);
         updated.push(id);
       } catch (err) {
         failed.push(toFailure(id, err));

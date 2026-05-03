@@ -357,7 +357,7 @@ describe('crm — round-robin assignment (C11)', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'Terminal', phone: '+201111000003', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
 
     await assert.rejects(
       () => inTenant(() => leads.autoAssign(lead.id, actorUserId)),

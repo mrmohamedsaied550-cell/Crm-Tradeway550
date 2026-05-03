@@ -314,7 +314,7 @@ describe('crm — response-SLA engine (C11)', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'SLA-C', phone: '+201112000003', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
     // sanity: paused
     let row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
@@ -343,7 +343,7 @@ describe('crm — response-SLA engine (C11)', () => {
       }),
     );
 
-    await inTenant(() => leads.moveStage(lead.id, 'contacted', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'contacted' }, actorUserId));
     const row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
     );
@@ -355,7 +355,7 @@ describe('crm — response-SLA engine (C11)', () => {
     const lead = await inTenant(() =>
       leads.create({ name: 'SLA-E', phone: '+201112000005', source: 'manual' }, actorUserId),
     );
-    await inTenant(() => leads.moveStage(lead.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(lead.id, { stageCode: 'lost' }, actorUserId));
     const row = await withTenantRaw(tenantId, (tx) =>
       tx.lead.findUniqueOrThrow({ where: { id: lead.id } }),
     );
@@ -413,7 +413,7 @@ describe('crm — response-SLA engine (C11)', () => {
 
     await expireLeadSla(tenantId, overdue.id);
     // terminal: move to lost — SLA paused.
-    await inTenant(() => leads.moveStage(terminal.id, 'lost', actorUserId));
+    await inTenant(() => leads.moveStage(terminal.id, { stageCode: 'lost' }, actorUserId));
     // Even if we forcibly back-date the (now paused) one, it must stay
     // out of the result set because slaStatus !== 'active'.
     await withTenantRaw(tenantId, (tx) =>
