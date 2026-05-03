@@ -1011,6 +1011,7 @@
       "emptyDayHint": "لا يوجد متابعات في هذا اليوم.",
       "openLead": "فتح العميل",
       "complete": "إنهاء",
+      "snooze": "تأجيل",
       "done": "تمت"
     },
     "workspace": {
@@ -1063,12 +1064,43 @@
         "pending": "معلّقة",
         "overdue": "متأخرة",
         "complete": "تمت",
+        "snooze": "تأجيل",
         "types": {
           "call": "اتصال",
           "whatsapp": "واتساب",
           "visit": "زيارة",
           "other": "أخرى"
         }
+      }
+    },
+    "followUpBell": {
+      "ariaLabel": "المتابعات: {overdue} متأخرة، {today} مستحقة اليوم"
+    },
+    "followUpToast": {
+      "overdueTitle": "{count} متابعة متأخّرة",
+      "overdueBody": "افتح التقويم للحاق بها.",
+      "snoozeApplied": "تم التأجيل حتى {when}",
+      "snoozeCleared": "تم إلغاء التأجيل"
+    },
+    "snoozeModal": {
+      "title": "تأجيل المتابعة",
+      "titleNamed": "تأجيل المتابعة — {name}",
+      "intro": "أَخرِج هذه المتابعة من قوائم المتأخرة / المستحقة اليوم. ستعود تلقائياً عند انتهاء فترة التأجيل.",
+      "preset": "متى",
+      "presets": {
+        "1h": "بعد ساعة",
+        "3h": "بعد 3 ساعات",
+        "tomorrow9": "غداً الساعة 9:00 صباحاً",
+        "custom": "تاريخ ووقت مخصّصان"
+      },
+      "date": "التاريخ",
+      "time": "الوقت",
+      "preview": "تستأنف في {when}",
+      "confirm": "تأجيل",
+      "clear": "إلغاء التأجيل",
+      "errors": {
+        "invalid": "اختر تاريخاً ووقتاً صحيحَين.",
+        "inPast": "اختر وقتاً في المستقبل."
       }
     },
     "inbox": {

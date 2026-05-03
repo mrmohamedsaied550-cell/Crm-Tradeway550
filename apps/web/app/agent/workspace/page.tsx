@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
@@ -8,6 +8,7 @@ import {
   Calendar,
   CheckCircle2,
   ClipboardList,
+  Clock,
   Loader2,
   MessageCircle,
   Phone,
@@ -21,6 +22,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
+import { SnoozeModal } from '@/components/agent/snooze-modal';
 import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
 import type {
   FollowUpActionType,
@@ -101,6 +104,8 @@ const EMPTY_UPDATE_FORM: UpdateFormState = {
 export default function AgentWorkspacePage(): JSX.Element {
   const t = useTranslations('agent.workspace');
   const tCommon = useTranslations('admin.common');
+  const tToast = useTranslations('agent.followUpToast');
+  const { toast } = useToast();
 
   const [meId, setMeId] = useState<string | null>(null);
   const [rows, setRows] = useState<Lead[]>([]);
@@ -118,6 +123,16 @@ export default function AgentWorkspacePage(): JSX.Element {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Phase A — A7: snooze picker. Holds the follow-up the agent is
+  // currently snoozing; null when the modal is closed.
+  const [snoozeFor, setSnoozeFor] = useState<LeadFollowUp | null>(null);
+
+  // Page-load toast: surface the overdue count once on mount so agents
+  // see it the moment they open the workspace. The `shown` ref prevents
+  // re-firing on every reload (which would happen because `overdue` is
+  // refetched on lead.assigned realtime events).
+  const overdueToastShownRef = useRef<boolean>(false);
+
   useEffect(() => {
     const me = getCachedMe();
     setMeId(me?.userId ?? null);
@@ -128,24 +143,36 @@ export default function AgentWorkspacePage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [page, st, mine, ovd, today] = await Promise.all([
+      const [page, st, mine, ovd, today, summary] = await Promise.all([
         leadsApi.list({ assignedToId: meId, limit: 200 }),
         pipelineApi.listStages(),
         followUpsApi.mine({ status: 'pending', limit: 100 }),
         leadsApi.overdue(),
         leadsApi.dueToday(),
+        followUpsApi.meSummary(),
       ]);
       setRows(page.items);
       setStages(st);
       setFollowUps(mine);
       setOverdue(ovd);
       setDueToday(today);
+      // Phase A — A7: page-load toast for overdue follow-ups. Fires
+      // exactly once per mount, even if the user triggers re-fetches.
+      if (!overdueToastShownRef.current && summary.overdueCount > 0) {
+        overdueToastShownRef.current = true;
+        toast({
+          tone: 'warning',
+          title: tToast('overdueTitle', { count: summary.overdueCount }),
+          body: tToast('overdueBody'),
+          duration: 7000,
+        });
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [meId]);
+  }, [meId, toast, tToast]);
 
   useEffect(() => {
     void reload();
@@ -234,6 +261,23 @@ export default function AgentWorkspacePage(): JSX.Element {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
+  }
+
+  // Phase A — A7: apply a snooze (or clear it) and close the picker.
+  // Errors propagate to the SnoozeModal which renders the message.
+  async function onSnoozeConfirm(snoozedUntil: string | null): Promise<void> {
+    if (!snoozeFor) return;
+    setNotice(null);
+    setError(null);
+    await followUpsApi.update(snoozeFor.id, { snoozedUntil });
+    setSnoozeFor(null);
+    await reload();
+    toast({
+      tone: 'success',
+      title: snoozedUntil
+        ? tToast('snoozeApplied', { when: new Date(snoozedUntil).toLocaleString() })
+        : tToast('snoozeCleared'),
+    });
   }
 
   const columns: ReadonlyArray<Column<Lead>> = [
@@ -511,6 +555,10 @@ export default function AgentWorkspacePage(): JSX.Element {
                         {t('actions.openDetail')} →
                       </Link>
                     ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => setSnoozeFor(f)}>
+                      <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('followUps.snooze')}
+                    </Button>
                     <Button variant="ghost" size="sm" onClick={() => void completeFollowUp(f.id)}>
                       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                       {t('followUps.complete')}
@@ -715,6 +763,16 @@ export default function AgentWorkspacePage(): JSX.Element {
           </div>
         </form>
       </Modal>
+
+      <SnoozeModal
+        open={snoozeFor !== null}
+        leadName={snoozeFor?.lead?.name ?? undefined}
+        currentlySnoozed={Boolean(
+          snoozeFor?.snoozedUntil && Date.parse(snoozeFor.snoozedUntil) > Date.now(),
+        )}
+        onConfirm={onSnoozeConfirm}
+        onClose={() => setSnoozeFor(null)}
+      />
     </div>
   );
 }

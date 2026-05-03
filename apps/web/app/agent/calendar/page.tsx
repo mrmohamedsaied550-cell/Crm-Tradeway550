@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Calendar as CalendarIcon,
   CheckCircle2,
+  Clock,
   Loader2,
   MessageCircle,
   Phone,
@@ -19,6 +20,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
+import { SnoozeModal } from '@/components/agent/snooze-modal';
 import { ApiError, followUpsApi } from '@/lib/api';
 import type { FollowUpActionType, LeadFollowUp } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
@@ -104,6 +107,8 @@ export default function AgentCalendarPage(): JSX.Element {
   const t = useTranslations('agent.calendar');
   const tCommon = useTranslations('admin.common');
   const tTypes = useTranslations('agent.workspace.followUps.types');
+  const tToast = useTranslations('agent.followUpToast');
+  const { toast } = useToast();
 
   // Anchor of the visible month — first of the month, midnight.
   const [anchor, setAnchor] = useState<Date>(() => startOfMonth(new Date()));
@@ -112,6 +117,37 @@ export default function AgentCalendarPage(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null); // dayKey or null
+  // Phase A — A7: snooze picker.
+  const [snoozeFor, setSnoozeFor] = useState<LeadFollowUp | null>(null);
+  // Page-load toast: fires once per mount when overdueCount > 0.
+  const overdueToastShownRef = useRef<boolean>(false);
+
+  // Fire the overdue toast independent of the calendar window so it
+  // surfaces even if the user lands here on a future month.
+  useEffect(() => {
+    if (overdueToastShownRef.current) return;
+    let cancelled = false;
+    void followUpsApi
+      .meSummary()
+      .then((s) => {
+        if (cancelled || overdueToastShownRef.current) return;
+        if (s.overdueCount > 0) {
+          overdueToastShownRef.current = true;
+          toast({
+            tone: 'warning',
+            title: tToast('overdueTitle', { count: s.overdueCount }),
+            body: tToast('overdueBody'),
+            duration: 7000,
+          });
+        }
+      })
+      .catch(() => {
+        // Toast is best-effort — silent on network blips.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast, tToast]);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -195,6 +231,22 @@ export default function AgentCalendarPage(): JSX.Element {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
+  }
+
+  // Phase A — A7: apply or clear a snooze, refresh the grid, toast.
+  // Errors propagate to the SnoozeModal which surfaces the message.
+  async function onSnoozeConfirm(snoozedUntil: string | null): Promise<void> {
+    if (!snoozeFor) return;
+    setError(null);
+    await followUpsApi.update(snoozeFor.id, { snoozedUntil });
+    setSnoozeFor(null);
+    await reload();
+    toast({
+      tone: 'success',
+      title: snoozedUntil
+        ? tToast('snoozeApplied', { when: new Date(snoozedUntil).toLocaleString() })
+        : tToast('snoozeCleared'),
+    });
   }
 
   const dayItems = selectedDay ? (byDay.get(selectedDay) ?? []) : [];
@@ -369,10 +421,16 @@ export default function AgentCalendarPage(): JSX.Element {
                       {f.completedAt ? (
                         <Badge tone="inactive">{t('done')}</Badge>
                       ) : (
-                        <Button variant="ghost" size="sm" onClick={() => void onComplete(f.id)}>
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          {t('complete')}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => setSnoozeFor(f)}>
+                            <Clock className="h-3.5 w-3.5" />
+                            {t('snooze')}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => void onComplete(f.id)}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            {t('complete')}
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </li>
@@ -382,6 +440,16 @@ export default function AgentCalendarPage(): JSX.Element {
           )}
         </aside>
       </div>
+
+      <SnoozeModal
+        open={snoozeFor !== null}
+        leadName={snoozeFor?.lead?.name ?? undefined}
+        currentlySnoozed={Boolean(
+          snoozeFor?.snoozedUntil && Date.parse(snoozeFor.snoozedUntil) > Date.now(),
+        )}
+        onConfirm={onSnoozeConfirm}
+        onClose={() => setSnoozeFor(null)}
+      />
     </div>
   );
 }

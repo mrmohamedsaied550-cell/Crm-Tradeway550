@@ -1011,6 +1011,7 @@
       "emptyDayHint": "No follow-ups land on this day.",
       "openLead": "Open lead",
       "complete": "Complete",
+      "snooze": "Snooze",
       "done": "Done"
     },
     "workspace": {
@@ -1063,12 +1064,43 @@
         "pending": "pending",
         "overdue": "overdue",
         "complete": "Done",
+        "snooze": "Snooze",
         "types": {
           "call": "Call",
           "whatsapp": "WhatsApp",
           "visit": "Visit",
           "other": "Other"
         }
+      }
+    },
+    "followUpBell": {
+      "ariaLabel": "Follow-ups: {overdue} overdue, {today} due today"
+    },
+    "followUpToast": {
+      "overdueTitle": "{count} overdue follow-up(s)",
+      "overdueBody": "Open the calendar to catch up.",
+      "snoozeApplied": "Snoozed until {when}",
+      "snoozeCleared": "Snooze cleared"
+    },
+    "snoozeModal": {
+      "title": "Snooze follow-up",
+      "titleNamed": "Snooze follow-up — {name}",
+      "intro": "Push this follow-up out of your overdue / due-today lists. It returns automatically when the snooze ends.",
+      "preset": "When",
+      "presets": {
+        "1h": "In 1 hour",
+        "3h": "In 3 hours",
+        "tomorrow9": "Tomorrow at 9:00 AM",
+        "custom": "Custom date and time"
+      },
+      "date": "Date",
+      "time": "Time",
+      "preview": "Resumes at {when}",
+      "confirm": "Snooze",
+      "clear": "Clear snooze",
+      "errors": {
+        "invalid": "Pick a valid date and time.",
+        "inPast": "Pick a time in the future."
       }
     },
     "inbox": {
