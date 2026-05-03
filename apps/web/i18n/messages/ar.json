@@ -350,6 +350,24 @@
           "next": "العميل التالي (Alt + → أو j)",
           "label": "{pos} من {total}"
         },
+        "timeline": {
+          "today": "اليوم",
+          "yesterday": "أمس",
+          "followUp": {
+            "created": "تمت جدولة متابعة",
+            "completed": "تمت المتابعة",
+            "snoozed": "تم تأجيل المتابعة",
+            "createdSummary": "{type} · مستحقة {due}",
+            "completedSummary": "{type} تمت",
+            "snoozedSummary": "مؤجَّلة حتى {until}",
+            "types": {
+              "call": "اتصال",
+              "whatsapp": "واتساب",
+              "visit": "زيارة",
+              "other": "أخرى"
+            }
+          }
+        },
         "nextAction": {
           "title": "الإجراء التالي",
           "emptyHint": "لا توجد متابعة مجدولة. جدول واحدة حتى لا يضيع هذا العميل.",

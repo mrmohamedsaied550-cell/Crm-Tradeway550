@@ -13,13 +13,9 @@ import {
   Mail,
   Phone,
   PhoneCall,
-  Settings,
   StickyNote,
   Trophy,
-  TriangleAlert,
   UserCog,
-  UserPlus,
-  Users,
   XCircle,
 } from 'lucide-react';
 
@@ -32,6 +28,7 @@ import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
+import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import {
@@ -54,7 +51,6 @@ import type {
   AdminUser,
   Lead,
   LeadActivity,
-  LeadActivityType,
   LeadFollowUp,
   LeadStageCode,
   LostReason,
@@ -70,35 +66,6 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'paused') return 'inactive';
   return 'healthy';
 }
-
-function activityTone(
-  type: LeadActivityType,
-): 'info' | 'warning' | 'breach' | 'neutral' | 'healthy' {
-  switch (type) {
-    case 'sla_breach':
-      return 'breach';
-    case 'assignment':
-    case 'auto_assignment':
-      return 'info';
-    case 'stage_change':
-      return 'warning';
-    case 'note':
-    case 'call':
-      return 'healthy';
-    default:
-      return 'neutral';
-  }
-}
-
-const ACTIVITY_ICON: Record<LeadActivityType, React.ComponentType<{ className?: string }>> = {
-  note: StickyNote,
-  call: Phone,
-  stage_change: ArrowRightLeft,
-  assignment: UserPlus,
-  auto_assignment: Users,
-  sla_breach: TriangleAlert,
-  system: Settings,
-};
 
 /** Compact relative-time formatter without bringing in date-fns. */
 function formatRelative(target: Date, now: Date, locale: string): string {
@@ -732,36 +699,26 @@ export default function LeadDetailPage(): JSX.Element {
             </form>
           </section>
 
-          {/* Activity timeline */}
+          {/* Activity timeline (B2) — chat-like, merges follow-up
+              events into the activity stream. Bucketed by day with
+              "Today" / "Yesterday" / dated separators. */}
           <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
             <h2 className="mb-4 text-sm font-semibold text-ink-primary">
               {t('activitiesTitle')}
               <span className="ms-2 text-xs font-normal text-ink-tertiary">
-                ({activities.length})
+                ({activities.length + followUps.length})
               </span>
             </h2>
-
-            {activities.length === 0 ? (
-              <EmptyState title={tDetail('noActivities')} body={tDetail('noActivitiesHint')} />
-            ) : (
-              <ol className="relative flex flex-col gap-3 ps-4">
-                <span
-                  className="absolute inset-y-0 start-1.5 w-px bg-surface-border"
-                  aria-hidden="true"
-                />
-                {activities.map((a) => (
-                  <ActivityItem
-                    key={a.id}
-                    activity={a}
-                    locale={locale}
-                    now={now}
-                    stageLabel={stageLabel}
-                    userLabel={userLabel}
-                    tDetail={tDetail}
-                  />
-                ))}
-              </ol>
-            )}
+            <ActivityTimeline
+              activities={activities}
+              followUps={followUps}
+              now={now}
+              locale={locale}
+              stageLabel={stageLabel}
+              userLabel={userLabel}
+              tDetail={tDetail}
+              formatRelative={(target) => formatRelative(target, now, locale)}
+            />
           </section>
         </div>
 
@@ -1094,78 +1051,6 @@ function QuickActionsBar({
 
       {disabled ? <span className="text-xs text-ink-tertiary">{labels.terminalHint}</span> : null}
     </div>
-  );
-}
-
-interface ActivityItemProps {
-  activity: LeadActivity;
-  locale: string;
-  now: Date;
-  stageLabel: (code: string | undefined) => string;
-  userLabel: (uid: string | null | undefined) => string;
-  tDetail: ReturnType<typeof useTranslations>;
-}
-
-function ActivityItem({
-  activity,
-  locale,
-  now,
-  stageLabel,
-  userLabel,
-  tDetail,
-}: ActivityItemProps): JSX.Element {
-  const Icon = ACTIVITY_ICON[activity.type] ?? Settings;
-  const tone = activityTone(activity.type);
-  const dotTone: Record<typeof tone, string> = {
-    healthy: 'bg-status-healthy',
-    info: 'bg-status-info',
-    warning: 'bg-status-warning',
-    breach: 'bg-status-breach',
-    neutral: 'bg-ink-tertiary',
-  };
-
-  const payload = readPayload(activity.payload);
-  const summary = formatActivitySummary(activity, payload, stageLabel, userLabel, tDetail);
-  const author =
-    activity.createdById !== null ? userLabel(activity.createdById) : tDetail('systemAuthor');
-  const when = formatRelative(new Date(activity.createdAt), now, locale);
-
-  return (
-    <li className="relative">
-      <span
-        className={cn(
-          'absolute -start-[18px] top-1 inline-flex h-3 w-3 items-center justify-center rounded-full ring-2 ring-surface-card',
-          dotTone[tone],
-        )}
-        aria-hidden="true"
-      />
-      <div className="rounded-md border border-surface-border bg-surface px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5 text-ink-secondary" aria-hidden="true" />
-            <Badge tone={tone}>{tDetail(`activity.type.${activity.type}`)}</Badge>
-          </div>
-          <span
-            className="text-xs text-ink-tertiary"
-            title={new Date(activity.createdAt).toLocaleString()}
-          >
-            {when}
-          </span>
-        </div>
-
-        {summary ? <p className="mt-1.5 text-sm text-ink-primary">{summary}</p> : null}
-        {activity.body && activity.type !== 'note' && activity.type !== 'call' ? (
-          <p className="mt-1 text-xs text-ink-secondary">{activity.body}</p>
-        ) : null}
-        {activity.body && (activity.type === 'note' || activity.type === 'call') ? (
-          <p className="mt-1.5 text-sm text-ink-primary">{activity.body}</p>
-        ) : null}
-
-        <p className="mt-1.5 text-[11px] text-ink-tertiary">
-          {tDetail('activityAuthorBy')} {author}
-        </p>
-      </div>
-    </li>
   );
 }
 

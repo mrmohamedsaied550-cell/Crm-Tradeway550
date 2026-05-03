@@ -350,6 +350,24 @@
           "next": "Next lead (Alt + → or j)",
           "label": "{pos} of {total}"
         },
+        "timeline": {
+          "today": "Today",
+          "yesterday": "Yesterday",
+          "followUp": {
+            "created": "Follow-up scheduled",
+            "completed": "Follow-up completed",
+            "snoozed": "Follow-up snoozed",
+            "createdSummary": "{type} · due {due}",
+            "completedSummary": "{type} marked done",
+            "snoozedSummary": "Snoozed until {until}",
+            "types": {
+              "call": "Call",
+              "whatsapp": "WhatsApp",
+              "visit": "Visit",
+              "other": "Other"
+            }
+          }
+        },
         "nextAction": {
           "title": "Next action",
           "emptyHint": "No follow-up scheduled. Schedule one so this lead doesn't fall through.",
