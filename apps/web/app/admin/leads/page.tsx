@@ -231,6 +231,11 @@ export default function LeadsPage(): JSX.Element {
 
       const [page, st, usrs, cs, cos] = await Promise.all([
         leadsApi.list({
+          // Q2 — narrow the list to the active pipeline so the picker
+          // actually means something here. Was a no-op before — the
+          // list returned every pipeline's leads regardless of which
+          // pipeline the user thought they were looking at.
+          pipelineId: activePipelineId ?? undefined,
           stageCode: filterStage || undefined,
           q: search.trim() || undefined,
           source: filterSource || undefined,
@@ -242,7 +247,14 @@ export default function LeadsPage(): JSX.Element {
           hasOverdueFollowup: filterOverdue || undefined,
           limit: 100,
         }),
-        pipelineApi.listStages(),
+        // Q2 — load stages from the ACTIVE pipeline, not the tenant
+        // default. Without this, the stage filter dropdown showed
+        // stages from a different pipeline whenever the picker was
+        // on a custom pipeline (and selecting one of those stage
+        // codes filtered against the wrong pipeline's stage UUID).
+        activePipelineId
+          ? pipelinesApi.stagesOf(activePipelineId).catch(() => [] as PipelineStage[])
+          : pipelineApi.listStages().catch(() => [] as PipelineStage[]),
         usersApi
           .list({ status: 'active', limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
@@ -260,6 +272,7 @@ export default function LeadsPage(): JSX.Element {
       setLoading(false);
     }
   }, [
+    activePipelineId,
     filterStage,
     search,
     filterSource,
@@ -292,10 +305,18 @@ export default function LeadsPage(): JSX.Element {
 
   // Phase 1 — when the active pipeline changes, persist it and
   // refresh the per-pipeline view-mode preference.
+  //
+  // Q2 — also reset the stage filter on pipeline change. Stage codes
+  // are scoped to a pipeline; an old code (e.g. 'contacted' from
+  // pipeline A) does not generally exist in pipeline B and would
+  // either return zero leads silently or hit a 404 from the
+  // server-side resolver. Clearing on switch keeps the user out of
+  // that confusing state.
   useEffect(() => {
     if (!activePipelineId) return;
     writeActivePipelineId(activePipelineId);
     setViewMode(readViewMode(activePipelineId));
+    setFilterStage('');
   }, [activePipelineId]);
 
   function changeViewMode(mode: ViewMode): void {
