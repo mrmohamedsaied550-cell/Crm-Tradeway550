@@ -789,6 +789,117 @@ export default function LeadsPage(): JSX.Element {
         </Notice>
       ) : null}
 
+      {/*
+       * Q1 — primary filter row + advanced panel are SHARED state and
+       * apply to both views. Lifted out of the list-only conditional
+       * so Kanban users can also filter, search, and clear.
+       *
+       * The stage filter (`filterStage`) is List-specific because the
+       * Kanban view groups BY stage — narrowing to one stage there
+       * would just hide the other columns. Hidden in Kanban.
+       */}
+      <div className="flex flex-wrap items-end gap-3">
+        {effectiveViewMode === 'list' ? (
+          <div className="w-full max-w-xs">
+            <Field label={t('filterByStage')}>
+              <Select
+                value={filterStage}
+                onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
+              >
+                <option value="">{tCommon('all')}</option>
+                {stages.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        ) : null}
+        <div className="w-full max-w-sm">
+          <Field label={t('search')}>
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
+          </Field>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+        </Button>
+        {anyFilterActive ? (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            {tCommon('clearFilters')}
+          </Button>
+        ) : null}
+      </div>
+
+      {advancedOpen ? (
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
+          <Field label={t('advanced.source')}>
+            <Select
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="manual">{t('advanced.sources.manual')}</option>
+              <option value="meta">{t('advanced.sources.meta')}</option>
+              <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+              <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+              <option value="import">{t('advanced.sources.import')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.sla')}>
+            <Select
+              value={filterSla}
+              onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
+            >
+              <option value="">{tCommon('all')}</option>
+              <option value="active">{t('advanced.slaActive')}</option>
+              <option value="breached">{t('advanced.slaBreached')}</option>
+              <option value="paused">{t('advanced.slaPaused')}</option>
+            </Select>
+          </Field>
+          <Field label={t('advanced.assignee')}>
+            <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
+              <option value="">{tCommon('all')}</option>
+              <option value="__unassigned__">{t('advanced.unassigned')}</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t('advanced.createdFrom')}>
+            <Input
+              type="date"
+              value={filterCreatedFrom}
+              onChange={(e) => setFilterCreatedFrom(e.target.value)}
+              max={filterCreatedTo || undefined}
+            />
+          </Field>
+          <Field label={t('advanced.createdTo')}>
+            <Input
+              type="date"
+              value={filterCreatedTo}
+              onChange={(e) => setFilterCreatedTo(e.target.value)}
+              min={filterCreatedFrom || undefined}
+            />
+          </Field>
+          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+            <input
+              type="checkbox"
+              checked={filterOverdue}
+              onChange={(e) => setFilterOverdue(e.target.checked)}
+            />
+            {t('advanced.overdueOnly')}
+          </label>
+        </div>
+      ) : null}
+
       {effectiveViewMode === 'kanban' && kanbanFilters ? (
         <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
       ) : null}
@@ -796,110 +907,10 @@ export default function LeadsPage(): JSX.Element {
       {effectiveViewMode === 'list' ? (
         <>
           {/*
-           * P3-03 — primary filter row stays on screen at all times.
-           * The advanced panel (source / SLA / assignee / created-at /
-           * overdue) is collapsed by default to keep the page tidy and
-           * expanded on demand.
+           * Q1 — the filter row above is now shared. The list view
+           * keeps its own load-error / notice / empty-state /
+           * DataTable / bulk-action bar below.
            */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-full max-w-xs">
-              <Field label={t('filterByStage')}>
-                <Select
-                  value={filterStage}
-                  onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
-                >
-                  <option value="">{tCommon('all')}</option>
-                  {stages.map((s) => (
-                    <option key={s.code} value={s.code}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            <div className="w-full max-w-sm">
-              <Field label={t('search')}>
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
-              </Field>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              aria-expanded={advancedOpen}
-            >
-              {advancedOpen ? t('advanced.hide') : t('advanced.show')}
-            </Button>
-            {anyFilterActive ? (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                {tCommon('clearFilters')}
-              </Button>
-            ) : null}
-          </div>
-
-          {advancedOpen ? (
-            <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
-              <Field label={t('advanced.source')}>
-                <Select
-                  value={filterSource}
-                  onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
-                >
-                  <option value="">{tCommon('all')}</option>
-                  <option value="manual">{t('advanced.sources.manual')}</option>
-                  <option value="meta">{t('advanced.sources.meta')}</option>
-                  <option value="tiktok">{t('advanced.sources.tiktok')}</option>
-                  <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
-                  <option value="import">{t('advanced.sources.import')}</option>
-                </Select>
-              </Field>
-              <Field label={t('advanced.sla')}>
-                <Select
-                  value={filterSla}
-                  onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
-                >
-                  <option value="">{tCommon('all')}</option>
-                  <option value="active">{t('advanced.slaActive')}</option>
-                  <option value="breached">{t('advanced.slaBreached')}</option>
-                  <option value="paused">{t('advanced.slaPaused')}</option>
-                </Select>
-              </Field>
-              <Field label={t('advanced.assignee')}>
-                <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
-                  <option value="">{tCommon('all')}</option>
-                  <option value="__unassigned__">{t('advanced.unassigned')}</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t('advanced.createdFrom')}>
-                <Input
-                  type="date"
-                  value={filterCreatedFrom}
-                  onChange={(e) => setFilterCreatedFrom(e.target.value)}
-                  max={filterCreatedTo || undefined}
-                />
-              </Field>
-              <Field label={t('advanced.createdTo')}>
-                <Input
-                  type="date"
-                  value={filterCreatedTo}
-                  onChange={(e) => setFilterCreatedTo(e.target.value)}
-                  min={filterCreatedFrom || undefined}
-                />
-              </Field>
-              <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
-                <input
-                  type="checkbox"
-                  checked={filterOverdue}
-                  onChange={(e) => setFilterOverdue(e.target.checked)}
-                />
-                {t('advanced.overdueOnly')}
-              </label>
-            </div>
-          ) : null}
 
           {error ? (
             <Notice tone="error">
