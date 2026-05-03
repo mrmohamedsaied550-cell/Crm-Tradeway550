@@ -41,6 +41,24 @@ export interface DataTableProps<T> {
   /** Render extra cells to the right per row, e.g. action buttons. */
   rowActions?: (row: T) => React.ReactNode;
   selection?: DataTableSelection;
+  /**
+   * Phase B — Speed: single-click row handler (e.g. open preview
+   * drawer). Selection checkboxes + cells inside `rowActions` keep
+   * stopPropagation so they don't accidentally fire this. The row
+   * gets `cursor-pointer` when this is set.
+   */
+  onRowClick?: (row: T) => void;
+  /**
+   * Phase B — Speed: double-click row handler (e.g. open full page).
+   * Use together with `onRowClick` for "single = peek, double = full".
+   */
+  onRowDoubleClick?: (row: T) => void;
+  /**
+   * Phase B — Speed: id of the row currently shown in the
+   * preview drawer. Highlights it so the user knows which row the
+   * drawer reflects.
+   */
+  selectedRowId?: string | null;
 }
 
 export function DataTable<T>({
@@ -52,6 +70,9 @@ export function DataTable<T>({
   emptyMessage = 'No records',
   rowActions,
   selection,
+  onRowClick,
+  onRowDoubleClick,
+  selectedRowId,
 }: DataTableProps<T>): JSX.Element {
   const colCount = columns.length + (selection ? 1 : 0) + (rowActions ? 1 : 0);
   const visibleIds = rows.map((r) => keyOf(r));
@@ -159,16 +180,29 @@ export function DataTable<T>({
               rows.map((row) => {
                 const id = keyOf(row);
                 const checked = selection?.selectedIds.has(id) ?? false;
+                const isSelected = selectedRowId === id;
+                const interactive = Boolean(onRowClick || onRowDoubleClick);
                 return (
                   <tr
                     key={id}
                     className={cn(
                       'hover:bg-brand-50/40',
-                      selection && checked ? 'bg-brand-50/40' : '',
+                      interactive ? 'cursor-pointer' : '',
+                      isSelected
+                        ? 'bg-brand-50 ring-1 ring-inset ring-brand-200'
+                        : selection && checked
+                          ? 'bg-brand-50/40'
+                          : '',
                     )}
+                    onClick={onRowClick ? () => onRowClick(row) : undefined}
+                    onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                   >
                     {selection ? (
-                      <td className="w-10 px-4 py-2 align-middle">
+                      <td
+                        className="w-10 px-4 py-2 align-middle"
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                      >
                         <input
                           type="checkbox"
                           aria-label={selection.ariaLabel ?? 'Select row'}
@@ -183,7 +217,11 @@ export function DataTable<T>({
                       </td>
                     ))}
                     {rowActions ? (
-                      <td className="px-4 py-2 text-end">
+                      <td
+                        className="px-4 py-2 text-end"
+                        onClick={(e) => e.stopPropagation()}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                      >
                         <div className="flex items-center justify-end gap-1.5">
                           {rowActions(row)}
                         </div>

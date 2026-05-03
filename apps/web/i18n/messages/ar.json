@@ -431,6 +431,11 @@
             "updated": "تم تحديث ملف العميل المحتمل"
           }
         }
+      },
+      "drawer": {
+        "whatsapp": "واتساب",
+        "openFullPage": "فتح الصفحة الكاملة",
+        "stageMoved": "تم نقل المرحلة"
       }
     },
     "discoveredRoles": "الأدوار المكتشفة",

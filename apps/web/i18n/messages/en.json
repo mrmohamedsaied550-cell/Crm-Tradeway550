@@ -431,6 +431,11 @@
             "updated": "Lead profile updated"
           }
         }
+      },
+      "drawer": {
+        "whatsapp": "WhatsApp",
+        "openFullPage": "Open full page",
+        "stageMoved": "Stage moved"
       }
     },
     "discoveredRoles": "Discovered roles",

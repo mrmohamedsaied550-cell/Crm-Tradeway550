@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
@@ -14,6 +15,7 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
+import { LeadPreviewDrawer } from '@/components/admin/lead-preview-drawer';
 import { useIsMobile } from '@/lib/use-media-query';
 import { buildListSignature, saveListContext } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
@@ -154,6 +156,12 @@ export default function LeadsPage(): JSX.Element {
   const t = useTranslations('admin.leads');
   const tCommon = useTranslations('admin.common');
   const { toast } = useToast();
+  const router = useRouter();
+
+  // Phase B — Speed: lead preview drawer. `previewLeadId` drives the
+  // drawer's contents; null = closed. Single click on a row opens it,
+  // double click navigates to the full page.
+  const [previewLeadId, setPreviewLeadId] = useState<string | null>(null);
 
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
@@ -1060,6 +1068,9 @@ export default function LeadsPage(): JSX.Element {
                   onChange: setSelectedIds,
                   ariaLabel: t('bulk.selectRow'),
                 }}
+                onRowClick={(row) => setPreviewLeadId(row.id)}
+                onRowDoubleClick={(row) => router.push(`/admin/leads/${row.id}`)}
+                selectedRowId={previewLeadId}
                 rowActions={(row) => (
                   <>
                     <Link
@@ -1390,6 +1401,17 @@ export default function LeadsPage(): JSX.Element {
           </Field>
         </form>
       </Modal>
+
+      {/* Phase B — Speed: lead preview drawer. Single row click opens
+          this; double click navigates to the full page. The drawer
+          calls onChanged after any mutation so the list stays fresh. */}
+      <LeadPreviewDrawer
+        open={previewLeadId !== null}
+        leadId={previewLeadId}
+        rowHint={previewLeadId ? (rows.find((r) => r.id === previewLeadId) ?? null) : null}
+        onClose={() => setPreviewLeadId(null)}
+        onChanged={() => void reload()}
+      />
     </div>
   );
 }
