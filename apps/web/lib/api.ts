@@ -446,6 +446,38 @@ export interface CreatePipelineStageInput {
 export const pipelinesApi = {
   list: (): Promise<Pipeline[]> => apiFetch<Pipeline[]>('/pipelines'),
   get: (id: string): Promise<Pipeline> => apiFetch<Pipeline>(`/pipelines/${id}`),
+  /**
+   * Phase 1B — resolve the right pipeline for a (company, country)
+   * scope and return its stages in one round-trip. Used by the
+   * create-lead form, lead detail dropdown, and (later) Kanban.
+   */
+  resolve: (query: {
+    companyId?: string;
+    countryId?: string;
+  }): Promise<{
+    pipeline: {
+      id: string;
+      isDefault: boolean;
+      companyId: string | null;
+      countryId: string | null;
+    };
+    stages: PipelineStage[];
+  }> =>
+    apiFetch<{
+      pipeline: {
+        id: string;
+        isDefault: boolean;
+        companyId: string | null;
+        countryId: string | null;
+      };
+      stages: PipelineStage[];
+    }>('/pipelines/resolve', { query }),
+  /**
+   * Phase 1B — stages of a specific pipeline. For lead-detail
+   * dropdowns + Kanban columns.
+   */
+  stagesOf: (id: string): Promise<PipelineStage[]> =>
+    apiFetch<PipelineStage[]>(`/pipelines/${id}/stages`),
   create: (input: CreatePipelineInput): Promise<Pipeline> =>
     apiFetch<Pipeline>('/pipelines', { method: 'POST', body: input }),
   update: (id: string, input: { name?: string; isActive?: boolean }): Promise<Pipeline> =>
@@ -475,7 +507,23 @@ export const pipelinesApi = {
 export const leadsApi = {
   list: (
     query: {
+      /**
+       * Phase 1B — three stage-filter inputs (mutually exclusive in
+       * practice; the server validates only one is sent):
+       *   • `pipelineStageId` — exact stage row (preferred for Kanban).
+       *   • `pipelineId`      — every lead currently in this pipeline.
+       *   • `stageCode`       — legacy code-based filter, resolved
+       *                          against the tenant default pipeline.
+       *                          Kept for backward compatibility with
+       *                          existing callers; new code should
+       *                          prefer pipelineStageId.
+       */
+      pipelineStageId?: string;
+      pipelineId?: string;
       stageCode?: LeadStageCode;
+      /** Phase 1B — narrow by (company, country). */
+      companyId?: string;
+      countryId?: string;
       assignedToId?: string;
       q?: string;
       /** P3-03 — narrow by source / SLA / date / unassigned / overdue. */
@@ -503,7 +551,21 @@ export const leadsApi = {
     phone: string;
     email?: string;
     source?: LeadSource;
+    /**
+     * Phase 1B — initial-stage discriminator. Pass at most one:
+     *   • `pipelineStageId` — explicit stage UUID (preferred).
+     *   • `stageCode`       — resolved against the lead's pipeline.
+     * Omitting both lets the server pick the entry-point stage of the
+     * resolved pipeline.
+     */
     stageCode?: LeadStageCode;
+    pipelineStageId?: string;
+    /**
+     * Phase 1B — explicit (company × country) scope. Drives which
+     * pipeline the new lead lands on.
+     */
+    companyId?: string;
+    countryId?: string;
     assignedToId?: string;
   }): Promise<Lead> => apiFetch<Lead>('/leads', { method: 'POST', body: input }),
   update: (
@@ -515,8 +577,15 @@ export const leadsApi = {
     apiFetch<Lead>(`/leads/${id}/assign`, { method: 'POST', body: { assignedToId } }),
   autoAssign: (id: string): Promise<Lead | null> =>
     apiFetch<Lead | null>(`/leads/${id}/auto-assign`, { method: 'POST' }),
-  moveStage: (id: string, stageCode: LeadStageCode): Promise<Lead> =>
-    apiFetch<Lead>(`/leads/${id}/stage`, { method: 'POST', body: { stageCode } }),
+  /**
+   * Phase 1B — accepts either a stage UUID (preferred) or a stage
+   * code. The server resolves the code against THIS lead's pipeline,
+   * so the same code in two pipelines never cross-pollinates.
+   */
+  moveStage: (
+    id: string,
+    target: { pipelineStageId: string } | { stageCode: LeadStageCode },
+  ): Promise<Lead> => apiFetch<Lead>(`/leads/${id}/stage`, { method: 'POST', body: target }),
   listActivities: (id: string): Promise<LeadActivity[]> =>
     apiFetch<LeadActivity[]>(`/leads/${id}/activities`),
   /**
@@ -561,16 +630,29 @@ export const leadsApi = {
       method: 'POST',
       body: { leadIds: input.leadIds, assignedToId: input.assignedToId },
     }),
-  bulkStage: (input: {
-    leadIds: readonly string[];
-    stageCode: LeadStageCode;
-  }): Promise<{
+  /**
+   * Phase 1B — bulk move accepts either a stage UUID (resolved
+   * across all leads in the batch — they must all be on the same
+   * pipeline as the target stage) or a stage code (resolved
+   * per-lead against each lead's pipeline; lets a single bulk move
+   * land "contacted" on leads spread across pipelines that all
+   * happen to define that code).
+   */
+  bulkStage: (
+    input: { leadIds: readonly string[] } & (
+      | { pipelineStageId: string; stageCode?: never }
+      | { stageCode: LeadStageCode; pipelineStageId?: never }
+    ),
+  ): Promise<{
     updated: string[];
     failed: { id: string; code: string; message: string }[];
   }> =>
     apiFetch('/leads/bulk-stage', {
       method: 'POST',
-      body: { leadIds: input.leadIds, stageCode: input.stageCode },
+      body:
+        'pipelineStageId' in input
+          ? { leadIds: input.leadIds, pipelineStageId: input.pipelineStageId }
+          : { leadIds: input.leadIds, stageCode: input.stageCode },
     }),
   bulkDelete: (input: {
     leadIds: readonly string[];

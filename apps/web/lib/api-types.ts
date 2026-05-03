@@ -78,7 +78,22 @@ export interface PipelineStage {
   isTerminal: boolean;
 }
 
-export type LeadStageCode = 'new' | 'contacted' | 'interested' | 'converted' | 'lost';
+/**
+ * Phase 1B — well-known stage codes seeded into the tenant default
+ * pipeline. Custom pipelines may define any other codes; the API
+ * treats `stage.code` as an open string. Use `WELL_KNOWN_STAGE_CODES`
+ * for callers that need to special-case the canonical 5 (e.g. UI
+ * shows the "convert to captain" CTA when stage code is `'converted'`).
+ */
+export type LeadStageCode = string;
+export const WELL_KNOWN_STAGE_CODES = [
+  'new',
+  'contacted',
+  'interested',
+  'converted',
+  'lost',
+] as const;
+export type WellKnownLeadStageCode = (typeof WELL_KNOWN_STAGE_CODES)[number];
 export type LeadSource = 'manual' | 'meta' | 'tiktok' | 'whatsapp' | 'import';
 export type SlaStatus = 'active' | 'breached' | 'paused';
 export type LeadActivityType =
@@ -162,8 +177,30 @@ export interface Lead {
   phone: string;
   email: string | null;
   source: LeadSource;
+  /**
+   * Phase 1B — explicit (company × country) scope on the lead.
+   * Both nullable: when missing the lead runs on the tenant default
+   * pipeline. Populated from the create form / Meta source / CSV
+   * import going forward.
+   */
+  companyId: string | null;
+  countryId: string | null;
+  /**
+   * Phase 1B — denormalised pipeline pointer. Always equals
+   * `stage.pipelineId`; carried on the row so Kanban + reporting
+   * can filter by pipeline without a join. Nullable today (legacy
+   * leads pre-1B); will be promoted to non-null after a backfill
+   * window closes.
+   */
+  pipelineId: string | null;
   stageId: string;
-  stage: { code: LeadStageCode; name: string; order: number; isTerminal: boolean };
+  /**
+   * `code` is now an open string (a pipeline can define any code it
+   * wants). The `LeadStageCode` literal is kept only as a "well-known
+   * codes" reference for callers that still need to pattern-match
+   * against the canonical 5 (e.g. "is this lead converted?").
+   */
+  stage: { code: string; name: string; order: number; isTerminal: boolean };
   assignedToId: string | null;
   createdById: string | null;
   slaDueAt: string | null;

@@ -227,7 +227,7 @@ export default function LeadDetailPage(): JSX.Element {
     setActionPending('stage');
     setError(null);
     try {
-      await leadsApi.moveStage(lead.id, stageCode);
+      await leadsApi.moveStage(lead.id, { stageCode });
       setNotice(tCommon('saved'));
       await reload();
     } catch (err) {
@@ -250,7 +250,7 @@ export default function LeadDetailPage(): JSX.Element {
     setActionPending('stage');
     setError(null);
     try {
-      await leadsApi.moveStage(lead.id, code);
+      await leadsApi.moveStage(lead.id, { stageCode: code });
       setNotice(tCommon('saved'));
       await reload();
     } catch (err) {

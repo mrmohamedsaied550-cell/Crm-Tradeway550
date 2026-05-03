@@ -200,7 +200,7 @@ export default function AgentWorkspacePage(): JSX.Element {
     try {
       // 1) Stage change if it actually moved.
       if (form.stageCode && form.stageCode !== lead.stage.code) {
-        await leadsApi.moveStage(lead.id, form.stageCode as LeadStageCode);
+        await leadsApi.moveStage(lead.id, { stageCode: form.stageCode });
       }
       // 2) Note if non-empty.
       if (form.note.trim().length > 0) {
