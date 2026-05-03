@@ -27,7 +27,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, leadsApi, pipelineApi, teamsApi, usersApi } from '@/lib/api';
+import { ApiError, leadsApi, pipelineApi, pipelinesApi, teamsApi, usersApi } from '@/lib/api';
 import type {
   AdminUser,
   Lead,
@@ -157,15 +157,22 @@ export default function LeadDetailPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [l, acts, st, usrs, tms] = await Promise.all([
+      const [l, acts, usrs, tms] = await Promise.all([
         leadsApi.get(id),
         leadsApi.listActivities(id),
-        pipelineApi.listStages(),
         usersApi
           .list({ limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
         teamsApi.list().catch(() => [] as Team[]),
       ]);
+      // Phase 1B — load stages from the LEAD'S OWN pipeline, not the
+      // tenant default. Custom pipelines define their own stages;
+      // showing the default's stages would let the agent pick a code
+      // that doesn't exist on this pipeline (server-side guard would
+      // then reject the move with a less friendly error).
+      const st = await (
+        l.pipelineId ? pipelinesApi.stagesOf(l.pipelineId) : pipelineApi.listStages()
+      ).catch(() => [] as PipelineStage[]);
       setLead(l);
       setActivities(acts);
       setStages(st);
@@ -224,10 +231,14 @@ export default function LeadDetailPage(): JSX.Element {
 
   async function onMoveStage(): Promise<void> {
     if (!lead || !stageCode) return;
+    // Phase 1B — prefer the stage UUID; we have the full row from the
+    // pipeline-stages query. Falls back to code if the row isn't found
+    // (shouldn't happen in practice but keeps the flow resilient).
+    const target = stageByCode.get(stageCode);
     setActionPending('stage');
     setError(null);
     try {
-      await leadsApi.moveStage(lead.id, { stageCode });
+      await leadsApi.moveStage(lead.id, target ? { pipelineStageId: target.id } : { stageCode });
       setNotice(tCommon('saved'));
       await reload();
     } catch (err) {
@@ -249,8 +260,12 @@ export default function LeadDetailPage(): JSX.Element {
     setStageCode(code);
     setActionPending('stage');
     setError(null);
+    const target = stageByCode.get(code);
     try {
-      await leadsApi.moveStage(lead.id, { stageCode: code });
+      await leadsApi.moveStage(
+        lead.id,
+        target ? { pipelineStageId: target.id } : { stageCode: code },
+      );
       setNotice(tCommon('saved'));
       await reload();
     } catch (err) {

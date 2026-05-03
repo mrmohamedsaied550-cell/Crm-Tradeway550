@@ -13,9 +13,11 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
-import { ApiError, leadsApi, pipelineApi, usersApi } from '@/lib/api';
+import { ApiError, companiesApi, countriesApi, leadsApi, pipelineApi, usersApi } from '@/lib/api';
 import type {
   AdminUser,
+  Company,
+  Country,
   Lead,
   LeadSource,
   LeadStageCode,
@@ -28,6 +30,12 @@ interface CreateForm {
   phone: string;
   email: string;
   source: LeadSource;
+  /**
+   * Phase 1B — explicit (company, country) on create. Both optional;
+   * empty string falls back to the tenant default pipeline.
+   */
+  companyId: string;
+  countryId: string;
   stageCode: LeadStageCode | '';
   assignedToId: string;
 }
@@ -37,6 +45,8 @@ const EMPTY_CREATE_FORM: CreateForm = {
   phone: '',
   email: '',
   source: 'manual',
+  companyId: '',
+  countryId: '',
   stageCode: '',
   assignedToId: '',
 };
@@ -95,6 +105,12 @@ export default function LeadsPage(): JSX.Element {
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  // Phase 1B — companies + countries drive the create form's
+  // (company × country) pickers so the new lead lands on the right
+  // pipeline. Loaded once on mount; refreshing on filter changes
+  // would be wasteful.
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -144,7 +160,7 @@ export default function LeadsPage(): JSX.Element {
         ? new Date(`${filterCreatedTo}T23:59:59.999Z`).toISOString()
         : undefined;
 
-      const [page, st, usrs] = await Promise.all([
+      const [page, st, usrs, cs, cos] = await Promise.all([
         leadsApi.list({
           stageCode: filterStage || undefined,
           q: search.trim() || undefined,
@@ -161,10 +177,14 @@ export default function LeadsPage(): JSX.Element {
         usersApi
           .list({ status: 'active', limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
+        companiesApi.list().catch(() => [] as Company[]),
+        countriesApi.list().catch(() => [] as Country[]),
       ]);
       setRows(page.items);
       setStages(st);
       setUsers(usrs.items);
+      setCompanies(cs);
+      setCountries(cos);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -316,6 +336,11 @@ export default function LeadsPage(): JSX.Element {
         phone: form.phone,
         email: form.email || undefined,
         source: form.source,
+        // Phase 1B — pass company/country so the server resolves the
+        // right pipeline; pass stageCode (resolved per-pipeline) when
+        // the operator picked one explicitly.
+        companyId: form.companyId || undefined,
+        countryId: form.countryId || undefined,
         stageCode: form.stageCode || undefined,
         assignedToId: form.assignedToId || undefined,
       });
@@ -998,6 +1023,49 @@ export default function LeadsPage(): JSX.Element {
               ))}
             </Select>
           </Field>
+          {/* Phase 1B — explicit (company × country). Both optional;
+              empty values let the server fall back to the tenant default
+              pipeline. The country dropdown is filtered by the chosen
+              company so admins can't pick an invalid (company, country)
+              tuple. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label={t('company') ?? 'Company'}>
+              <Select
+                value={form.companyId}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    companyId: e.target.value,
+                    // Drop the country if it no longer matches the new company.
+                    countryId: '',
+                  }))
+                }
+              >
+                <option value="">— ({tCommon('all')})</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label={t('country') ?? 'Country'}>
+              <Select
+                value={form.countryId}
+                onChange={(e) => setForm((f) => ({ ...f, countryId: e.target.value }))}
+              >
+                <option value="">— ({tCommon('all')})</option>
+                {(form.companyId
+                  ? countries.filter((c) => c.companyId === form.companyId)
+                  : countries
+                ).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
           <Field label={t('stage')}>
             <Select
               value={form.stageCode}
