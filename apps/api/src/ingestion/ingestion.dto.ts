@@ -27,6 +27,23 @@ export const CsvImportMappingSchema = z
     name: z.string().trim().min(1).max(120),
     phone: z.string().trim().min(1).max(120),
     email: z.string().trim().min(1).max(120).optional(),
+    /**
+     * Phase A — A4: optional CSV columns whose values land in
+     * `Lead.attribution`. Each maps a CSV header to the
+     * corresponding attribution field; missing entries (or
+     * missing values per row) are silently skipped.
+     */
+    campaignId: z.string().trim().min(1).max(120).optional(),
+    campaignName: z.string().trim().min(1).max(120).optional(),
+    adSetId: z.string().trim().min(1).max(120).optional(),
+    adSetName: z.string().trim().min(1).max(120).optional(),
+    adId: z.string().trim().min(1).max(120).optional(),
+    adName: z.string().trim().min(1).max(120).optional(),
+    utmSource: z.string().trim().min(1).max(120).optional(),
+    utmMedium: z.string().trim().min(1).max(120).optional(),
+    utmCampaign: z.string().trim().min(1).max(120).optional(),
+    utmTerm: z.string().trim().min(1).max(120).optional(),
+    utmContent: z.string().trim().min(1).max(120).optional(),
   })
   .strict();
 export type CsvImportMapping = z.infer<typeof CsvImportMappingSchema>;

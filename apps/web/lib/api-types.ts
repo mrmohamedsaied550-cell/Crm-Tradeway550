@@ -174,6 +174,33 @@ export interface RecordTripResult {
   recordId?: string;
 }
 
+/**
+ * Phase A — A4: rich attribution payload stored on `Lead.attribution`
+ * (JSONB on the API side). `source` always mirrors `Lead.source` —
+ * the API enforces the invariant. All other fields are optional.
+ */
+export interface AttributionRef {
+  id?: string;
+  name?: string;
+}
+export interface AttributionUtm {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+  term?: string;
+  content?: string;
+}
+export interface AttributionPayload {
+  source: LeadSource;
+  subSource?: string;
+  campaign?: AttributionRef;
+  adSet?: AttributionRef;
+  ad?: AttributionRef;
+  utm?: AttributionUtm;
+  referrer?: string;
+  custom?: Record<string, unknown>;
+}
+
 export interface Lead {
   id: string;
   tenantId: string;
@@ -181,6 +208,13 @@ export interface Lead {
   phone: string;
   email: string | null;
   source: LeadSource;
+  /**
+   * Phase A — A4: rich attribution. Mirrors `source` plus optional
+   * sub-source / campaign / ad-set / ad / utm fields. Populated on
+   * every create path (manual, Meta webhook, CSV import). Null on
+   * very old rows that pre-date A1.
+   */
+  attribution: AttributionPayload | null;
   /**
    * Phase 1B — explicit (company × country) scope on the lead.
    * Both nullable: when missing the lead runs on the tenant default

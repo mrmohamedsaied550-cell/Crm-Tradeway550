@@ -602,6 +602,26 @@ export const leadsApi = {
      */
     companyId?: string;
     countryId?: string;
+    /**
+     * Phase A — A4: optional rich attribution. The server merges
+     * `{ source: input.source }` into this payload so the persisted
+     * `attribution.source` always matches the flat source.
+     */
+    attribution?: {
+      subSource?: string;
+      campaign?: { id?: string; name?: string };
+      adSet?: { id?: string; name?: string };
+      ad?: { id?: string; name?: string };
+      utm?: {
+        source?: string;
+        medium?: string;
+        campaign?: string;
+        term?: string;
+        content?: string;
+      };
+      referrer?: string;
+      custom?: Record<string, unknown>;
+    };
     assignedToId?: string;
   }): Promise<Lead> => apiFetch<Lead>('/leads', { method: 'POST', body: input }),
   update: (
@@ -699,7 +719,25 @@ export const leadsApi = {
   /** P2-06 — bulk CSV import. `csv` is the full file as text. */
   importCsv: (input: {
     csv: string;
-    mapping: { name: string; phone: string; email?: string };
+    mapping: {
+      name: string;
+      phone: string;
+      email?: string;
+      // Phase A — A4: optional CSV columns for the per-row
+      // attribution payload. Each value is a CSV header name; rows
+      // missing the column / value are silently skipped.
+      campaignId?: string;
+      campaignName?: string;
+      adSetId?: string;
+      adSetName?: string;
+      adId?: string;
+      adName?: string;
+      utmSource?: string;
+      utmMedium?: string;
+      utmCampaign?: string;
+      utmTerm?: string;
+      utmContent?: string;
+    };
     defaultSource?: LeadSource;
     autoAssign?: boolean;
   }): Promise<{

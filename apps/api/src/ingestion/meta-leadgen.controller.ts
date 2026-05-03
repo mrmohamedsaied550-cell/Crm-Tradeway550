@@ -172,6 +172,24 @@ export class MetaLeadgenController {
             formId: ev.formId,
             sourceId: source.id,
           },
+          // Phase A — A4: structured attribution. `pageId` lands on
+          // `subSource` so distribution rules can later filter by
+          // page (e.g. "leads from this page → that team"). The
+          // ad_id and adgroup_id from Meta map to attribution.ad
+          // and attribution.adSet respectively.
+          attribution: {
+            subSource: 'meta_lead_form',
+            ...(ev.campaignId && { campaign: { id: ev.campaignId } }),
+            ...(ev.adgroupId && { adSet: { id: ev.adgroupId } }),
+            ...(ev.adId && { ad: { id: ev.adId } }),
+            ...((ev.pageId || ev.formId || ev.leadgenId) && {
+              custom: {
+                ...(ev.pageId && { pageId: ev.pageId }),
+                ...(ev.formId && { formId: ev.formId }),
+                ...(ev.leadgenId && { leadgenId: ev.leadgenId }),
+              },
+            }),
+          },
         });
         if (result.kind === 'created') ingested += 1;
         else if (result.kind === 'duplicate') duplicates += 1;
@@ -191,6 +209,16 @@ interface LeadgenEvent {
   pageId: string;
   formId: string | null;
   leadgenId: string | null;
+  /**
+   * Phase A — A4: campaign-level identifiers from the Meta payload.
+   * `ad_id` and `adgroup_id` (Meta's term for ad-set) are populated
+   * by Meta on every lead-gen event. `campaign_id` is not part of
+   * the standard webhook envelope — it must be looked up via Graph
+   * API later if needed; null today.
+   */
+  adId: string | null;
+  adgroupId: string | null;
+  campaignId: string | null;
   fieldData: { name: string; values: string[] }[] | null;
 }
 
@@ -224,6 +252,14 @@ function parseLeadgenEvents(body: unknown): LeadgenEvent[] {
       const pageId = stringOrNull(value['page_id']);
       const formId = stringOrNull(value['form_id']);
       const leadgenId = stringOrNull(value['leadgen_id']);
+      // Phase A — A4: campaign-level ids. Meta sends `ad_id` and
+      // `adgroup_id` (= ad set) on the leadgen value object. Both
+      // optional; missing on organic / non-ads forms. `campaign_id`
+      // is NOT in the webhook envelope — null until a Graph API
+      // lookup ships in a follow-up.
+      const adId = stringOrNull(value['ad_id']);
+      const adgroupId = stringOrNull(value['adgroup_id']);
+      const campaignId = stringOrNull(value['campaign_id']);
       if (!pageId) continue;
 
       let fieldData: { name: string; values: string[] }[] | null = null;
@@ -242,7 +278,7 @@ function parseLeadgenEvents(body: unknown): LeadgenEvent[] {
         }
       }
 
-      out.push({ pageId, formId, leadgenId, fieldData });
+      out.push({ pageId, formId, leadgenId, adId, adgroupId, campaignId, fieldData });
     }
   }
   return out;

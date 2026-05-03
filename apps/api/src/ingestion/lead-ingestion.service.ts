@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import { buildAttribution, type AttributionInput } from '../crm/attribution.util';
 import { LeadsService } from '../crm/leads.service';
 import { normalizeE164WithDefault } from '../crm/phone.util';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
@@ -131,6 +132,38 @@ export class LeadIngestionService {
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i] as Record<string, string>;
         const lineNumber = i + 2; // header is line 1
+        // Phase A — A4: build per-row attribution from the optional
+        // mapping columns. Helper: look up `row[csvHeader]` and trim
+        // — empty / missing values become undefined and are
+        // dropped by buildAttribution.
+        const cell = (header: string | undefined): string | undefined => {
+          if (!header) return undefined;
+          const v = (row[header] ?? '').trim();
+          return v.length > 0 ? v : undefined;
+        };
+        const rowAttribution: AttributionInput = {
+          subSource: 'csv_import',
+          campaign:
+            cell(mapping.campaignId) || cell(mapping.campaignName)
+              ? { id: cell(mapping.campaignId), name: cell(mapping.campaignName) }
+              : undefined,
+          adSet:
+            cell(mapping.adSetId) || cell(mapping.adSetName)
+              ? { id: cell(mapping.adSetId), name: cell(mapping.adSetName) }
+              : undefined,
+          ad:
+            cell(mapping.adId) || cell(mapping.adName)
+              ? { id: cell(mapping.adId), name: cell(mapping.adName) }
+              : undefined,
+          utm: {
+            source: cell(mapping.utmSource),
+            medium: cell(mapping.utmMedium),
+            campaign: cell(mapping.utmCampaign),
+            term: cell(mapping.utmTerm),
+            content: cell(mapping.utmContent),
+          },
+        };
+
         const result = await this.tryCreateLead(tx, {
           tenantId,
           pipelineId: defaultPipelineId,
@@ -143,6 +176,7 @@ export class LeadIngestionService {
           actorUserId,
           defaultDialCode: settings.defaultDialCode,
           slaMinutes: settings.slaMinutes,
+          attribution: rowAttribution,
         });
         if (result.kind === 'created') {
           created += 1;
@@ -200,7 +234,22 @@ export class LeadIngestionService {
     email?: string | null;
     source: LeadSource;
     actorUserId?: string | null;
+    /**
+     * Audit-log payload (leadgenId, pageId, formId, sourceId). Free-
+     * form; written to `audit_events.payload`. Distinct from
+     * `attribution` below — that one is structured + lands on the
+     * lead row for distribution rules + reporting.
+     */
     metadata?: Record<string, unknown>;
+    /**
+     * Phase A — A4: structured attribution forwarded to
+     * `Lead.attribution`. The webhook controller assembles this
+     * from the parsed Meta event (page_id, form_id, ad_id,
+     * adgroup_id, leadgen_id) so distribution rules can reach
+     * `attribution.campaign.id` etc. without parsing the raw
+     * audit payload.
+     */
+    attribution?: AttributionInput | null;
   }): Promise<
     { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
   > {
@@ -254,6 +303,8 @@ export class LeadIngestionService {
         email: input.email ? input.email.trim() || null : null,
         source: input.source,
         actorUserId: input.actorUserId ?? null,
+        // Phase A — A4: structured attribution from the Meta event.
+        attribution: input.attribution ?? null,
       });
       await this.audit.writeInTx(tx, input.tenantId, {
         action: r.kind === 'created' ? 'lead.ingest.meta' : `lead.ingest.meta.${r.kind}`,
@@ -301,6 +352,13 @@ export class LeadIngestionService {
       actorUserId: string | null;
       defaultDialCode: string;
       slaMinutes: number;
+      /**
+       * Phase A — A4: optional rich attribution payload. The helper
+       * `buildAttribution` is invoked here so callers can pass a
+       * partial input (sub-source, campaign, ad, utm) without
+       * repeating the source-mirroring logic.
+       */
+      attribution?: AttributionInput | null;
     },
   ): Promise<
     { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
@@ -346,6 +404,12 @@ export class LeadIngestionService {
     const slaDueAt = input.stageIsTerminal ? null : this.sla.computeDueAt(now, input.slaMinutes);
     const slaStatus = input.stageIsTerminal ? 'paused' : 'active';
 
+    // Phase A — A4: build the JSONB attribution payload from the
+    // ingest-side flat source + the optional rich payload (Meta
+    // campaign/ad ids, CSV-mapped UTM fields). Always non-null
+    // post-A4 so reports can rely on it.
+    const attribution = buildAttribution(input.source, input.attribution ?? null);
+
     const lead = await tx.lead.create({
       data: {
         tenantId: input.tenantId,
@@ -353,6 +417,7 @@ export class LeadIngestionService {
         phone,
         email: input.email,
         source: input.source,
+        attribution: attribution as unknown as Prisma.InputJsonValue,
         // Phase 1B — populate the denormalised pipeline pointer so
         // ingested leads participate in Kanban + reporting from day
         // one. company/country stay NULL until per-source mapping

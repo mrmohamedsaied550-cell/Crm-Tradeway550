@@ -12,6 +12,7 @@ import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
+import { buildAttribution } from './attribution.util';
 import { LostReasonsService } from './lost-reasons.service';
 import { PipelineService } from './pipeline.service';
 import { isSlaResetting, type ActivityType } from './pipeline.registry';
@@ -196,6 +197,14 @@ export class LeadsService {
                 })()
               : 'open';
 
+        // Phase A — A4: build the JSONB attribution payload from the
+        // lead's flat source + the optional rich input. The flat
+        // `source` column stays in lockstep with `attribution.source`
+        // (helper enforces). Manual creates without an attribution
+        // payload still produce `{ source }` so every lead has a
+        // non-null payload going forward.
+        const attribution = buildAttribution(dto.source, dto.attribution ?? null);
+
         const lead = await tx.lead.create({
           data: {
             tenantId,
@@ -203,6 +212,7 @@ export class LeadsService {
             phone,
             email: dto.email ?? null,
             source: dto.source,
+            attribution: attribution as unknown as Prisma.InputJsonValue,
             companyId: dto.companyId ?? null,
             countryId: dto.countryId ?? null,
             pipelineId,

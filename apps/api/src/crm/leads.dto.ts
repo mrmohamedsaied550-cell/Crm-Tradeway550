@@ -24,6 +24,60 @@ const phoneInput = z
   .max(32)
   .regex(/^[\d+\s\-()]+$/u, 'phone may only contain digits, spaces, dashes, parens, or +');
 
+/**
+ * Phase A — A4: rich attribution payload stored on `Lead.attribution`
+ * (JSONB).
+ *
+ *   • `source` — top-level channel; mirrors `Lead.source` for backward
+ *     compat. Service layer guarantees both are written together.
+ *   • `subSource` — finer-grained origin (e.g. 'meta_lead_form',
+ *     'whatsapp_account_xyz', 'csv_import').
+ *   • `campaign / adSet / ad` — id + optional name. Meta webhook
+ *     populates these from the leadgen payload; CSV import via
+ *     mapped columns.
+ *   • `utm.*` — standard UTM fields, when the source provides them.
+ *   • `referrer` — public referrer URL when known.
+ *   • `custom` — escape hatch for tenant-specific extras (rare).
+ *
+ * `.strict()` is intentional at the top level so unknown keys fail
+ * loudly; the nested objects are also strict for the same reason.
+ * `custom` is the documented escape hatch.
+ */
+const AttributionRefSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120).optional(),
+    name: z.string().trim().min(1).max(255).optional(),
+  })
+  .strict();
+
+const AttributionUtmSchema = z
+  .object({
+    source: z.string().trim().min(1).max(120).optional(),
+    medium: z.string().trim().min(1).max(120).optional(),
+    campaign: z.string().trim().min(1).max(255).optional(),
+    term: z.string().trim().min(1).max(120).optional(),
+    content: z.string().trim().min(1).max(255).optional(),
+  })
+  .strict();
+
+export const AttributionInputSchema = z
+  .object({
+    /**
+     * The `source` field is intentionally derived from `dto.source` at
+     * the service layer rather than accepted here, so the two stay in
+     * sync. Callers who hand-build attribution use the service helper.
+     */
+    subSource: z.string().trim().min(1).max(120).optional(),
+    campaign: AttributionRefSchema.optional(),
+    adSet: AttributionRefSchema.optional(),
+    ad: AttributionRefSchema.optional(),
+    utm: AttributionUtmSchema.optional(),
+    referrer: z.string().trim().min(1).max(2048).optional(),
+    custom: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+export type AttributionInputDto = z.infer<typeof AttributionInputSchema>;
+
 export const CreateLeadSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -49,6 +103,12 @@ export const CreateLeadSchema = z
      */
     companyId: z.string().uuid().optional(),
     countryId: z.string().uuid().optional(),
+    /**
+     * Phase A — optional rich attribution payload. The service merges
+     * `{ source: dto.source }` with this payload so `attribution.source`
+     * always exists and matches the flat `source` field.
+     */
+    attribution: AttributionInputSchema.optional(),
     /** Optional initial assignment (must be a user id in the same tenant). */
     assignedToId: z.string().uuid().optional(),
   })

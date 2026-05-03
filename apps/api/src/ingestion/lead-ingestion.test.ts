@@ -473,4 +473,129 @@ describe('ingestion — lead-ingestion (P2-06)', () => {
       );
     }
   });
+
+  // ─── Phase A — A4: attribution on Meta + CSV ingest ────────────────
+
+  it('Meta payload with attribution writes the campaign + ad ids', async () => {
+    const r = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Attr Hassan',
+      phoneRaw: '+201001100630',
+      email: 'attr-hassan@example.com',
+      source: 'meta',
+      actorUserId: null,
+      metadata: { leadgenId: 'LG_ATTR_1' },
+      attribution: {
+        subSource: 'meta_lead_form',
+        campaign: { id: 'C_ATTR_1', name: 'Promo Campaign' },
+        adSet: { id: 'AS_ATTR_1' },
+        ad: { id: 'AD_ATTR_1' },
+        custom: { pageId: 'P_ATTR_1', formId: 'F_ATTR_1', leadgenId: 'LG_ATTR_1' },
+      },
+    });
+    assert.equal(r.kind, 'created');
+
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirst({
+        where: { phone: '+201001100630' },
+        select: { source: true, attribution: true },
+      }),
+    );
+    assert.ok(lead);
+    assert.equal(lead!.source, 'meta');
+    const attr = lead!.attribution as Record<string, unknown>;
+    assert.equal(attr.source, 'meta');
+    assert.equal(attr.subSource, 'meta_lead_form');
+    assert.deepEqual(attr.campaign, { id: 'C_ATTR_1', name: 'Promo Campaign' });
+    assert.deepEqual(attr.adSet, { id: 'AS_ATTR_1' });
+    assert.deepEqual(attr.ad, { id: 'AD_ATTR_1' });
+    assert.deepEqual(attr.custom, {
+      pageId: 'P_ATTR_1',
+      formId: 'F_ATTR_1',
+      leadgenId: 'LG_ATTR_1',
+    });
+  });
+
+  it('Meta payload without attribution still writes the bare source', async () => {
+    const r = await ingestion.ingestMetaPayload({
+      tenantId,
+      name: 'Plain Hassan',
+      phoneRaw: '+201001100631',
+      email: null,
+      source: 'meta',
+      actorUserId: null,
+      metadata: { leadgenId: 'LG_PLAIN' },
+      // no attribution payload
+    });
+    assert.equal(r.kind, 'created');
+    const lead = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findFirst({
+        where: { phone: '+201001100631' },
+        select: { attribution: true },
+      }),
+    );
+    assert.deepEqual(lead?.attribution, { source: 'meta' });
+  });
+
+  it('CSV import populates attribution from mapped UTM + campaign columns', async () => {
+    const csv = [
+      'Full Name,Phone,Campaign,Ad,utm_source,utm_medium',
+      'Karim,+201001100640,C_CSV_1,AD_CSV_1,fb,cpc',
+      'Sara,+201001100641,,AD_CSV_2,google,organic',
+      'Tarek,+201001100642,C_CSV_3,,,',
+    ].join('\n');
+
+    const result = await inTenant(() =>
+      ingestion.importCsv(
+        {
+          csv,
+          mapping: {
+            name: 'Full Name',
+            phone: 'Phone',
+            campaignId: 'Campaign',
+            adId: 'Ad',
+            utmSource: 'utm_source',
+            utmMedium: 'utm_medium',
+          },
+          defaultSource: 'import',
+          autoAssign: false,
+        },
+        actorUserId,
+      ),
+    );
+    assert.equal(result.created, 3);
+
+    const rows = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findMany({
+        where: { phone: { in: ['+201001100640', '+201001100641', '+201001100642'] } },
+        orderBy: { phone: 'asc' },
+        select: { phone: true, source: true, attribution: true },
+      }),
+    );
+    const byPhone = new Map(rows.map((r) => [r.phone, r]));
+
+    const karim = byPhone.get('+201001100640')!;
+    assert.equal(karim.source, 'import');
+    const ka = karim.attribution as Record<string, unknown>;
+    assert.equal(ka.source, 'import');
+    assert.equal(ka.subSource, 'csv_import');
+    assert.deepEqual(ka.campaign, { id: 'C_CSV_1' });
+    assert.deepEqual(ka.ad, { id: 'AD_CSV_1' });
+    assert.deepEqual(ka.utm, { source: 'fb', medium: 'cpc' });
+
+    // Sara has no campaign id but has an ad id and utm.
+    const sara = byPhone.get('+201001100641')!;
+    const sa = sara.attribution as Record<string, unknown>;
+    assert.equal(sa.campaign, undefined);
+    assert.deepEqual(sa.ad, { id: 'AD_CSV_2' });
+    assert.deepEqual(sa.utm, { source: 'google', medium: 'organic' });
+
+    // Tarek has only a campaign id; ad + utm should be dropped.
+    const tarek = byPhone.get('+201001100642')!;
+    const ta = tarek.attribution as Record<string, unknown>;
+    assert.deepEqual(ta.campaign, { id: 'C_CSV_3' });
+    assert.equal(ta.ad, undefined);
+    assert.equal(ta.utm, undefined);
+    assert.equal(ta.subSource, 'csv_import');
+  });
 });
