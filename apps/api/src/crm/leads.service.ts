@@ -22,6 +22,7 @@ import type {
   UpdateLeadDto,
   AddActivityDto,
   ListLeadsQueryDto,
+  ListLeadsByStageQueryDto,
   BulkAssignDto,
   BulkMoveStageDto,
   BulkDeleteDto,
@@ -305,6 +306,119 @@ export class LeadsService {
         tx.lead.count({ where }),
       ]);
       return { items, total, limit: query.limit, offset: query.offset };
+    });
+  }
+
+  /**
+   * Phase 1B — Kanban grouped query.
+   *
+   * Returns one bucket per stage of `query.pipelineId`, each bucket
+   * carrying its `totalCount` (across the entire filter, not just
+   * the cards we returned) and the first `perStage` cards ordered
+   * by createdAt desc. The shape is denormalised on purpose: the
+   * Kanban board renders columns deterministically from this single
+   * round-trip, no follow-up calls per column.
+   *
+   * Stages with zero matching leads are still returned (empty bucket
+   * + `totalCount = 0`) so the board renders all columns even when
+   * a filter narrows results to a subset of stages.
+   *
+   * NOT a replacement for `list()` — large pipelines that need more
+   * than `perStage` cards in one column page in via the legacy
+   * paginated `list()` with `pipelineStageId` set.
+   */
+  async listByStage(query: ListLeadsByStageQueryDto) {
+    const tenantId = requireTenantId();
+
+    const assigneeFilter: Prisma.LeadWhereInput = query.assignedToId
+      ? { assignedToId: query.assignedToId }
+      : query.unassigned
+        ? { assignedToId: null }
+        : {};
+
+    const createdAt: Prisma.DateTimeFilter | undefined =
+      query.createdFrom || query.createdTo
+        ? {
+            ...(query.createdFrom && { gte: new Date(query.createdFrom) }),
+            ...(query.createdTo && { lte: new Date(query.createdTo) }),
+          }
+        : undefined;
+
+    // The pipelineId clause is the only invariant filter — every other
+    // condition is optional.
+    const baseWhere: Prisma.LeadWhereInput = {
+      pipelineId: query.pipelineId,
+      ...(query.companyId && { companyId: query.companyId }),
+      ...(query.countryId && { countryId: query.countryId }),
+      ...assigneeFilter,
+      ...(query.source && { source: query.source }),
+      ...(query.slaStatus && { slaStatus: query.slaStatus }),
+      ...(query.hasOverdueFollowup && { nextActionDueAt: { lt: new Date() } }),
+      ...(createdAt && { createdAt }),
+      ...(query.q && {
+        OR: [
+          { name: { contains: query.q, mode: 'insensitive' } },
+          { phone: { contains: query.q } },
+          { email: { contains: query.q, mode: 'insensitive' } },
+        ],
+      }),
+    };
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Resolve the stage list first — it drives the response shape
+      // and lets us reject an unknown pipelineId with a typed 404
+      // before doing any expensive work.
+      const stages = await tx.pipelineStage.findMany({
+        where: { pipelineId: query.pipelineId },
+        orderBy: { order: 'asc' },
+        select: { id: true, code: true, name: true, order: true, isTerminal: true },
+      });
+      if (stages.length === 0) {
+        throw new NotFoundException({
+          code: 'pipeline.not_found_or_empty',
+          message: `Pipeline ${query.pipelineId} not found or has no stages`,
+        });
+      }
+
+      // Per-stage counts via a single GROUP BY. Stages with zero
+      // matches get a 0 in the merged map below.
+      const grouped = await tx.lead.groupBy({
+        by: ['stageId'],
+        where: baseWhere,
+        _count: { _all: true },
+      });
+      const countByStageId = new Map<string, number>(
+        grouped.map((g) => [g.stageId, g._count._all]),
+      );
+
+      // Per-stage card list — N parallel `findMany`s. Capped at
+      // `perStage` cards each, ordered by createdAt desc so the
+      // newest leads sit at the top of every column.
+      const perStage = query.perStage;
+      const buckets = await Promise.all(
+        stages.map(async (s) => {
+          const total = countByStageId.get(s.id) ?? 0;
+          if (total === 0) {
+            return { stage: s, totalCount: 0, leads: [] };
+          }
+          const leads = await tx.lead.findMany({
+            where: { ...baseWhere, stageId: s.id },
+            orderBy: { createdAt: 'desc' },
+            take: perStage,
+            include: {
+              stage: { select: { code: true, name: true, order: true, isTerminal: true } },
+              captain: { select: { id: true, onboardingStatus: true } },
+            },
+          });
+          return { stage: s, totalCount: total, leads };
+        }),
+      );
+
+      return {
+        pipelineId: query.pipelineId,
+        perStage,
+        stages: buckets,
+      };
     });
   }
 

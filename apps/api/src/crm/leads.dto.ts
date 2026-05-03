@@ -184,6 +184,44 @@ export const ListLeadsQuerySchema = z
   });
 export type ListLeadsQueryDto = z.infer<typeof ListLeadsQuerySchema>;
 
+/**
+ * Phase 1B — Kanban grouped query. Returns one bucket per stage of
+ * the requested pipeline, each bucket carrying its `totalCount` and
+ * the first `perStage` cards. Same filter shape as ListLeadsQuery
+ * minus the stage / pipeline-stage selectors (the response groups
+ * by stage by definition) and minus `offset`/`limit` (they are
+ * replaced by `perStage`).
+ *
+ * `pipelineId` is REQUIRED — the Kanban view is always scoped to one
+ * pipeline. Cross-pipeline boards are explicitly out of scope.
+ */
+export const ListLeadsByStageQuerySchema = z
+  .object({
+    pipelineId: z.string().uuid(),
+    companyId: z.string().uuid().optional(),
+    countryId: z.string().uuid().optional(),
+    assignedToId: z.string().uuid().optional(),
+    q: z.string().trim().min(1).max(120).optional(),
+    source: z.enum(LEAD_SOURCES).optional(),
+    slaStatus: z.enum(['active', 'breached', 'paused'] as const).optional(),
+    createdFrom: z.string().datetime().optional(),
+    createdTo: z.string().datetime().optional(),
+    unassigned: z.coerce.boolean().optional(),
+    hasOverdueFollowup: z.coerce.boolean().optional(),
+    /**
+     * Cards per stage bucket. 50 is the default; large pipelines that
+     * need more either filter further or "load more" via the legacy
+     * paginated `GET /leads?pipelineStageId=...` endpoint.
+     */
+    perStage: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .strict()
+  .refine((v) => !v.createdFrom || !v.createdTo || v.createdFrom <= v.createdTo, {
+    message: 'createdFrom must be earlier than or equal to createdTo',
+    path: ['createdFrom'],
+  });
+export type ListLeadsByStageQueryDto = z.infer<typeof ListLeadsByStageQuerySchema>;
+
 // ───── P3-05 — Bulk actions ─────
 
 /**

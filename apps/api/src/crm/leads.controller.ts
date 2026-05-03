@@ -33,6 +33,7 @@ import {
   BulkMoveStageSchema,
   ConvertLeadSchema,
   CreateLeadSchema,
+  ListLeadsByStageQuerySchema,
   ListLeadsQuerySchema,
   MoveStageSchema,
   UpdateLeadSchema,
@@ -45,6 +46,7 @@ class MoveStageDto extends createZodDto(MoveStageSchema) {}
 class AddActivityDto extends createZodDto(AddActivitySchema) {}
 class ConvertLeadDto extends createZodDto(ConvertLeadSchema) {}
 class ListLeadsQueryDto extends createZodDto(ListLeadsQuerySchema) {}
+class ListLeadsByStageQueryDto extends createZodDto(ListLeadsByStageQuerySchema) {}
 class BulkAssignDto extends createZodDto(BulkAssignSchema) {}
 class BulkMoveStageDto extends createZodDto(BulkMoveStageSchema) {}
 class BulkDeleteDto extends createZodDto(BulkDeleteSchema) {}
@@ -87,6 +89,19 @@ export class LeadsController {
   @ApiOperation({ summary: 'List leads with filters + pagination' })
   list(@Query() query: ListLeadsQueryDto) {
     return this.leads.list(query);
+  }
+
+  /**
+   * Phase 1B — Kanban grouped query. Returns one bucket per stage
+   * of the requested pipeline, each bucket carrying its totalCount
+   * and the first `perStage` cards. Drives the workspace board with
+   * a single round-trip.
+   */
+  @Get('leads/by-stage')
+  @RequireCapability('lead.read')
+  @ApiOperation({ summary: 'Group leads by pipeline stage (Kanban view)' })
+  listByStage(@Query() query: ListLeadsByStageQueryDto) {
+    return this.leads.listByStage(query);
   }
 
   @Get('leads/overdue')
