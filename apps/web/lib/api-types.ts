@@ -67,7 +67,52 @@ export interface RoleSummary {
   nameAr: string;
   nameEn: string;
   level: number;
+  /** Phase C — C2: TRUE for the 11 seeded role templates. Immutable in the UI. */
+  isSystem: boolean;
+  description: string | null;
   capabilitiesCount: number;
+}
+
+/** Phase C — C8: full role payload returned by GET /rbac/roles/:id. */
+export interface RoleScopeRow {
+  resource: 'lead' | 'captain' | 'followup' | 'whatsapp.conversation';
+  scope: 'own' | 'team' | 'company' | 'country' | 'global';
+}
+
+export interface RoleFieldPermissionRow {
+  resource: string;
+  field: string;
+  canRead: boolean;
+  canWrite: boolean;
+}
+
+export interface RoleDetail {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  level: number;
+  isActive: boolean;
+  isSystem: boolean;
+  description: string | null;
+  capabilities: readonly string[];
+  scopes: readonly RoleScopeRow[];
+  fieldPermissions: readonly RoleFieldPermissionRow[];
+}
+
+export interface CapabilityCatalogueEntry {
+  id: string;
+  code: string;
+  description: string;
+}
+
+export interface FieldCatalogueEntry {
+  resource: 'lead';
+  field: string;
+  sensitive: boolean;
+  defaultRead: boolean;
+  defaultWrite: boolean;
+  labelEn: string;
 }
 
 export interface PipelineStage {

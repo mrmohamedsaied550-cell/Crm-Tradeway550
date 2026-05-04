@@ -26,6 +26,7 @@ import {
   Settings,
   Route,
   XCircle,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,7 @@ interface NavItem {
     | 'calendar'
     | 'distribution'
     | 'lostReasons'
+    | 'roles'
     | 'backup';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
@@ -69,6 +71,10 @@ const ITEMS: readonly NavItem[] = [
   { href: '/admin/countries', labelKey: 'countries', icon: Globe, cap: 'org.country.read' },
   { href: '/admin/teams', labelKey: 'teams', icon: Users2, cap: 'org.team.read' },
   { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
+  // Phase C — C8: dynamic permission system role manager. Visible to
+  // anyone with `roles.read` (super_admin / ops_manager / account_manager
+  // by default). System roles render read-only with a Duplicate action.
+  { href: '/admin/roles', labelKey: 'roles', icon: ShieldCheck, cap: 'roles.read' },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
   { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns, cap: 'pipeline.read' },
   {

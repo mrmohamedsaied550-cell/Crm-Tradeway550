@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 
 import { CapabilityGuard } from './capability.guard';
+import { FIELD_CATALOGUE } from './field-catalogue.registry';
 import {
   CreateRoleSchema,
   DuplicateRoleSchema,
@@ -87,6 +88,21 @@ export class RbacController {
   @ApiOperation({ summary: 'List the global capability catalogue' })
   listCapabilities() {
     return this.rbac.listCapabilities();
+  }
+
+  /**
+   * Phase C — C8: expose the static field catalogue so the admin
+   * role builder UI knows which (resource, field) pairs are
+   * gateable. Read-only and gated on `roles.read` (the role builder
+   * is the only consumer; capabilities.read works for capabilities
+   * because that table is global, but field-permission rows are
+   * tenant-scoped and only meaningful in the role context).
+   */
+  @Get('field-catalogue')
+  @RequireCapability('roles.read')
+  @ApiOperation({ summary: 'List the static (resource, field) catalogue for the matrix UI' })
+  listFieldCatalogue() {
+    return FIELD_CATALOGUE;
   }
 
   @Post('roles')
