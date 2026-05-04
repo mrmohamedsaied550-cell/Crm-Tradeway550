@@ -40,6 +40,9 @@ const READ_CRM: readonly CapabilityCode[] = [
   'whatsapp.account.read',
   'whatsapp.conversation.read',
   'whatsapp.template.read',
+  // Phase C — C10B-4: every CRM-touching role can read Contact
+  // identity. Write is gated separately via AGENT_ACTIONS.
+  'whatsapp.contact.read',
   'bonus.read',
   'competition.read',
   'report.read',
@@ -56,6 +59,10 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'whatsapp.message.send',
   'whatsapp.media.send',
   'whatsapp.link.lead',
+  // Phase C — C10B-4: agents can close conversations they own + edit
+  // cleaned Contact fields. Reopen + assign + review remain at TL+.
+  'whatsapp.conversation.close',
+  'whatsapp.contact.write',
   'captain.document.write',
 ];
 
@@ -64,6 +71,11 @@ const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
   'lead.convert',
   'lead.import',
   'whatsapp.handover',
+  // Phase C — C10B-4: TLs reassign + reopen + see the review queue
+  // (resolution is admin-only — see ops_manager / account_manager).
+  'whatsapp.conversation.assign',
+  'whatsapp.conversation.reopen',
+  'whatsapp.review.read',
 ];
 
 export const ROLE_DEFINITIONS = [
@@ -106,6 +118,13 @@ export const ROLE_DEFINITIONS = [
       'whatsapp.link.lead',
       'whatsapp.template.write',
       'whatsapp.media.send',
+      // Phase C — C10B-4: full WhatsApp admin surface.
+      'whatsapp.conversation.assign',
+      'whatsapp.conversation.close',
+      'whatsapp.conversation.reopen',
+      'whatsapp.review.read',
+      'whatsapp.review.resolve',
+      'whatsapp.contact.write',
       'bonus.write',
       'competition.write',
       'audit.read',
@@ -149,6 +168,13 @@ export const ROLE_DEFINITIONS = [
       'whatsapp.link.lead',
       'whatsapp.template.write',
       'whatsapp.media.send',
+      // Phase C — C10B-4: full WhatsApp admin surface (mirrors ops_manager).
+      'whatsapp.conversation.assign',
+      'whatsapp.conversation.close',
+      'whatsapp.conversation.reopen',
+      'whatsapp.review.read',
+      'whatsapp.review.resolve',
+      'whatsapp.contact.write',
       'bonus.write',
       'competition.write',
       'audit.read',

@@ -156,6 +156,24 @@ export interface FollowUpScopeResolution {
 }
 
 /**
+ * Phase C — C10B-4: WhatsApp conversation scope resolution.
+ *
+ * Unlike follow-ups, WhatsAppConversation carries the full ownership
+ * chain on the row itself (assignedToId / teamId / companyId /
+ * countryId — denormalised by C10B-1+2+3). The resolver therefore
+ * maps each scope value DIRECTLY to a column predicate, no join.
+ *
+ * Unassigned conversations (assignedToId IS NULL) are intentionally
+ * INVISIBLE to own / team / company / country scope holders — there
+ * is no shared inbox (locked decision §1). The review queue surfaces
+ * them to admins separately via `whatsapp.review.read`.
+ */
+export interface ConversationScopeResolution {
+  scope: RoleScopeValue;
+  where: Prisma.WhatsAppConversationWhereInput | null;
+}
+
+/**
  * Resource-agnostic intermediate shape produced by the internal
  * resolver. C10's per-resource adapters consume this directly so
  * the SCOPE VALUE + ID lookups happen exactly once per request.
@@ -208,6 +226,20 @@ export class ScopeContextService {
   async resolveFollowUpScope(claims: ScopeUserClaims): Promise<FollowUpScopeResolution> {
     const filter = await this.resolveScopeFilter(claims, 'followup');
     return { scope: filter.scope, where: this.toFollowUpWhere(filter) };
+  }
+
+  /**
+   * Phase C — C10B-4: resolve scope for the `whatsapp.conversation`
+   * resource. WhatsAppConversation carries the full ownership chain
+   * directly on the row (assignedToId / teamId / companyId /
+   * countryId) so the per-scope where is single-column and rides
+   * the composite indexes from C10B-1.
+   *
+   * USER-REQUEST CONTEXT ONLY — same caveat as `resolveLeadScope`.
+   */
+  async resolveConversationScope(claims: ScopeUserClaims): Promise<ConversationScopeResolution> {
+    const filter = await this.resolveScopeFilter(claims, 'whatsapp.conversation');
+    return { scope: filter.scope, where: this.toConversationWhere(filter) };
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -344,5 +376,34 @@ export class ScopeContextService {
     const leadWhere = this.toLeadWhere(filter);
     if (leadWhere === null) return null;
     return { lead: { is: leadWhere } };
+  }
+
+  /**
+   * Phase C — C10B-4: build a `WhatsAppConversation` where from a
+   * ScopeFilter. Direct column predicates (no join) because the
+   * ownership chain is denormalised onto the row.
+   *
+   * Unassigned conversations (`assignedToId IS NULL` for own/team,
+   * or `companyId / countryId IS NULL` for company/country) are
+   * INVISIBLE — locked decision §1. Admin / TL surfaces them via the
+   * review queue instead, gated on `whatsapp.review.read`.
+   */
+  private toConversationWhere(filter: ScopeFilter): Prisma.WhatsAppConversationWhereInput | null {
+    if (filter.isEmpty) return { id: { in: [] } };
+    if (filter.scope === 'global') return null;
+    if (filter.scope === 'own' || filter.scope === 'team') {
+      const ids = filter.userIds ?? [];
+      return {
+        assignedToId: { in: ids as string[] },
+        NOT: { assignedToId: null },
+      };
+    }
+    if (filter.scope === 'company') {
+      return { companyId: { in: (filter.companyIds ?? []) as string[] } };
+    }
+    if (filter.scope === 'country') {
+      return { countryId: { in: (filter.countryIds ?? []) as string[] } };
+    }
+    return null;
   }
 }

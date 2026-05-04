@@ -78,6 +78,11 @@ export const HandoverConversationSchema = z
   });
 export type HandoverConversationDto = z.infer<typeof HandoverConversationSchema>;
 
+// ───── Phase C — C10B-4: assign / close / reopen / unlink ─────
+
+export const AssignConversationSchema = z.object({ assigneeId: z.string().uuid() }).strict();
+export type AssignConversationDto = z.infer<typeof AssignConversationSchema>;
+
 // ───── WhatsApp accounts admin (C24A) ─────
 
 const provider = z.enum(['meta_cloud']);

@@ -19,10 +19,12 @@ import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { SendMediaMessageSchema, SendTemplateMessageSchema } from './whatsapp-templates.dto';
 import { WhatsAppService } from './whatsapp.service';
 import {
+  AssignConversationSchema,
   HandoverConversationSchema,
   LinkConversationLeadSchema,
   ListConversationMessagesQuerySchema,
@@ -37,6 +39,13 @@ class SendTemplateMessageDto extends createZodDto(SendTemplateMessageSchema) {}
 class SendMediaMessageDto extends createZodDto(SendMediaMessageSchema) {}
 class LinkConversationLeadDto extends createZodDto(LinkConversationLeadSchema) {}
 class HandoverConversationDto extends createZodDto(HandoverConversationSchema) {}
+class AssignConversationDto extends createZodDto(AssignConversationSchema) {}
+
+/** Phase C — C10B-4: shrink JWT claims to the scope-resolver shape.
+ *  Mirrors the same helper in leads.controller.ts / follow-ups.controller.ts. */
+function claimsToScope(claims: AccessTokenClaims): ScopeUserClaims {
+  return { userId: claims.sub, tenantId: claims.tid, roleId: claims.rid };
+}
 
 /**
  * /api/v1/conversations — read-only WhatsApp conversation admin surface.
@@ -58,7 +67,7 @@ export class ConversationsController {
     summary: 'List WhatsApp conversations in the active tenant (newest activity first)',
   })
   list(@Query() query: ListConversationsQueryDto, @CurrentUser() user: AccessTokenClaims) {
-    return this.whatsapp.listConversations(user.tid, query);
+    return this.whatsapp.listConversations(user.tid, query, claimsToScope(user));
   }
 
   @Get(':id')
@@ -68,7 +77,7 @@ export class ConversationsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const row = await this.whatsapp.findConversationById(user.tid, id);
+    const row = await this.whatsapp.findConversationById(user.tid, id, claimsToScope(user));
     if (!row) {
       throw new NotFoundException({
         code: 'whatsapp.conversation_not_found',
@@ -86,9 +95,12 @@ export class ConversationsController {
     @Query() query: ListConversationMessagesQueryDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const rows = await this.whatsapp.listConversationMessages(user.tid, id, {
-      limit: query.limit,
-    });
+    const rows = await this.whatsapp.listConversationMessages(
+      user.tid,
+      id,
+      { limit: query.limit },
+      claimsToScope(user),
+    );
     if (rows === null) {
       throw new NotFoundException({
         code: 'whatsapp.conversation_not_found',
@@ -112,7 +124,64 @@ export class ConversationsController {
     @Body() body: LinkConversationLeadDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.whatsapp.linkConversationToLead(user.tid, id, body.leadId);
+    return this.whatsapp.linkConversationToLead(user.tid, id, body.leadId, claimsToScope(user));
+  }
+
+  /**
+   * Phase C — C10B-4: clear the conversation's lead link. Ownership
+   * stays unchanged (the conversation still has its assignee). Same
+   * capability gate as link-lead.
+   */
+  @Post(':id/unlink-lead')
+  @RequireCapability('whatsapp.link.lead')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unlink the conversation from its lead' })
+  unlink(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.whatsapp.unlinkConversationLead(user.tid, id, claimsToScope(user));
+  }
+
+  /**
+   * Phase C — C10B-4: admin-style direct assignment. Distinct from
+   * `handover` (which is the guided agent action that also reassigns
+   * the linked lead). Use this when ops needs to forcibly reassign
+   * a conversation outside the handover flow.
+   */
+  @Post(':id/assign')
+  @RequireCapability('whatsapp.conversation.assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reassign a conversation directly (admin override)' })
+  assign(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: AssignConversationDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.whatsapp.assignConversation(user.tid, id, body.assigneeId, claimsToScope(user));
+  }
+
+  /**
+   * Phase C — C10B-4: close an open conversation. Idempotent.
+   * Closure does NOT detach ownership; the audit log keeps the
+   * historical assignment.
+   */
+  @Post(':id/close')
+  @RequireCapability('whatsapp.conversation.close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Close an open conversation' })
+  close(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.whatsapp.closeConversation(user.tid, id, claimsToScope(user));
+  }
+
+  /**
+   * Phase C — C10B-4: reopen a closed conversation. Rejected with
+   * `whatsapp.conversation.reopen_conflict` if another open
+   * conversation already exists for the same (account, phone).
+   */
+  @Post(':id/reopen')
+  @RequireCapability('whatsapp.conversation.reopen')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reopen a closed conversation' })
+  reopen(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.whatsapp.reopenConversation(user.tid, id, claimsToScope(user));
   }
 
   /**
@@ -140,6 +209,7 @@ export class ConversationsController {
       summary: body.summary,
       notify: body.notify,
       actorUserId: user.sub,
+      userClaims: claimsToScope(user),
     });
   }
 
@@ -157,7 +227,11 @@ export class ConversationsController {
     @Body() body: SendConversationMessageDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    const conversation = await this.whatsapp.findConversationById(
+      user.tid,
+      id,
+      claimsToScope(user),
+    );
     if (!conversation) {
       throw new NotFoundException({
         code: 'whatsapp.conversation_not_found',
@@ -169,6 +243,7 @@ export class ConversationsController {
       accountId: conversation.accountId,
       to: conversation.phone,
       text: body.text,
+      actorUserId: user.sub,
     });
     return {
       messageId: result.messageId,
@@ -192,7 +267,11 @@ export class ConversationsController {
     @Body() body: SendTemplateMessageDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    const conversation = await this.whatsapp.findConversationById(
+      user.tid,
+      id,
+      claimsToScope(user),
+    );
     if (!conversation) {
       throw new NotFoundException({
         code: 'whatsapp.conversation_not_found',
@@ -206,6 +285,7 @@ export class ConversationsController {
       templateName: body.templateName,
       language: body.language,
       variables: body.variables,
+      actorUserId: user.sub,
     });
     return {
       messageId: result.messageId,
@@ -229,7 +309,11 @@ export class ConversationsController {
     @Body() body: SendMediaMessageDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const conversation = await this.whatsapp.findConversationById(user.tid, id);
+    const conversation = await this.whatsapp.findConversationById(
+      user.tid,
+      id,
+      claimsToScope(user),
+    );
     if (!conversation) {
       throw new NotFoundException({
         code: 'whatsapp.conversation_not_found',
@@ -244,6 +328,7 @@ export class ConversationsController {
       mediaUrl: body.mediaUrl,
       mediaMimeType: body.mediaMimeType ?? null,
       ...(body.caption !== undefined && { caption: body.caption }),
+      actorUserId: user.sub,
     });
     return {
       messageId: result.messageId,

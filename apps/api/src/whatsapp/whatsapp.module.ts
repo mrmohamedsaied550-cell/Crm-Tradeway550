@@ -3,10 +3,12 @@ import { WhatsAppController } from './whatsapp.controller';
 import { ConversationsController } from './conversations.controller';
 import { WhatsAppAccountsController } from './whatsapp-accounts.controller';
 import { WhatsAppTemplatesController } from './whatsapp-templates.controller';
+import { WhatsAppReviewController } from './whatsapp-review.controller';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppAccountsService } from './whatsapp-accounts.service';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service';
 import { WhatsAppInboundService } from './whatsapp-inbound.service';
+import { WhatsAppReviewService } from './whatsapp-review.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 
 /**
@@ -30,12 +32,14 @@ import { MetaCloudProvider } from './meta-cloud.provider';
     ConversationsController,
     WhatsAppAccountsController,
     WhatsAppTemplatesController,
+    WhatsAppReviewController,
   ],
   providers: [
     WhatsAppService,
     WhatsAppAccountsService,
     WhatsAppTemplatesService,
     WhatsAppInboundService,
+    WhatsAppReviewService,
     MetaCloudProvider,
   ],
   exports: [
@@ -43,6 +47,7 @@ import { MetaCloudProvider } from './meta-cloud.provider';
     WhatsAppAccountsService,
     WhatsAppTemplatesService,
     WhatsAppInboundService,
+    WhatsAppReviewService,
   ],
 })
 export class WhatsAppModule {}
