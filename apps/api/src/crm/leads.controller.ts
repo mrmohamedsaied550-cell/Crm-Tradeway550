@@ -92,7 +92,7 @@ export class LeadsController {
   @RequireCapability('lead.write')
   @ApiOperation({ summary: 'Create a lead (phone normalised to E.164)' })
   create(@Body() body: CreateLeadDto, @CurrentUser() user: AccessTokenClaims) {
-    return this.leads.create(body, user.sub);
+    return this.leads.create(body, user.sub, claimsToScope(user));
   }
 
   @Get('leads')
@@ -154,7 +154,7 @@ export class LeadsController {
     @Body() body: UpdateLeadDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.update(id, body, user.sub);
+    return this.leads.update(id, body, user.sub, claimsToScope(user));
   }
 
   @Delete('leads/:id')
@@ -174,7 +174,7 @@ export class LeadsController {
     @Body() body: AssignLeadDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.assign(id, body.assignedToId, user.sub);
+    return this.leads.assign(id, body.assignedToId, user.sub, claimsToScope(user));
   }
 
   @Post('leads/:id/auto-assign')

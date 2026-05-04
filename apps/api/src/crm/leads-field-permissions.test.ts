@@ -490,4 +490,279 @@ describe('crm — field-permission read filter (C4)', () => {
     assert.equal(p.source, 'meta');
     assert.deepEqual(p.attribution?.campaign, { id: 'cmp_42', name: 'Spring 2026' });
   });
+
+  // ─── C5: write-side filter ────────────────────────────────────────
+
+  describe('C5 — write-side field filter', () => {
+    it('listDeniedWriteFields — sales role returns the same 3 paths', async () => {
+      const r = await inTenant(() =>
+        fieldFilter.listDeniedWriteFields(claimsFor(userSalesId, roleSalesId), 'lead'),
+      );
+      assert.equal(r.bypassed, false);
+      assert.deepEqual(new Set(r.paths), new Set(['id', 'attribution.campaign', 'source']));
+    });
+
+    it('listDeniedWriteFields — global role returns []', async () => {
+      const r = await inTenant(() =>
+        fieldFilter.listDeniedWriteFields(claimsFor(userGlobalId, roleGlobalId), 'lead'),
+      );
+      assert.equal(r.bypassed, false);
+      assert.deepEqual(r.paths, []);
+    });
+
+    it('listDeniedWriteFields — super_admin bypass returns bypassed=true and []', async () => {
+      const r = await inTenant(() =>
+        fieldFilter.listDeniedWriteFields(claimsFor(userSuperId, roleSuperId), 'lead'),
+      );
+      assert.equal(r.bypassed, true);
+      assert.deepEqual(r.paths, []);
+    });
+
+    it('stripForbiddenWrites — strips top-level + nested without touching siblings', () => {
+      const out = fieldFilter.stripForbiddenWrites(
+        {
+          name: 'Keep',
+          source: 'meta',
+          attribution: { campaign: { id: 'x' }, adSet: { id: 'y' } },
+        },
+        ['source', 'attribution.campaign'],
+      );
+      assert.equal(Object.prototype.hasOwnProperty.call(out, 'source'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(out.attribution, 'campaign'), false);
+      assert.equal(out.name, 'Keep');
+      assert.deepEqual(out.attribution.adSet, { id: 'y' });
+    });
+
+    it('create — sales role: source / attribution.campaign stripped from input; lead persisted with defaults', async () => {
+      const created = (await inTenant(() =>
+        leads.create(
+          {
+            name: 'C5 Sales Created',
+            phone: '+201000000211',
+            source: 'meta',
+            attribution: {
+              campaign: { id: 'cmp_should_be_dropped' },
+              adSet: { id: 'as_keeps' },
+            },
+          },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      )) as {
+        id: string;
+        name: string;
+        phone: string;
+        source: string;
+        attribution: { campaign?: unknown; adSet?: unknown };
+      };
+      // Read back as the global role so we can inspect the persisted
+      // row without the C4 read filter masking what the write actually
+      // landed.
+      const persisted = (await inTenant(() =>
+        leads.findByIdInScopeOrThrow(created.id, claimsFor(userGlobalId, roleGlobalId)),
+      )) as {
+        source: string;
+        attribution: { campaign?: unknown; adSet?: unknown };
+      };
+      assert.equal(persisted.source, 'manual', 'source falls back to schema default');
+      assert.equal(
+        persisted.attribution.campaign,
+        undefined,
+        'attribution.campaign was dropped from the input before persistence',
+      );
+      assert.deepEqual(persisted.attribution.adSet, { id: 'as_keeps' }, 'sibling preserved');
+    });
+
+    it('update — sales role: source change ignored; allowed fields (name, phone, email) still applied', async () => {
+      // Seed a fresh lead via the global role so we know its baseline
+      // source value is 'meta' (not 'manual').
+      const fresh = (await inTenant(() =>
+        leads.create(
+          {
+            name: 'C5 Update Baseline',
+            phone: '+201000000212',
+            source: 'meta',
+          },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string; source: string };
+      assert.equal(fresh.source, 'meta');
+
+      const after = (await inTenant(() =>
+        leads.update(
+          fresh.id,
+          { name: 'NEW NAME', email: 'after@test', source: 'tiktok' },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      )) as { id: string; name: string; email: string; source: string };
+      assert.equal(after.name, 'NEW NAME', 'allowed field applied');
+      assert.equal(after.email, 'after@test', 'allowed field applied');
+      assert.equal(after.source, 'meta', 'denied source change silently dropped');
+    });
+
+    it('update — super_admin bypass: source change applied even with seeded deny rows', async () => {
+      const fresh = (await inTenant(() =>
+        leads.create(
+          { name: 'C5 Super', phone: '+201000000213', source: 'meta' },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string };
+
+      const after = (await inTenant(() =>
+        leads.update(
+          fresh.id,
+          { source: 'tiktok' },
+          userSuperId,
+          claimsFor(userSuperId, roleSuperId),
+        ),
+      )) as { source: string };
+      assert.equal(after.source, 'tiktok', 'super_admin bypassed the write filter');
+    });
+
+    it('update — without userClaims: legacy fixture path persists every key (no filter)', async () => {
+      const fresh = (await inTenant(() =>
+        leads.create(
+          { name: 'C5 Legacy', phone: '+201000000214', source: 'meta' },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string };
+
+      const after = (await inTenant(() =>
+        leads.update(fresh.id, { source: 'tiktok' }, userSalesId),
+      )) as { source: string };
+      assert.equal(after.source, 'tiktok', 'no claims = no filter');
+    });
+
+    it('change log does not leak forbidden values (audit + activity tables)', async () => {
+      // Create a lead via sales role with denied input — we expect:
+      //   1. The persisted row has source='manual' (default),
+      //      attribution.campaign undefined.
+      //   2. No activity row's `payload` includes `source: 'meta'` or
+      //      `attribution.campaign: ...`.
+      //   3. No audit_event row carries those values either.
+      const created = (await inTenant(() =>
+        leads.create(
+          {
+            name: 'C5 No Leak',
+            phone: '+201000000215',
+            source: 'meta',
+            attribution: { campaign: { id: 'cmp_leak_test' } },
+          },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      )) as { id: string };
+
+      // Inspect activity rows the sales actor created on this lead.
+      const activityRows = await withTenantRaw(tenantId, async (tx) =>
+        tx.leadActivity.findMany({ where: { leadId: created.id } }),
+      );
+      for (const row of activityRows) {
+        const serialized = JSON.stringify(row.payload ?? {});
+        assert.equal(
+          serialized.includes('cmp_leak_test'),
+          false,
+          `activity payload leaked attribution.campaign: ${serialized}`,
+        );
+        assert.equal(
+          /\b"source":\s*"meta"/.test(serialized),
+          false,
+          `activity payload leaked source=meta: ${serialized}`,
+        );
+      }
+
+      // Inspect audit_event rows for this lead.
+      const auditRows = await withTenantRaw(tenantId, async (tx) =>
+        tx.auditEvent.findMany({ where: { entityId: created.id } }),
+      );
+      for (const row of auditRows) {
+        const serialized = JSON.stringify(row.payload ?? {});
+        assert.equal(
+          serialized.includes('cmp_leak_test'),
+          false,
+          `audit_event leaked attribution.campaign: ${serialized}`,
+        );
+        assert.equal(
+          /\b"source":\s*"meta"/.test(serialized),
+          false,
+          `audit_event leaked source=meta: ${serialized}`,
+        );
+      }
+    });
+
+    it('assign — write deny on assignedToId silently no-ops (custom role with denied assignedToId)', async () => {
+      // Seed a custom role that denies write on assignedToId.
+      let roleNoAssignId = '';
+      let userNoAssignId = '';
+      let leadForAssignId = '';
+      await withTenantRaw(tenantId, async (tx) => {
+        const role = await tx.role.create({
+          data: {
+            tenantId,
+            code: 'c5_no_assign',
+            nameAr: 'ممنوع التعيين',
+            nameEn: 'No Assign (C5)',
+            level: 30,
+            isSystem: false,
+          },
+        });
+        roleNoAssignId = role.id;
+        for (const resource of ['lead', 'captain', 'followup', 'whatsapp.conversation']) {
+          await tx.roleScope.create({
+            data: { tenantId, roleId: roleNoAssignId, resource, scope: 'global' },
+          });
+        }
+        await tx.fieldPermission.create({
+          data: {
+            tenantId,
+            roleId: roleNoAssignId,
+            resource: 'lead',
+            field: 'assignedToId',
+            canRead: true,
+            canWrite: false,
+          },
+        });
+        const u = await tx.user.create({
+          data: {
+            tenantId,
+            email: 'c5-no-assign@test',
+            name: 'no_assign',
+            passwordHash: 'x',
+            status: 'active',
+            roleId: roleNoAssignId,
+          },
+        });
+        userNoAssignId = u.id;
+        const fresh = await tx.lead.create({
+          data: {
+            tenantId,
+            stageId: newStageId,
+            pipelineId,
+            name: 'Assign Target',
+            phone: '+201000000216',
+            assignedToId: userGlobalId,
+          },
+        });
+        leadForAssignId = fresh.id;
+      });
+
+      const after = (await inTenant(() =>
+        leads.assign(
+          leadForAssignId,
+          userNoAssignId,
+          userNoAssignId,
+          claimsFor(userNoAssignId, roleNoAssignId),
+        ),
+      )) as { assignedToId: string | null };
+      assert.equal(
+        after.assignedToId,
+        userGlobalId,
+        'assign was a silent no-op — assignedToId unchanged',
+      );
+    });
+  });
 });

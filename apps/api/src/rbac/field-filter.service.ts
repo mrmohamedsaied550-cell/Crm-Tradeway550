@@ -72,6 +72,47 @@ export class FieldFilterService {
   }
 
   /**
+   * Phase C — C5: write-side equivalent of `listDeniedReadFields`.
+   * Returns the dot-paths the caller's role MUST NOT WRITE for the
+   * requested resource. Super-admin bypass mirrors the read path.
+   *
+   * Used by service-layer write paths (LeadsService.create / update
+   * / assign) to strip forbidden keys from incoming DTOs before
+   * persistence — so the API silently drops fields the role can't
+   * change without raising an error (per the C5 spec, rule 7).
+   */
+  async listDeniedWriteFields(
+    claims: ScopeUserClaims,
+    resource: string,
+  ): Promise<DeniedReadFields> {
+    return this.prisma.withTenant(claims.tenantId, async (tx) => {
+      const role = await tx.role.findUnique({
+        where: { id: claims.roleId },
+        select: { code: true },
+      });
+      if (role?.code === 'super_admin') {
+        return { bypassed: true, paths: [] };
+      }
+      const rows = await tx.fieldPermission.findMany({
+        where: { roleId: claims.roleId, resource, canWrite: false },
+        select: { field: true },
+      });
+      return { bypassed: false, paths: rows.map((r) => r.field) };
+    });
+  }
+
+  /**
+   * Phase C — C5: strip forbidden write keys from an incoming DTO.
+   * Identical to `filterRead` operationally (delete every `paths`
+   * entry from a payload), but exposed under a separate name so
+   * write call-sites read clearly. Use `listDeniedWriteFields` to
+   * resolve `paths`.
+   */
+  stripForbiddenWrites<T>(payload: T, paths: readonly string[]): T {
+    return this.filterRead(payload, paths);
+  }
+
+  /**
    * Strip every `paths` entry from `payload`. Returns a new object
    * — the caller's reference is untouched, so concurrent code paths
    * can safely re-use the source row (e.g. a list call enumerating

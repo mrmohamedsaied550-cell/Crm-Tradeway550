@@ -116,13 +116,60 @@ export class LeadsService {
     return this.fieldFilter.filterReadMany(rows, paths);
   }
 
+  /**
+   * Phase C — C5: write-side companion to applyLeadFieldFilter.
+   * Strips any keys the calling user's role isn't allowed to WRITE
+   * from an incoming DTO before persistence. Returns the DTO
+   * unchanged when no claims / no fieldFilter / no denies — so
+   * legacy fixtures that don't pass userClaims keep current
+   * behaviour byte-identically.
+   *
+   * Behaviour rule (per C5 spec): silent strip, no error. Callers
+   * therefore see the operation succeed with the forbidden fields
+   * simply not applied — matching how the read side hides those
+   * same fields from the response.
+   */
+  private async stripLeadWriteDenies<T>(
+    userClaims: ScopeUserClaims | undefined,
+    dto: T,
+  ): Promise<T> {
+    if (!userClaims || !this.fieldFilter) return dto;
+    const { paths } = await this.fieldFilter.listDeniedWriteFields(userClaims, 'lead');
+    if (paths.length === 0) return dto;
+    return this.fieldFilter.stripForbiddenWrites(dto, paths);
+  }
+
+  /**
+   * Phase C — C5: returns the user's lead write-deny paths once.
+   * Call sites that need to inspect the path set (e.g. assign /
+   * moveStage to short-circuit when the action only touches
+   * forbidden fields) use this directly instead of the generic
+   * stripper above.
+   */
+  private async leadWriteDenyPaths(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<readonly string[]> {
+    if (!userClaims || !this.fieldFilter) return [];
+    const { paths } = await this.fieldFilter.listDeniedWriteFields(userClaims, 'lead');
+    return paths;
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // create
   // ───────────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateLeadDto, actorUserId: string) {
+  async create(dto: CreateLeadDto, actorUserId: string, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     const settings = await this.tenantSettings.getCurrent();
+
+    // Phase C — C5: silently drop any fields the calling role isn't
+    // allowed to write. The remainder of the create flow proceeds
+    // normally — denied keys default through their schema-level
+    // defaults (e.g. `source` falls back to the column default
+    // 'manual' when the role can't write it). Activity / audit
+    // emissions further down read from the stripped dto, so the
+    // change log can't leak forbidden values either.
+    dto = await this.stripLeadWriteDenies(userClaims, dto);
 
     // P2-08 — the DTO only sanity-checks the shape; full E.164
     // normalisation happens here, with the tenant's defaultDialCode
@@ -711,9 +758,16 @@ export class LeadsService {
   // update / delete
   // ───────────────────────────────────────────────────────────────────────
 
-  async update(id: string, dto: UpdateLeadDto, actorUserId: string) {
+  async update(id: string, dto: UpdateLeadDto, actorUserId: string, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
+
+    // Phase C — C5: silently drop any keys the calling role can't
+    // write before we touch the row. After the strip, an empty dto
+    // simply produces a no-op update + activity row that records
+    // nothing meaningful. The activity emission below reads from the
+    // stripped dto so the change log doesn't leak forbidden values.
+    dto = await this.stripLeadWriteDenies(userClaims, dto);
 
     const settings = await this.tenantSettings.getCurrent();
     let normalizedPhone: string | undefined;
@@ -771,9 +825,23 @@ export class LeadsService {
   // assign
   // ───────────────────────────────────────────────────────────────────────
 
-  async assign(id: string, assigneeUserId: string | null, actorUserId: string) {
+  async assign(
+    id: string,
+    assigneeUserId: string | null,
+    actorUserId: string,
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
+
+    // Phase C — C5: assignedToId is the only field this method
+    // touches. If the calling role can't write it, silently no-op
+    // and return the unchanged lead — same shape as a successful
+    // assign so the controller doesn't have to branch.
+    const denyPaths = await this.leadWriteDenyPaths(userClaims);
+    if (denyPaths.includes('assignedToId')) {
+      return before;
+    }
 
     if (assigneeUserId !== null) {
       await this.assertUserInTenant(assigneeUserId);
