@@ -1424,12 +1424,10 @@ export class LeadsService {
     const before = await this.findByIdOrThrow(id);
     const settings = await this.tenantSettings.getCurrent();
 
-    // Phase C — C5.5: defensive guard. Today's AddActivityDto only
-    // carries `type` + `body`; if a future schema addition slips
-    // through without being explicitly threaded through the
-    // permission filter, drop any unknown structured keys here
-    // before the row hits the DB. Cheap belt-and-braces.
-    const knownKeys: ReadonlyArray<keyof AddActivityDto> = ['type', 'body'];
+    // Phase C — C5.5 + D1.1: defensive guard. AddActivityDto carries
+    // `type` + `body` + (D1.1) optional `actionSource`. Drop any
+    // unknown structured keys before the row hits the DB.
+    const knownKeys: ReadonlyArray<keyof AddActivityDto> = ['type', 'body', 'actionSource'];
     for (const k of Object.keys(dto) as Array<keyof AddActivityDto>) {
       if (!knownKeys.includes(k)) {
         delete (dto as Record<string, unknown>)[k as string];
@@ -1444,6 +1442,9 @@ export class LeadsService {
           type: dto.type,
           body: dto.body,
           createdById: actorUserId,
+          // D1.1 — schema column default is 'lead'; only override
+          // when the caller passed an explicit actionSource.
+          ...(dto.actionSource && { actionSource: dto.actionSource }),
         },
         select: {
           id: true,

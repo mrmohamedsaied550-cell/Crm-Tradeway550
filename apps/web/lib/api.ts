@@ -73,6 +73,10 @@ import type {
   WhatsAppAccount,
   WhatsAppTemplateRow,
   Team,
+  Contact,
+  WhatsAppConversationReview,
+  ReviewListResult,
+  ReviewResolution,
   UserStatus,
   WhatsAppConversation,
   WhatsAppMessage,
@@ -725,7 +729,12 @@ export const leadsApi = {
     apiFetch<LeadRoutingLogRow[]>(`/leads/${id}/routing-log`),
   addActivity: (
     id: string,
-    input: { type: Extract<LeadActivityType, 'note' | 'call'>; body: string },
+    input: {
+      type: Extract<LeadActivityType, 'note' | 'call'>;
+      body: string;
+      /** D1.1 — optional provenance; defaults to 'lead'. */
+      actionSource?: 'lead' | 'whatsapp' | 'system' | 'import';
+    },
   ): Promise<LeadActivity> =>
     apiFetch<LeadActivity>(`/leads/${id}/activities`, { method: 'POST', body: input }),
   convert: (
@@ -990,6 +999,60 @@ export const conversationsApi = {
       method: 'POST',
       body: input,
     }),
+  /** D1.1 — clear the conversation's lead link without changing ownership. */
+  unlinkLead: (id: string): Promise<{ id: string; leadId: string | null }> =>
+    apiFetch<{ id: string; leadId: string | null }>(`/conversations/${id}/unlink-lead`, {
+      method: 'POST',
+    }),
+  /** D1.1 — admin-style direct assignment override. */
+  assign: (
+    id: string,
+    assigneeId: string,
+  ): Promise<{ id: string; assignedToId: string; teamId: string | null }> =>
+    apiFetch<{ id: string; assignedToId: string; teamId: string | null }>(
+      `/conversations/${id}/assign`,
+      { method: 'POST', body: { assigneeId } },
+    ),
+  /** D1.1 — close the conversation; ownership preserved for audit. */
+  close: (id: string): Promise<{ id: string; status: string }> =>
+    apiFetch<{ id: string; status: string }>(`/conversations/${id}/close`, { method: 'POST' }),
+  /** D1.1 — reopen a closed conversation; rejected on partial-unique conflict. */
+  reopen: (id: string): Promise<{ id: string; status: string }> =>
+    apiFetch<{ id: string; status: string }>(`/conversations/${id}/reopen`, { method: 'POST' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// D1.1 — WhatsApp review queue (consumes /whatsapp/reviews)
+// ───────────────────────────────────────────────────────────────────────
+
+export const reviewsApi = {
+  list: (
+    query: { resolved?: boolean; limit?: number; offset?: number } = {},
+  ): Promise<ReviewListResult> => apiFetch<ReviewListResult>('/whatsapp/reviews', { query }),
+  count: (): Promise<{ unresolved: number }> =>
+    apiFetch<{ unresolved: number }>('/whatsapp/reviews/count'),
+  get: (id: string): Promise<WhatsAppConversationReview> =>
+    apiFetch<WhatsAppConversationReview>(`/whatsapp/reviews/${id}`),
+  resolve: (
+    id: string,
+    body: { resolution: ReviewResolution; leadId?: string },
+  ): Promise<{ id: string; resolution: ReviewResolution; resolvedAt: string }> =>
+    apiFetch<{ id: string; resolution: ReviewResolution; resolvedAt: string }>(
+      `/whatsapp/reviews/${id}/resolve`,
+      { method: 'POST', body },
+    ),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// D1.1 — Contacts (consumes /contacts)
+// ───────────────────────────────────────────────────────────────────────
+
+export const contactsApi = {
+  get: (id: string): Promise<Contact> => apiFetch<Contact>(`/contacts/${id}`),
+  update: (
+    id: string,
+    body: { displayName?: string | null; language?: string | null },
+  ): Promise<Contact> => apiFetch<Contact>(`/contacts/${id}`, { method: 'PATCH', body }),
 };
 
 /**

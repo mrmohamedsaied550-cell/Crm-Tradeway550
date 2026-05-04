@@ -840,6 +840,22 @@ export class WhatsAppService {
           orderBy: { lastMessageAt: 'desc' },
           take: opts.limit ?? 50,
           skip: opts.offset ?? 0,
+          // D1.1 — surface assignee name + contact identity so the
+          // inbox list can render owner/contact badges without an
+          // N+1 user lookup.
+          include: {
+            assignedTo: { select: { id: true, name: true, email: true, teamId: true } },
+            contact: {
+              select: {
+                id: true,
+                phone: true,
+                displayName: true,
+                language: true,
+                isCaptain: true,
+                hasOpenLead: true,
+              },
+            },
+          },
         }),
         tx.whatsAppConversation.count({ where }),
       ]);
@@ -865,7 +881,14 @@ export class WhatsAppService {
         : { id };
       const row = await tx.whatsAppConversation.findFirst({
         where,
-        include: { lead: true },
+        // D1.1 — side-panel needs lead + contact + assignee in one
+        // round-trip. Stage join lets the lead card render its
+        // pipeline badge without a follow-up call.
+        include: {
+          lead: { include: { stage: true } },
+          contact: true,
+          assignedTo: { select: { id: true, name: true, email: true, teamId: true } },
+        },
       });
       if (!row) return null;
       if (row.leadId !== null) return row;

@@ -169,6 +169,14 @@ export const AddActivitySchema = z
     /** Only agent-authored types are accepted from the controller. */
     type: z.enum(['note', 'call'] as const satisfies readonly (typeof ACTIVITY_TYPES)[number][]),
     body: z.string().trim().min(1).max(4000),
+    /**
+     * D1.1 — provenance for the activity. Optional; defaults to
+     * 'lead' (matches the schema column default + the existing
+     * UI behaviour). The WhatsApp side panel "Add note" action
+     * passes 'whatsapp' so the timeline can distinguish chat-side
+     * notes from lead-page notes.
+     */
+    actionSource: z.enum(['lead', 'whatsapp', 'system', 'import']).optional(),
   })
   .strict();
 export type AddActivityDto = z.infer<typeof AddActivitySchema>;

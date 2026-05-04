@@ -384,10 +384,56 @@ export interface LoginResponse {
 /** P2-10 — `/auth/refresh` shape. Matches LoginResponse on the wire. */
 export type RefreshResponse = LoginResponse;
 
-// ───── WhatsApp (C21 / C22 / C23) ─────
+// ───── WhatsApp (C21 / C22 / C23 + D1.1 ownership) ─────
 
 export type ConversationStatus = 'open' | 'closed';
 export type WhatsAppDirection = 'inbound' | 'outbound';
+/** D1.1 — provenance of the current ownership row. */
+export type AssignmentSource =
+  | 'inbound_route'
+  | 'manual_handover'
+  | 'outbound_self'
+  | 'migrated'
+  | 'lead_propagation';
+
+/**
+ * D1.1 — Contact identity (cleaned, safe projection).
+ *
+ * The backend exposes only the safe fields to non-super-admin users.
+ * `rawProfile`, `originalPhone`, `originalDisplayName` are NEVER
+ * returned in this shape and the frontend should never request them.
+ */
+export interface Contact {
+  id: string;
+  tenantId: string;
+  phone: string;
+  displayName: string | null;
+  language: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  isCaptain: boolean;
+  hasOpenLead: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** D1.1 — owner mini-profile included in conversation list / detail. */
+export interface ConversationOwner {
+  id: string;
+  name: string;
+  email: string;
+  teamId: string | null;
+}
+
+/** D1.1 — minimal Contact projection embedded in conversation list. */
+export interface ConversationContactSummary {
+  id: string;
+  phone: string;
+  displayName: string | null;
+  language: string | null;
+  isCaptain: boolean;
+  hasOpenLead: boolean;
+}
 
 export interface WhatsAppConversation {
   id: string;
@@ -399,8 +445,43 @@ export interface WhatsAppConversation {
   lastMessageText: string;
   /** P2-12 — most recent inbound timestamp; drives the 24h window. */
   lastInboundAt?: string | null;
+  /** C25 — link to a Lead in the same tenant. */
+  leadId?: string | null;
+  /** D1.1 — C10B-1 ownership chain. */
+  contactId?: string | null;
+  assignedToId?: string | null;
+  teamId?: string | null;
+  companyId?: string | null;
+  countryId?: string | null;
+  assignmentSource?: AssignmentSource | null;
+  assignedAt?: string | null;
+  /** D1.1 — populated when the backend `include` is asked for. */
+  assignedTo?: ConversationOwner | null;
+  contact?: ConversationContactSummary | null;
+  /** Lead embedded by `findConversationById`; minimal subset for the side panel. */
+  lead?: ConversationLeadSummary | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** D1.1 — minimal lead embedded into the conversation detail response. */
+export interface ConversationLeadSummary {
+  id: string;
+  name: string;
+  phone: string;
+  stageId: string;
+  pipelineId?: string | null;
+  lifecycleState: string;
+  assignedToId: string | null;
+  companyId: string | null;
+  countryId: string | null;
+  stage?: {
+    id: string;
+    code: string;
+    name: string;
+    isTerminal: boolean;
+    terminalKind: string | null;
+  };
 }
 
 export interface WhatsAppMessage {
@@ -426,6 +507,41 @@ export interface SendConversationMessageResult {
   messageId: string;
   providerMessageId: string;
   conversationId: string;
+}
+
+// ───── D1.1 — WhatsApp review queue ─────
+
+export type ReviewReason = 'captain_active' | 'duplicate_lead' | 'unmatched_after_routing';
+export type ReviewResolution = 'linked_to_lead' | 'linked_to_captain' | 'new_lead' | 'dismissed';
+
+export interface ReviewContextSnapshotEntry {
+  text: string;
+  createdAt: string;
+}
+
+export interface WhatsAppConversationReview {
+  id: string;
+  tenantId: string;
+  conversationId: string;
+  contactId: string;
+  reason: ReviewReason;
+  candidateLeadIds: string[];
+  candidateCaptainId: string | null;
+  contextSnapshot: ReviewContextSnapshotEntry[] | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedById: string | null;
+  resolution: ReviewResolution | null;
+  /** Joined when listing/getting; not always present. */
+  conversation?: WhatsAppConversation;
+  contact?: Contact;
+}
+
+export interface ReviewListResult {
+  items: WhatsAppConversationReview[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 // ───── Bonuses (C32) ─────
