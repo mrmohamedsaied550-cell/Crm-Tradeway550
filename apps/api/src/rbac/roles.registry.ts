@@ -108,6 +108,8 @@ export const ROLE_DEFINITIONS = [
       'lead.activity.write',
       'lead.convert',
       'lead.import',
+      // Phase D2 — D2.2: manual reactivation override.
+      'lead.reactivate',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -132,6 +134,8 @@ export const ROLE_DEFINITIONS = [
       'roles.write',
       'capabilities.read',
       'tenant.settings.write',
+      // Phase D2 — D2.2: dedicated grant for the duplicate-rules JSON.
+      'tenant.duplicate_rules.write',
       'tenant.export',
       'distribution.read',
       'distribution.write',
@@ -159,6 +163,8 @@ export const ROLE_DEFINITIONS = [
       'lead.activity.write',
       'lead.convert',
       'lead.import',
+      // Phase D2 — D2.2: manual reactivation override (mirrors ops_manager).
+      'lead.reactivate',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -182,6 +188,8 @@ export const ROLE_DEFINITIONS = [
       'roles.write',
       'capabilities.read',
       'tenant.settings.write',
+      // Phase D2 — D2.2: dedicated grant for the duplicate-rules JSON.
+      'tenant.duplicate_rules.write',
       'tenant.export',
       'distribution.read',
       'distribution.write',

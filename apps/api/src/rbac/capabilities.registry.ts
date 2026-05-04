@@ -40,6 +40,16 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'lead.activity.write', description: 'Log notes / calls on a lead' },
   { code: 'lead.convert', description: 'Convert a lead to a captain' },
   { code: 'lead.import', description: 'Bulk-import leads (CSV / external feed)' },
+  // Phase D2 — D2.2: manual reactivation override. Bypasses the
+  // automatic duplicate-decision engine — used when an admin
+  // explicitly wants to re-enroll a Won / active-Captain phone.
+  // Grant defaults: super_admin (auto), ops_manager, account_manager.
+  // The manual-override UI itself lands in D2.4; D2.2 only registers
+  // the capability so the seed has it available.
+  {
+    code: 'lead.reactivate',
+    description: 'Manually reactivate a lead (overrides the duplicate-decision engine)',
+  },
 
   // Meta lead-source registration (P2-06)
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },
@@ -136,6 +146,17 @@ export const CAPABILITY_DEFINITIONS = [
   // Tenant settings (P2-08)
   { code: 'tenant.settings.read', description: 'View tenant-level settings' },
   { code: 'tenant.settings.write', description: 'Update tenant-level settings' },
+  // Phase D2 — D2.2: dedicated capability for the duplicate /
+  // reactivation rules JSON. Separate from the broader
+  // tenant.settings.write so an Account Manager can't accidentally
+  // (or maliciously) flip cool-off cohorts as part of an unrelated
+  // settings PATCH. Grant defaults match tenant.settings.write
+  // (super_admin auto + ops_manager + account_manager); the admin
+  // panel UI lands in D2.4.
+  {
+    code: 'tenant.duplicate_rules.write',
+    description: 'Edit the tenant-level duplicate / reactivation rules JSON',
+  },
 
   // Backup / export (P3-07) — operator-only export of the tenant's
   // CRM rows as JSON. Sensitive fields (access tokens, password
