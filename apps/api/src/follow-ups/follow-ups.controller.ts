@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { FollowUpsService } from './follow-ups.service';
 import {
@@ -34,6 +35,13 @@ class UpdateFollowUpDto extends createZodDto(UpdateFollowUpSchema) {}
 class ListMyFollowUpsQueryDto extends createZodDto(ListMyFollowUpsQuerySchema) {}
 class CalendarFollowUpsQueryDto extends createZodDto(CalendarFollowUpsQuerySchema) {}
 
+/** Same shape as crm/leads.controller's helper — kept private here to
+ *  avoid cross-module import. Could live in a shared utility once a
+ *  third controller needs it. */
+function claimsToScope(claims: AccessTokenClaims): ScopeUserClaims {
+  return { userId: claims.sub, tenantId: claims.tid, roleId: claims.rid };
+}
+
 @ApiTags('follow-ups')
 @Controller()
 @UseGuards(JwtAuthGuard, CapabilityGuard)
@@ -44,7 +52,7 @@ export class FollowUpsController {
   @RequireCapability('followup.read')
   @ApiOperation({ summary: "List the calling user's follow-ups (default: pending only)" })
   mine(@Query() query: ListMyFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
-    return this.followUps.listMine(user.sub, query);
+    return this.followUps.listMine(user.sub, query, claimsToScope(user));
   }
 
   /**
@@ -59,7 +67,7 @@ export class FollowUpsController {
     summary: 'Counts of overdue + due-today follow-ups for the calling user',
   })
   summary(@CurrentUser() user: AccessTokenClaims) {
-    return this.followUps.summaryForUser(user.sub);
+    return this.followUps.summaryForUser(user.sub, claimsToScope(user));
   }
 
   /**
@@ -73,14 +81,21 @@ export class FollowUpsController {
   @RequireCapability('followup.read')
   @ApiOperation({ summary: 'List follow-ups in a date range (calendar feed)' })
   calendar(@Query() query: CalendarFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
-    return this.followUps.listInRange(user.sub, { ...query, allowAllAssignees: true });
+    return this.followUps.listInRange(
+      user.sub,
+      { ...query, allowAllAssignees: true },
+      claimsToScope(user),
+    );
   }
 
   @Get('leads/:leadId/follow-ups')
   @RequireCapability('followup.read')
   @ApiOperation({ summary: 'List every follow-up scheduled on this lead' })
-  listForLead(@Param('leadId', new ParseUUIDPipe()) leadId: string) {
-    return this.followUps.listForLead(leadId);
+  listForLead(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.followUps.listForLead(leadId, claimsToScope(user));
   }
 
   @Post('leads/:leadId/follow-ups')
@@ -91,7 +106,7 @@ export class FollowUpsController {
     @Body() body: CreateFollowUpDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.followUps.create(leadId, body, user.sub);
+    return this.followUps.create(leadId, body, user.sub, claimsToScope(user));
   }
 
   @Post('follow-ups/:id/complete')
@@ -99,7 +114,7 @@ export class FollowUpsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a follow-up as completed (now)' })
   complete(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
-    return this.followUps.complete(id, user.sub);
+    return this.followUps.complete(id, user.sub, claimsToScope(user));
   }
 
   /**
@@ -117,7 +132,7 @@ export class FollowUpsController {
     @Body() body: UpdateFollowUpDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.followUps.update(id, body, user.sub);
+    return this.followUps.update(id, body, user.sub, claimsToScope(user));
   }
 
   @Delete('follow-ups/:id')
@@ -128,6 +143,6 @@ export class FollowUpsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: AccessTokenClaims,
   ): Promise<void> {
-    return this.followUps.remove(id, user.sub);
+    return this.followUps.remove(id, user.sub, claimsToScope(user));
   }
 }

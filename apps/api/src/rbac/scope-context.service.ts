@@ -137,6 +137,25 @@ export interface LeadScopeResolution {
 }
 
 /**
+ * Phase C — C10A: follow-up scope resolution.
+ *
+ * Follow-ups have NO direct `companyId` / `countryId` and only a
+ * nullable `assignedToId` of their own (different person from the
+ * lead's owner). The product rule is "a follow-up is visible to the
+ * same set of users that can see its parent lead", so the where
+ * clause is built around the parent lead — `{ lead: { is: <leadWhere> } }` —
+ * which translates own / team / company / country / global directly.
+ *
+ * The follow-up's own `assignedToId` is intentionally NOT consulted
+ * here. A team-scoped user might own a follow-up on a lead they
+ * don't own; the lead's owner is the gate.
+ */
+export interface FollowUpScopeResolution {
+  scope: RoleScopeValue;
+  where: Prisma.LeadFollowUpWhereInput | null;
+}
+
+/**
  * Resource-agnostic intermediate shape produced by the internal
  * resolver. C10's per-resource adapters consume this directly so
  * the SCOPE VALUE + ID lookups happen exactly once per request.
@@ -174,6 +193,21 @@ export class ScopeContextService {
   async resolveLeadScope(claims: ScopeUserClaims): Promise<LeadScopeResolution> {
     const filter = await this.resolveScopeFilter(claims, 'lead');
     return { scope: filter.scope, where: this.toLeadWhere(filter) };
+  }
+
+  /**
+   * Phase C — C10A: resolve scope for the `followup` resource.
+   *
+   * Builds a Prisma `where` for `LeadFollowUp` by translating the
+   * generic ScopeFilter into a parent-lead constraint. See
+   * `FollowUpScopeResolution` for the rationale on using the lead's
+   * owner instead of the follow-up's `assignedToId`.
+   *
+   * USER-REQUEST CONTEXT ONLY — same caveat as `resolveLeadScope`.
+   */
+  async resolveFollowUpScope(claims: ScopeUserClaims): Promise<FollowUpScopeResolution> {
+    const filter = await this.resolveScopeFilter(claims, 'followup');
+    return { scope: filter.scope, where: this.toFollowUpWhere(filter) };
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -285,5 +319,30 @@ export class ScopeContextService {
       return { countryId: { in: (filter.countryIds ?? []) as string[] } };
     }
     return null;
+  }
+
+  /**
+   * Phase C — C10A: build a `LeadFollowUp` where from a ScopeFilter.
+   *
+   * The follow-up scope flows through the parent lead, so we
+   * essentially wrap `toLeadWhere` in `{ lead: { is: <leadWhere> } }`.
+   * Two edge cases worth documenting:
+   *   • `isEmpty` — the resolver short-circuited (no team, no scope
+   *     assignments). We return the same `{ id: { in: [] } }` shape
+   *     used elsewhere so callers can AND it without special-casing.
+   *   • `global` — no extra filter; the follow-up is visible if its
+   *     row is in the active tenant (RLS already enforces that).
+   *
+   * The follow-up's own `assignedToId` column is NOT consulted. A
+   * follow-up owned by user A on a lead owned by user B is visible
+   * to A's team only if A's team can see the lead. This matches the
+   * product expectation that "the lead is the unit of access".
+   */
+  private toFollowUpWhere(filter: ScopeFilter): Prisma.LeadFollowUpWhereInput | null {
+    if (filter.isEmpty) return { id: { in: [] } };
+    if (filter.scope === 'global') return null;
+    const leadWhere = this.toLeadWhere(filter);
+    if (leadWhere === null) return null;
+    return { lead: { is: leadWhere } };
   }
 }
