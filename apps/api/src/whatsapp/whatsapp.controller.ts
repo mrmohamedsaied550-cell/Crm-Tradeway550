@@ -14,6 +14,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { isProduction } from '../common/env';
+import { WhatsAppInboundService } from './whatsapp-inbound.service';
 import { WhatsAppService } from './whatsapp.service';
 
 /**
@@ -32,7 +33,17 @@ import { WhatsAppService } from './whatsapp.service';
 export class WhatsAppController {
   private readonly logger = new Logger(WhatsAppController.name);
 
-  constructor(private readonly whatsapp: WhatsAppService) {}
+  constructor(
+    private readonly whatsapp: WhatsAppService,
+    /**
+     * Phase C — C10B-3: orchestrator that owns the inbound flow
+     * (contact match → captain check → routing → lead create-or-link
+     * → ownership denormalisation → audit). Falls back to the legacy
+     * `WhatsAppService.persistInbound` path when the
+     * `WHATSAPP_INBOUND_V2` flag resolves false.
+     */
+    private readonly inboundOrchestrator: WhatsAppInboundService,
+  ) {}
 
   /**
    * GET handshake. Meta sends:
@@ -125,7 +136,12 @@ export class WhatsAppController {
     let ingested = 0;
     let duplicates = 0;
     for (const msg of messages) {
-      const result = await this.whatsapp.persistInbound(account, msg);
+      // Phase C — C10B-3: every inbound message goes through the
+      // orchestrator. The flag-off path inside `handleInbound` short-
+      // circuits to `WhatsAppService.persistInbound` so the legacy
+      // behaviour stays available when ops needs to roll back without
+      // a code revert.
+      const result = await this.inboundOrchestrator.handleInbound(account, msg);
       if (result === null) duplicates += 1;
       else ingested += 1;
     }

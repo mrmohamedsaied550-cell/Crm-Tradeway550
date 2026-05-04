@@ -51,6 +51,20 @@ export interface InboundMessage {
    * payload twice.
    */
   readonly phoneNumberId: string;
+  /**
+   * Phase C — C10B-3: WhatsApp profile name as supplied by Meta in
+   * `value.contacts[0].profile.name`. Used to populate `Contact.displayName`
+   * (mutable, latest-wins) and `Contact.originalDisplayName` (immutable
+   * snapshot of the first inbound). Optional — older webhook payloads
+   * and some BSPs omit it.
+   */
+  readonly profileName?: string;
+  /**
+   * Phase C — C10B-3: Meta WhatsApp identity (`value.contacts[0].wa_id`).
+   * Stored in the routing audit / attribution payload so a future
+   * support investigation can correlate without re-fetching from Meta.
+   */
+  readonly waId?: string;
 }
 
 /** Result of `WhatsAppProvider.sendText` (and sendTemplate / sendMedia). */

@@ -242,44 +242,9 @@ export class WhatsAppService {
   ): Promise<{ messageId: string; conversationId: string } | null> {
     let result: { messageId: string; conversationId: string } | null = null;
     try {
-      result = await this.prisma.withTenant(account.tenantId, async (tx) => {
-        const conversationId = await this.ensureOpenConversation(
-          tx,
-          account.tenantId,
-          account.id,
-          msg.phone,
-        );
-
-        const message = await tx.whatsAppMessage.create({
-          data: {
-            tenantId: account.tenantId,
-            accountId: account.id,
-            conversationId,
-            phone: msg.phone,
-            text: msg.text,
-            direction: 'inbound',
-            providerMessageId: msg.providerMessageId,
-            status: 'received',
-            createdAt: msg.receivedAt,
-          },
-          select: { id: true },
-        });
-
-        await tx.whatsAppConversation.update({
-          where: { id: conversationId },
-          data: {
-            lastMessageAt: msg.receivedAt,
-            lastMessageText: msg.text,
-            // P2-12 — bump the customer-service-window timer so the
-            // outbound freeform path knows the contact has replied
-            // within the last 24h. Templates remain available even
-            // when this is null.
-            lastInboundAt: msg.receivedAt,
-          },
-        });
-
-        return { messageId: message.id, conversationId };
-      });
+      result = await this.prisma.withTenant(account.tenantId, (tx) =>
+        this.persistInboundInTx(tx, account, msg),
+      );
     } catch (err) {
       // Duplicate provider id within the same tenant → idempotent no-op.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -296,18 +261,95 @@ export class WhatsAppService {
     // browsing the inbox should see the conversation row update live.
     // Emitted post-commit so a client refetch always sees the new row.
     if (result && this.realtime) {
-      try {
-        this.realtime.emitToTenant(account.tenantId, {
-          type: 'whatsapp.message',
-          conversationId: result.conversationId,
-          messageId: result.messageId,
-          direction: 'inbound',
-        });
-      } catch (err) {
-        this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
-      }
+      this.emitInboundRealtime(account.tenantId, result);
     }
     return result;
+  }
+
+  /**
+   * Phase C — C10B-3: tx-accepting variant of `persistInbound` so the
+   * new `WhatsAppInboundService` orchestrator can compose persist +
+   * contact match + routing + lead create-or-link inside a single
+   * transaction. Returns `null` on duplicate provider id so the caller
+   * can short-circuit before doing any orchestration work.
+   *
+   * The duplicate-suppression branch is the same `P2002` catch as the
+   * public method — but here we let the error bubble up to the caller
+   * so the surrounding orchestrator can decide whether to short-circuit
+   * the whole chain (tests #1 expectations: a duplicate webhook never
+   * re-routes an already-assigned conversation).
+   */
+  async persistInboundInTx(
+    tx: Prisma.TransactionClient,
+    account: RoutedAccount,
+    msg: InboundMessage,
+  ): Promise<{ messageId: string; conversationId: string } | null> {
+    const conversationId = await this.ensureOpenConversation(
+      tx,
+      account.tenantId,
+      account.id,
+      msg.phone,
+    );
+
+    let messageId: string;
+    try {
+      const message = await tx.whatsAppMessage.create({
+        data: {
+          tenantId: account.tenantId,
+          accountId: account.id,
+          conversationId,
+          phone: msg.phone,
+          text: msg.text,
+          direction: 'inbound',
+          providerMessageId: msg.providerMessageId,
+          status: 'received',
+          createdAt: msg.receivedAt,
+        },
+        select: { id: true },
+      });
+      messageId = message.id;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Idempotent path — caller short-circuits.
+        return null;
+      }
+      throw err;
+    }
+
+    await tx.whatsAppConversation.update({
+      where: { id: conversationId },
+      data: {
+        lastMessageAt: msg.receivedAt,
+        lastMessageText: msg.text,
+        // P2-12 — bump the customer-service-window timer so the
+        // outbound freeform path knows the contact has replied
+        // within the last 24h. Templates remain available even
+        // when this is null.
+        lastInboundAt: msg.receivedAt,
+      },
+    });
+
+    return { messageId, conversationId };
+  }
+
+  /** C10B-3: small helper — used by both the legacy `persistInbound`
+   *  path and the new orchestrator so the realtime emit shape stays
+   *  uniform. */
+  emitInboundRealtime(
+    tenantId: string,
+    payload: { messageId: string; conversationId: string },
+  ): void {
+    if (!this.realtime) return;
+    try {
+      this.realtime.emitToTenant(tenantId, {
+        type: 'whatsapp.message',
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        direction: 'inbound',
+      });
+    } catch (err) {
+      this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
+    }
   }
 
   // ─────── Outbound send ───────

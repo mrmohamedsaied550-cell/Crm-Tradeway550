@@ -392,6 +392,17 @@ export class LeadsService {
           },
           createdById: actorUserId,
         });
+        // Phase C — C10B-3: if the lead is linked to a Contact (via the
+        // C10B-1 column) and entered an OPEN lifecycle, mark the
+        // contact as `hasOpenLead`. Manual create today never carries
+        // contactId; this guard is the seam for future create paths
+        // (CSV import + Meta lead-ads webhook) that DO populate it.
+        if (lead.contactId && lifecycleState === 'open') {
+          await tx.contact.update({
+            where: { id: lead.contactId },
+            data: { hasOpenLead: true },
+          });
+        }
         return lead;
       });
     } catch (err) {
@@ -1340,6 +1351,36 @@ export class LeadsService {
         },
         createdById: actorUserId,
       });
+      // Phase C — C10B-3: maintain Contact.hasOpenLead on terminal
+      // transitions. If the lead is contact-linked AND the new stage
+      // is terminal, and no OTHER non-terminal lead exists for the
+      // same contact, the flag flips off. The recompute ignores `id`
+      // itself because the row we just updated reflects the new
+      // (terminal) state, but defending against read ordering with
+      // an explicit exclude keeps the predicate self-evident. The
+      // backfill (C10B-2) is the safety net for any drift.
+      if (updated.contactId && toStage.isTerminal) {
+        const stillOpen = await tx.lead.count({
+          where: {
+            contactId: updated.contactId,
+            id: { not: id },
+            lifecycleState: 'open',
+          },
+        });
+        if (stillOpen === 0) {
+          await tx.contact.update({
+            where: { id: updated.contactId },
+            data: { hasOpenLead: false },
+          });
+        }
+      }
+      // Inverse: a return-from-terminal stage flips the flag back on.
+      if (updated.contactId && !toStage.isTerminal && before.stage.isTerminal) {
+        await tx.contact.update({
+          where: { id: updated.contactId },
+          data: { hasOpenLead: true },
+        });
+      }
       return updated;
     });
   }
@@ -1440,9 +1481,149 @@ export class LeadsService {
   // ───────────────────────────────────────────────────────────────────────
 
   /**
+   * Phase C — C10B-3: create a lead from an inbound WhatsApp message.
+   *
+   * Distinct from the public `create()` because:
+   *   - assignment is PRE-RESOLVED by the inbound flow's
+   *     `routeConversation` call, so we MUST NOT call DistributionService
+   *     a second time (would double-route + double-log).
+   *   - SLA is initialised from the tenant settings with `actorUserId`
+   *     null (system path; the webhook has no user claims).
+   *   - the activity row is tagged `actionSource='whatsapp'` so the
+   *     timeline distinguishes WhatsApp-sourced leads from manual /
+   *     import paths.
+   *   - `Contact.hasOpenLead` is set to true in the same tx so the
+   *     denormalised flag stays accurate.
+   *   - `Contact.id` is linked into `Lead.contactId`; the latest
+   *     conversation pointer becomes `Lead.primaryConversationId`.
+   *
+   * Race handling: the surrounding inbound orchestrator catches P2002
+   * on the `(tenantId, phone)` unique constraint and falls back to the
+   * "1-match-found" branch (link the conversation to the existing
+   * lead instead of failing). The orchestrator handles the catch; we
+   * just propagate the error with the typed code below.
+   */
+  async createFromWhatsApp(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      contactId: string;
+      phone: string;
+      name: string;
+      profileName?: string | null;
+      waId?: string | null;
+      companyId: string | null;
+      countryId: string | null;
+      assignedToId: string;
+      primaryConversationId: string;
+    },
+  ): Promise<{ id: string; stageCode: string }> {
+    const settings = await this.tenantSettings.getInTx(tx, input.tenantId);
+
+    // Pipeline resolution mirrors `create()`: the company × country
+    // fallback chain via PipelineService.
+    const pipeline = await this.pipeline.resolveForLeadInTx(tx, {
+      companyId: input.companyId,
+      countryId: input.countryId,
+    });
+    const stage = await tx.pipelineStage.findFirst({
+      where: { pipelineId: pipeline.id, isTerminal: false },
+      orderBy: { order: 'asc' },
+      select: { id: true, code: true },
+    });
+    if (!stage) {
+      throw new BadRequestException({
+        code: 'pipeline.no_entry_stage',
+        message: `Pipeline ${pipeline.id} has no non-terminal entry stage`,
+      });
+    }
+
+    const now = new Date();
+    const slaDueAt = this.sla.computeDueAt(now, settings.slaMinutes);
+
+    // C10B-3: stash the raw WhatsApp identity bits in the
+    // `custom` block of the attribution payload so reporting can
+    // surface them later without a schema migration. The `name`
+    // field on AttributionRef matches Meta's profile-name semantic
+    // for the campaign slot.
+    const attribution = buildAttribution('whatsapp', {
+      ...(input.profileName && { campaign: { name: input.profileName } }),
+      ...(input.waId && { ad: { id: input.waId } }),
+    });
+
+    try {
+      const lead = await tx.lead.create({
+        data: {
+          tenantId: input.tenantId,
+          name: input.name,
+          phone: input.phone,
+          source: 'whatsapp',
+          attribution: attribution as unknown as Prisma.InputJsonValue,
+          companyId: input.companyId,
+          countryId: input.countryId,
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          lifecycleState: 'open',
+          assignedToId: input.assignedToId,
+          createdById: null,
+          slaDueAt,
+          slaStatus: 'active',
+          contactId: input.contactId,
+          primaryConversationId: input.primaryConversationId,
+        },
+        select: { id: true },
+      });
+
+      await this.appendActivity(tx, {
+        tenantId: input.tenantId,
+        leadId: lead.id,
+        type: 'system',
+        body: 'Lead created from inbound WhatsApp',
+        payload: {
+          event: 'created',
+          stageCode: stage.code,
+          stageId: stage.id,
+          pipelineId: pipeline.id,
+          source: 'whatsapp',
+          contactId: input.contactId,
+          primaryConversationId: input.primaryConversationId,
+        },
+        createdById: null,
+        actionSource: 'whatsapp',
+      });
+
+      // C10B-3: keep Contact.hasOpenLead in sync — this freshly-created
+      // lead is by definition open. Backfill is the safety net (C10B-2)
+      // but the inbound flow needs the up-to-the-millisecond truth so
+      // the next inbound for the same phone sees `hasOpenLead = true`
+      // and routes to the "1 match" branch instead of duplicating.
+      await tx.contact.update({
+        where: { id: input.contactId },
+        data: { hasOpenLead: true, lastSeenAt: now },
+      });
+
+      return { id: lead.id, stageCode: stage.code };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Append a system / agent activity row inside an existing transaction.
    * Service callers use this to keep a single transaction around
    * lead-mutation + activity-write so the audit timeline never drifts.
+   *
+   * Phase C — C10B-3: `actionSource` carries the provenance of the
+   * activity — 'lead' (default; agent action on the lead detail page),
+   * 'whatsapp' (chat surface), 'system' (automation), or 'import'
+   * (CSV / batch). Defaults to 'lead' so every existing caller keeps
+   * the schema-default behaviour without code changes.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async appendActivity(
@@ -1454,6 +1635,7 @@ export class LeadsService {
       body?: string | null;
       payload?: Record<string, unknown> | null;
       createdById?: string | null;
+      actionSource?: 'lead' | 'whatsapp' | 'system' | 'import';
     },
   ) {
     await tx.leadActivity.create({
@@ -1464,6 +1646,7 @@ export class LeadsService {
         body: input.body ?? null,
         payload: (input.payload ?? null) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
         createdById: input.createdById ?? null,
+        ...(input.actionSource && { actionSource: input.actionSource }),
       },
     });
   }

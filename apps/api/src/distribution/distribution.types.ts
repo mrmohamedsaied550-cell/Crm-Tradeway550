@@ -164,3 +164,49 @@ export interface RoutingDecision {
   excludedCount: number;
   excludedReasons: Record<string, ExclusionReason>;
 }
+
+/**
+ * Phase C — C10B-3: routing context for an inbound WhatsApp
+ * conversation that has NO lead yet.
+ *
+ * The shape is a deliberate subset of `RoutingContext`: there's no
+ * `leadId`, no `currentAssigneeId`, no `bypassRules`. Rule matching
+ * still needs `source` (always `'whatsapp'` here), `companyId`, and
+ * `countryId` — these can be `null` when the inbound flow couldn't
+ * derive them from a linked lead or contact.
+ *
+ * `requestId` carries the same correlation-id shape as `RoutingContext`
+ * — written into the audit payload so a future support investigation
+ * can trace a routing decision to the originating webhook.
+ */
+export interface ConversationRoutingContext {
+  tenantId: string;
+  source: 'whatsapp';
+  companyId: string | null;
+  countryId: string | null;
+  requestId?: string;
+}
+
+/**
+ * Phase C — C10B-3: routing decision for a conversation. Carries the
+ * same diagnostic fields as `RoutingDecision` plus the chosen user's
+ * `teamId` so the orchestrator can denormalise it onto the
+ * conversation in the same transaction (avoids a follow-up SELECT
+ * for `user.teamId`).
+ *
+ * `chosenUserId === null` ⇒ routing failed: no rule matched AND no
+ * eligible candidate survived the filter. The orchestrator escalates
+ * to the review queue with `reason='unmatched_after_routing'`.
+ *
+ * Per the locked decision (C10B-3 plan §9.2), this decision is NOT
+ * persisted to a `whatsapp_routing_log` table — the audit-event
+ * payload carries everything reviewers need.
+ */
+export interface ConversationRoutingDecision {
+  ruleId: string | null;
+  strategy: StrategyName | 'no_match';
+  chosenUserId: string | null;
+  chosenTeamId: string | null;
+  candidateCount: number;
+  excludedReasons: Record<string, ExclusionReason>;
+}
