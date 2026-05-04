@@ -54,9 +54,16 @@ let roleOwnId: string;
 let roleTeamId: string;
 let roleCompanyId: string;
 let roleCountryId: string;
+/**
+ * C3.5: a role with code='super_admin' AND scope='own' on lead.
+ * The bypass MUST kick in and force 'global' regardless of the
+ * stored scope value.
+ */
+let roleSuperAdminId: string;
 
 // Users (one matched user per scope; plus a "teammate" of actor_team_eg)
 let userGlobalId: string;
+let userSuperAdminId: string;
 let userOwnId: string;
 let userOwnOtherId: string; // not the same person; used to assign other leads
 let userTeamEgId: string;
@@ -188,6 +195,9 @@ describe('crm — scope-based lead access (C3)', () => {
       roleTeamId = await makeRole('c3_role_team', 'team');
       roleCompanyId = await makeRole('c3_role_company', 'company');
       roleCountryId = await makeRole('c3_role_country', 'country');
+      // C3.5: deliberately seed scope='own' so we can verify the
+      // hardcoded bypass forces 'global' regardless.
+      roleSuperAdminId = await makeRole('super_admin', 'own');
 
       // Users
       async function makeUser(
@@ -209,6 +219,7 @@ describe('crm — scope-based lead access (C3)', () => {
         return u.id;
       }
       userGlobalId = await makeUser('global', roleGlobalId, null);
+      userSuperAdminId = await makeUser('super_admin', roleSuperAdminId, null);
       userOwnId = await makeUser('own', roleOwnId, null);
       userOwnOtherId = await makeUser('own_other', roleOwnId, null);
       userTeamEgId = await makeUser('team_eg', roleTeamId, teamEgId);
@@ -363,23 +374,30 @@ describe('crm — scope-based lead access (C3)', () => {
     assert.equal(r.where, null);
   });
 
-  it('own scope returns where = { assignedToId: userId }', async () => {
+  it('own scope returns where = { assignedToId: { in:[user] }, NOT: { assignedToId: null } }', async () => {
     const r = await inTenant(() => scope.resolveLeadScope(claimsFor(userOwnId, roleOwnId)));
     assert.equal(r.scope, 'own');
-    assert.deepEqual(r.where, { assignedToId: userOwnId });
+    assert.deepEqual(r.where, {
+      assignedToId: { in: [userOwnId] },
+      NOT: { assignedToId: null },
+    });
   });
 
-  it('team scope returns where = { assignedToId: { in: [...teammates] } }', async () => {
+  it('team scope returns where = { assignedToId: { in:[...teammates] }, NOT: { assignedToId: null } }', async () => {
     const r = await inTenant(() => scope.resolveLeadScope(claimsFor(userTeamEgId, roleTeamId)));
     assert.equal(r.scope, 'team');
-    const w = r.where as { assignedToId: { in: string[] } };
+    const w = r.where as {
+      assignedToId: { in: string[] };
+      NOT: { assignedToId: null };
+    };
     assert.deepEqual(new Set(w.assignedToId.in), new Set([userTeamEgId, userTeamEgMateId]));
+    assert.deepEqual(w.NOT, { assignedToId: null });
   });
 
-  it('team scope with no team falls back to own (only assignedToId = self)', async () => {
+  it('team scope with no team returns empty result (C3.5: no fallback to own)', async () => {
     const r = await inTenant(() => scope.resolveLeadScope(claimsFor(userTeamNoneId, roleTeamId)));
     assert.equal(r.scope, 'team');
-    assert.deepEqual(r.where, { assignedToId: userTeamNoneId });
+    assert.deepEqual(r.where, { id: { in: [] } });
   });
 
   it('company scope returns where = { companyId: { in: [...assigned] } }', async () => {
@@ -412,6 +430,55 @@ describe('crm — scope-based lead access (C3)', () => {
       leads.list({ limit: 100, offset: 0 }, claimsFor(userGlobalId, roleGlobalId)),
     );
     assert.ok(res.items.length >= 6, `expected ≥6 leads visible, got ${res.items.length}`);
+  });
+
+  it('C3.5: super_admin role bypasses the scope table — sees every lead even when role.scope=own', async () => {
+    // The role was created with scope='own' but has code='super_admin'.
+    // The bypass MUST kick in and produce { scope:'global', where:null }.
+    const r = await inTenant(() =>
+      scope.resolveLeadScope(claimsFor(userSuperAdminId, roleSuperAdminId)),
+    );
+    assert.equal(r.scope, 'global');
+    assert.equal(r.where, null);
+
+    // End-to-end: the super_admin sees every tenant lead, including
+    // unassigned ones and rows from other countries / companies.
+    const res = await inTenant(() =>
+      leads.list({ limit: 100, offset: 0 }, claimsFor(userSuperAdminId, roleSuperAdminId)),
+    );
+    const ids = new Set(res.items.map((l) => l.id));
+    assert.ok(ids.has(leadOwnId));
+    assert.ok(ids.has(leadOtherId));
+    assert.ok(ids.has(leadEgTeammateId));
+    assert.ok(ids.has(leadSaId));
+    assert.ok(ids.has(leadAcmeNoAssigneeId), 'super_admin sees unassigned leads');
+    assert.ok(ids.has(leadOtherCompanyId), 'super_admin sees other-company leads');
+  });
+
+  it('C3.5: own scope EXCLUDES unassigned leads (assignedToId IS NULL)', async () => {
+    const res = await inTenant(() =>
+      leads.list({ limit: 100, offset: 0 }, claimsFor(userOwnId, roleOwnId)),
+    );
+    const ids = new Set(res.items.map((l) => l.id));
+    assert.ok(!ids.has(leadAcmeNoAssigneeId), 'unassigned ACME lead must be excluded');
+    assert.ok(!ids.has(leadOtherCompanyId), 'unassigned other-company lead must be excluded');
+  });
+
+  it('C3.5: team scope EXCLUDES unassigned leads', async () => {
+    const res = await inTenant(() =>
+      leads.list({ limit: 100, offset: 0 }, claimsFor(userTeamEgId, roleTeamId)),
+    );
+    const ids = new Set(res.items.map((l) => l.id));
+    assert.ok(!ids.has(leadAcmeNoAssigneeId), 'unassigned ACME lead must be excluded');
+    assert.ok(!ids.has(leadOtherCompanyId), 'unassigned other-company lead must be excluded');
+  });
+
+  it('C3.5: team scope with no team returns empty list (no fallback to own)', async () => {
+    const res = await inTenant(() =>
+      leads.list({ limit: 100, offset: 0 }, claimsFor(userTeamNoneId, roleTeamId)),
+    );
+    assert.equal(res.items.length, 0);
+    assert.equal(res.total, 0);
   });
 
   it('list — own scope sees only leads assigned to the user', async () => {
