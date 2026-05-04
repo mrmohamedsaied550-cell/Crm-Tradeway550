@@ -11,6 +11,7 @@ import { decryptSecret } from '../common/crypto';
 import { normalizeE164 } from '../crm/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
@@ -106,7 +107,119 @@ export class WhatsAppService {
     private readonly metaCloud: MetaCloudProvider,
     @Optional() private readonly notifications?: NotificationsService,
     @Optional() private readonly realtime?: RealtimeService,
+    /**
+     * Phase C — C10B-4: scope resolver. Optional so legacy fixtures
+     * + the inbound webhook path (system context, no claims) keep
+     * working without RoleScope wiring.
+     */
+    @Optional() private readonly scopeContext?: ScopeContextService,
   ) {}
+
+  /**
+   * Phase C — C10B-4: resolve the conversation scope `where` for the
+   * calling user. Returns `null` when no claims, no scope service, or
+   * the role's scope is `global` — the call site simply skips the
+   * AND.
+   */
+  private async resolveConversationScopeWhere(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<Prisma.WhatsAppConversationWhereInput | null> {
+    if (!userClaims || !this.scopeContext) return null;
+    const { where } = await this.scopeContext.resolveConversationScope(userClaims);
+    return where;
+  }
+
+  /**
+   * Phase C — C10B-4: visibility guard used by every write path. Re-
+   * reads the conversation row through the actor's scope; if the
+   * row doesn't exist or is out-of-scope, throws `whatsapp.conversation.not_found`
+   * (404 keeps existence opaque across scope boundaries — same
+   * semantic as `lead.not_found` in C3 / C10A).
+   */
+  private async assertConversationVisible(
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<void> {
+    const scopeWhere =
+      userClaims && this.scopeContext
+        ? (await this.scopeContext.resolveConversationScope(userClaims)).where
+        : null;
+    const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
+      ? { AND: [{ id: conversationId }, scopeWhere] }
+      : { id: conversationId };
+    const row = await tx.whatsAppConversation.findFirst({ where, select: { id: true } });
+    if (!row) {
+      throw new NotFoundException({
+        code: 'whatsapp.conversation.not_found',
+        message: `Conversation ${conversationId} not found in active tenant`,
+      });
+    }
+  }
+
+  /**
+   * Phase C — C10B-4: outbound auto-claim. When an agent sends an
+   * outbound message on a conversation that currently has NO owner,
+   * claim it on their behalf with `assignmentSource='outbound_self'`.
+   *
+   * Idempotent: a conversation that already has an `assignmentSource`
+   * is left alone (the existing assignee is the owner; outbound from
+   * another user does NOT steal the conversation).
+   *
+   * Denormalisation: read the actor's `teamId` from the user row so
+   * the conversation's team scope stays in sync.
+   */
+  private async maybeAutoClaimOnOutbound(
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+    actorUserId: string,
+  ): Promise<void> {
+    const conversation = await tx.whatsAppConversation.findUnique({
+      where: { id: conversationId },
+      select: { assignmentSource: true },
+    });
+    if (!conversation || conversation.assignmentSource !== null) return;
+    const actor = await tx.user.findUnique({
+      where: { id: actorUserId },
+      select: { teamId: true },
+    });
+    await tx.whatsAppConversation.update({
+      where: { id: conversationId },
+      data: {
+        assignedToId: actorUserId,
+        teamId: actor?.teamId ?? null,
+        assignmentSource: 'outbound_self',
+        assignedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Phase C — C10B-4: assert the user has a given capability via
+   * their role's RoleCapability join. Used by handover to confirm
+   * the target assignee can actually see what they're being given
+   * (locked decision §6).
+   *
+   * Note: this is a runtime read, separate from the `CapabilityGuard`
+   * that gates the actor at the controller layer. Both are needed:
+   * the guard validates the actor; this validates the target.
+   */
+  private async assertUserHasCapability(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    capabilityCode: string,
+  ): Promise<boolean> {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { status: true, roleId: true },
+    });
+    if (!user || user.status !== 'active') return false;
+    const grant = await tx.roleCapability.findFirst({
+      where: { roleId: user.roleId, capability: { code: capabilityCode } },
+      select: { roleId: true },
+    });
+    return grant !== null;
+  }
 
   /**
    * Resolve a provider implementation for the given account row. Today
@@ -242,44 +355,9 @@ export class WhatsAppService {
   ): Promise<{ messageId: string; conversationId: string } | null> {
     let result: { messageId: string; conversationId: string } | null = null;
     try {
-      result = await this.prisma.withTenant(account.tenantId, async (tx) => {
-        const conversationId = await this.ensureOpenConversation(
-          tx,
-          account.tenantId,
-          account.id,
-          msg.phone,
-        );
-
-        const message = await tx.whatsAppMessage.create({
-          data: {
-            tenantId: account.tenantId,
-            accountId: account.id,
-            conversationId,
-            phone: msg.phone,
-            text: msg.text,
-            direction: 'inbound',
-            providerMessageId: msg.providerMessageId,
-            status: 'received',
-            createdAt: msg.receivedAt,
-          },
-          select: { id: true },
-        });
-
-        await tx.whatsAppConversation.update({
-          where: { id: conversationId },
-          data: {
-            lastMessageAt: msg.receivedAt,
-            lastMessageText: msg.text,
-            // P2-12 — bump the customer-service-window timer so the
-            // outbound freeform path knows the contact has replied
-            // within the last 24h. Templates remain available even
-            // when this is null.
-            lastInboundAt: msg.receivedAt,
-          },
-        });
-
-        return { messageId: message.id, conversationId };
-      });
+      result = await this.prisma.withTenant(account.tenantId, (tx) =>
+        this.persistInboundInTx(tx, account, msg),
+      );
     } catch (err) {
       // Duplicate provider id within the same tenant → idempotent no-op.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -296,18 +374,95 @@ export class WhatsAppService {
     // browsing the inbox should see the conversation row update live.
     // Emitted post-commit so a client refetch always sees the new row.
     if (result && this.realtime) {
-      try {
-        this.realtime.emitToTenant(account.tenantId, {
-          type: 'whatsapp.message',
-          conversationId: result.conversationId,
-          messageId: result.messageId,
-          direction: 'inbound',
-        });
-      } catch (err) {
-        this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
-      }
+      this.emitInboundRealtime(account.tenantId, result);
     }
     return result;
+  }
+
+  /**
+   * Phase C — C10B-3: tx-accepting variant of `persistInbound` so the
+   * new `WhatsAppInboundService` orchestrator can compose persist +
+   * contact match + routing + lead create-or-link inside a single
+   * transaction. Returns `null` on duplicate provider id so the caller
+   * can short-circuit before doing any orchestration work.
+   *
+   * The duplicate-suppression branch is the same `P2002` catch as the
+   * public method — but here we let the error bubble up to the caller
+   * so the surrounding orchestrator can decide whether to short-circuit
+   * the whole chain (tests #1 expectations: a duplicate webhook never
+   * re-routes an already-assigned conversation).
+   */
+  async persistInboundInTx(
+    tx: Prisma.TransactionClient,
+    account: RoutedAccount,
+    msg: InboundMessage,
+  ): Promise<{ messageId: string; conversationId: string } | null> {
+    const conversationId = await this.ensureOpenConversation(
+      tx,
+      account.tenantId,
+      account.id,
+      msg.phone,
+    );
+
+    let messageId: string;
+    try {
+      const message = await tx.whatsAppMessage.create({
+        data: {
+          tenantId: account.tenantId,
+          accountId: account.id,
+          conversationId,
+          phone: msg.phone,
+          text: msg.text,
+          direction: 'inbound',
+          providerMessageId: msg.providerMessageId,
+          status: 'received',
+          createdAt: msg.receivedAt,
+        },
+        select: { id: true },
+      });
+      messageId = message.id;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Idempotent path — caller short-circuits.
+        return null;
+      }
+      throw err;
+    }
+
+    await tx.whatsAppConversation.update({
+      where: { id: conversationId },
+      data: {
+        lastMessageAt: msg.receivedAt,
+        lastMessageText: msg.text,
+        // P2-12 — bump the customer-service-window timer so the
+        // outbound freeform path knows the contact has replied
+        // within the last 24h. Templates remain available even
+        // when this is null.
+        lastInboundAt: msg.receivedAt,
+      },
+    });
+
+    return { messageId, conversationId };
+  }
+
+  /** C10B-3: small helper — used by both the legacy `persistInbound`
+   *  path and the new orchestrator so the realtime emit shape stays
+   *  uniform. */
+  emitInboundRealtime(
+    tenantId: string,
+    payload: { messageId: string; conversationId: string },
+  ): void {
+    if (!this.realtime) return;
+    try {
+      this.realtime.emitToTenant(tenantId, {
+        type: 'whatsapp.message',
+        conversationId: payload.conversationId,
+        messageId: payload.messageId,
+        direction: 'inbound',
+      });
+    } catch (err) {
+      this.logger.warn(`realtime emit skipped: ${(err as Error).message}`);
+    }
   }
 
   // ─────── Outbound send ───────
@@ -337,8 +492,14 @@ export class WhatsAppService {
     accountId: string;
     to: string;
     text: string;
+    /**
+     * Phase C — C10B-4: when supplied, the conversation gets auto-
+     * claimed by `actorUserId` if its `assignedToId` is currently
+     * NULL (locked decision §5: outbound_self).
+     */
+    actorUserId?: string;
   }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
-    const { tenantId, accountId, to, text } = input;
+    const { tenantId, accountId, to, text, actorUserId } = input;
 
     // Load the account first so a cross-tenant lookup surfaces a
     // typed `whatsapp.account_not_found` 404 instead of an
@@ -374,6 +535,13 @@ export class WhatsAppService {
         data: { lastMessageAt: sentAt, lastMessageText: text },
       });
 
+      // Phase C — C10B-4: outbound auto-claim. If the conversation has
+      // no current owner, the agent who just replied becomes the
+      // owner with assignmentSource='outbound_self'.
+      if (actorUserId) {
+        await this.maybeAutoClaimOnOutbound(tx, conversationId, actorUserId);
+      }
+
       return { messageId: message.id, providerMessageId, conversationId };
     });
   }
@@ -391,6 +559,8 @@ export class WhatsAppService {
     tenantId: string;
     accountId: string;
     to: string;
+    /** Phase C — C10B-4: see sendText. */
+    actorUserId?: string;
     templateName: string;
     language: string;
     variables: readonly string[];
@@ -456,6 +626,9 @@ export class WhatsAppService {
         where: { id: conversationId },
         data: { lastMessageAt: sentAt, lastMessageText: renderedText },
       });
+      if (input.actorUserId) {
+        await this.maybeAutoClaimOnOutbound(tx, conversationId, input.actorUserId);
+      }
       return { messageId: message.id, providerMessageId, conversationId };
     });
   }
@@ -473,6 +646,8 @@ export class WhatsAppService {
     mediaUrl: string;
     mediaMimeType?: string | null;
     caption?: string;
+    /** Phase C — C10B-4: see sendText. */
+    actorUserId?: string;
   }): Promise<{ messageId: string; providerMessageId: string; conversationId: string }> {
     const { tenantId, accountId, to, kind, mediaUrl } = input;
     const caption = input.caption ?? '';
@@ -512,6 +687,9 @@ export class WhatsAppService {
         where: { id: conversationId },
         data: { lastMessageAt: sentAt, lastMessageText: previewText },
       });
+      if (input.actorUserId) {
+        await this.maybeAutoClaimOnOutbound(tx, conversationId, input.actorUserId);
+      }
       return { messageId: message.id, providerMessageId, conversationId };
     });
   }
@@ -631,7 +809,7 @@ export class WhatsAppService {
    * Tenant-scoped paginated conversations list — newest activity first.
    * Filters by accountId / status / free-text phone match.
    */
-  listConversations(
+  async listConversations(
     tenantId: string,
     opts: {
       accountId?: string;
@@ -640,13 +818,22 @@ export class WhatsAppService {
       limit?: number;
       offset?: number;
     } = {},
+    userClaims?: ScopeUserClaims,
   ) {
+    // Phase C — C10B-4: AND the role's conversation scope into the
+    // existing filter. Unassigned conversations are invisible to
+    // own / team / company / country scope holders (locked decision §1);
+    // admins surface them via the review queue.
+    const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const where: Prisma.WhatsAppConversationWhereInput = {
+      const baseWhere: Prisma.WhatsAppConversationWhereInput = {
         ...(opts.accountId && { accountId: opts.accountId }),
         ...(opts.status && { status: opts.status }),
         ...(opts.phone && { phone: { contains: opts.phone } }),
       };
+      const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
+        ? { AND: [baseWhere, scopeWhere] }
+        : baseWhere;
       const [items, total] = await Promise.all([
         tx.whatsAppConversation.findMany({
           where,
@@ -668,10 +855,16 @@ export class WhatsAppService {
    *     tenant-scoped lead with the same phone gets attached, multiple-
    *     or zero-match cases leave `leadId = null`.
    */
-  async findConversationById(tenantId: string, id: string) {
+  async findConversationById(tenantId: string, id: string, userClaims?: ScopeUserClaims) {
+    // Phase C — C10B-4: out-of-scope direct access returns null so
+    // the controller maps to a clean 404 (no scope leak).
+    const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const row = await tx.whatsAppConversation.findUnique({
-        where: { id },
+      const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
+        ? { AND: [{ id }, scopeWhere] }
+        : { id };
+      const row = await tx.whatsAppConversation.findFirst({
+        where,
         include: { lead: true },
       });
       if (!row) return null;
@@ -693,10 +886,17 @@ export class WhatsAppService {
     tenantId: string,
     conversationId: string,
     opts: { limit?: number } = {},
+    userClaims?: ScopeUserClaims,
   ) {
+    const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const conversation = await tx.whatsAppConversation.findUnique({
-        where: { id: conversationId },
+      // Phase C — C10B-4: gate on conversation visibility before
+      // returning any messages.
+      const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
+        ? { AND: [{ id: conversationId }, scopeWhere] }
+        : { id: conversationId };
+      const conversation = await tx.whatsAppConversation.findFirst({
+        where,
         select: { id: true, phone: true, leadId: true },
       });
       if (!conversation) return null;
@@ -721,13 +921,28 @@ export class WhatsAppService {
     tenantId: string,
     conversationId: string,
     leadId: string,
+    /**
+     * Phase C — C10B-4: scope claims. When supplied, both the
+     * conversation AND the lead must be visible under the actor's
+     * scope. Out-of-scope on either side throws `*.not_found` (locked
+     * decision §2 — never 403, no existence leak).
+     */
+    userClaims?: ScopeUserClaims,
   ): Promise<{
     id: string;
     leadId: string | null;
   }> {
+    const conversationScope = await this.resolveConversationScopeWhere(userClaims);
+    const leadScope =
+      userClaims && this.scopeContext
+        ? (await this.scopeContext.resolveLeadScope(userClaims)).where
+        : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const conversation = await tx.whatsAppConversation.findUnique({
-        where: { id: conversationId },
+      const convoWhere: Prisma.WhatsAppConversationWhereInput = conversationScope
+        ? { AND: [{ id: conversationId }, conversationScope] }
+        : { id: conversationId };
+      const conversation = await tx.whatsAppConversation.findFirst({
+        where: convoWhere,
         select: { id: true },
       });
       if (!conversation) {
@@ -736,8 +951,11 @@ export class WhatsAppService {
           message: `Conversation ${conversationId} not found in active tenant`,
         });
       }
-      const lead = await tx.lead.findUnique({
-        where: { id: leadId },
+      const leadWhere: Prisma.LeadWhereInput = leadScope
+        ? { AND: [{ id: leadId }, leadScope] }
+        : { id: leadId };
+      const lead = await tx.lead.findFirst({
+        where: leadWhere,
         select: { id: true },
       });
       if (!lead) {
@@ -752,6 +970,135 @@ export class WhatsAppService {
         select: { id: true, leadId: true },
       });
       return updated;
+    });
+  }
+
+  /**
+   * Phase C — C10B-4: clear the conversation's `leadId`. Ownership
+   * (assignedToId / teamId / companyId / countryId) is preserved —
+   * unlinking the lead does not orphan the conversation.
+   */
+  async unlinkConversationLead(
+    tenantId: string,
+    conversationId: string,
+    userClaims?: ScopeUserClaims,
+  ): Promise<{ id: string; leadId: string | null }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.assertConversationVisible(tx, conversationId, userClaims);
+      const updated = await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { leadId: null },
+        select: { id: true, leadId: true },
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * Phase C — C10B-4: admin-style direct assignment. Bypasses the
+   * lead-reassignment + handover audit chain — used when ops needs
+   * to forcibly reassign a conversation. Same target-capability
+   * check as handover (locked decision §6).
+   */
+  async assignConversation(
+    tenantId: string,
+    conversationId: string,
+    newAssigneeId: string,
+    userClaims?: ScopeUserClaims,
+  ): Promise<{ id: string; assignedToId: string; teamId: string | null }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.assertConversationVisible(tx, conversationId, userClaims);
+      const target = await tx.user.findUnique({
+        where: { id: newAssigneeId },
+        select: { id: true, status: true, teamId: true },
+      });
+      if (!target || target.status !== 'active') {
+        throw new NotFoundException({
+          code: 'whatsapp.assignee_not_found',
+          message: `Assignee ${newAssigneeId} not found / disabled in active tenant`,
+        });
+      }
+      const canRead = await this.assertUserHasCapability(
+        tx,
+        newAssigneeId,
+        'whatsapp.conversation.read',
+      );
+      if (!canRead) {
+        throw new BadRequestException({
+          code: 'whatsapp.assign.target_lacks_capability',
+          message: `Assignee ${newAssigneeId} cannot read WhatsApp conversations`,
+        });
+      }
+      const updated = await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: {
+          assignedToId: newAssigneeId,
+          teamId: target.teamId,
+          assignmentSource: 'manual_handover',
+          assignedAt: new Date(),
+        },
+        select: { id: true, assignedToId: true, teamId: true },
+      });
+      return {
+        id: updated.id,
+        assignedToId: updated.assignedToId!,
+        teamId: updated.teamId,
+      };
+    });
+  }
+
+  /**
+   * Phase C — C10B-4: flip status to 'closed'. Idempotent — closing
+   * an already-closed conversation is a no-op. Closure does NOT
+   * detach ownership (the audit log keeps showing who owned it
+   * when it was active).
+   */
+  async closeConversation(
+    tenantId: string,
+    conversationId: string,
+    userClaims?: ScopeUserClaims,
+  ): Promise<{ id: string; status: string }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.assertConversationVisible(tx, conversationId, userClaims);
+      const updated = await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: { status: 'closed' },
+        select: { id: true, status: true },
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * Phase C — C10B-4: flip status back to 'open'. The partial-unique
+   * index `(tenantId, accountId, phone) WHERE status='open'` rejects
+   * reopen if there's already another open conversation for the same
+   * (account, phone). The DB error surfaces as a typed 409.
+   */
+  async reopenConversation(
+    tenantId: string,
+    conversationId: string,
+    userClaims?: ScopeUserClaims,
+  ): Promise<{ id: string; status: string }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      await this.assertConversationVisible(tx, conversationId, userClaims);
+      try {
+        const updated = await tx.whatsAppConversation.update({
+          where: { id: conversationId },
+          data: { status: 'open' },
+          select: { id: true, status: true },
+        });
+        return updated;
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new BadRequestException({
+            code: 'whatsapp.conversation.reopen_conflict',
+            message:
+              'Another open conversation already exists for this (account, phone). Close it first.',
+          });
+        }
+        throw err;
+      }
     });
   }
 
@@ -782,6 +1129,8 @@ export class WhatsAppService {
       summary?: string;
       notify?: boolean;
       actorUserId: string | null;
+      /** Phase C — C10B-4: scope check + audit context. */
+      userClaims?: ScopeUserClaims;
     },
   ): Promise<{
     conversationId: string;
@@ -791,6 +1140,10 @@ export class WhatsAppService {
     mode: 'full' | 'clean' | 'summary';
   }> {
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Phase C — C10B-4: visibility check first; out-of-scope hand-
+      // overs throw `whatsapp.conversation.not_found` (404 keeps
+      // existence opaque across scope boundaries).
+      await this.assertConversationVisible(tx, conversationId, opts.userClaims);
       const conversation = await tx.whatsAppConversation.findUnique({
         where: { id: conversationId },
         select: { id: true, leadId: true, status: true },
@@ -822,12 +1175,29 @@ export class WhatsAppService {
 
       const newAssignee = await tx.user.findUnique({
         where: { id: opts.newAssigneeId },
-        select: { id: true, status: true },
+        select: { id: true, status: true, teamId: true },
       });
       if (!newAssignee || newAssignee.status === 'disabled') {
         throw new NotFoundException({
           code: 'whatsapp.assignee_not_found',
           message: `Assignee ${opts.newAssigneeId} not found / disabled in active tenant`,
+        });
+      }
+
+      // Phase C — C10B-4 (locked decision §6): the target assignee
+      // must hold `whatsapp.conversation.read` so the hand-off
+      // doesn't land them with a row they can't open. This guards
+      // against role mis-configuration (e.g. handing over to an
+      // activation_agent on a sales conversation).
+      const canRead = await this.assertUserHasCapability(
+        tx,
+        opts.newAssigneeId,
+        'whatsapp.conversation.read',
+      );
+      if (!canRead) {
+        throw new BadRequestException({
+          code: 'whatsapp.handover.target_lacks_capability',
+          message: `Assignee ${opts.newAssigneeId} cannot read WhatsApp conversations`,
         });
       }
 
@@ -837,6 +1207,22 @@ export class WhatsAppService {
       await tx.lead.update({
         where: { id: lead.id },
         data: { assignedToId: opts.newAssigneeId },
+      });
+
+      // Phase C — C10B-4: denormalise the new ownership onto the
+      // conversation row. Mirrors the inbound flow's pattern but
+      // uses `assignmentSource='manual_handover'` so audit can tell
+      // them apart.
+      await tx.whatsAppConversation.update({
+        where: { id: conversationId },
+        data: {
+          assignedToId: opts.newAssigneeId,
+          teamId: newAssignee.teamId,
+          assignmentSource: 'manual_handover',
+          assignedAt: new Date(),
+          // Status update for clean-mode happens below as a separate
+          // call so the existing flow stays untouched.
+        },
       });
 
       // Close the conversation on a clean transfer.

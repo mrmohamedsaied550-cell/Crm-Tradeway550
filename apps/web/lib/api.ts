@@ -47,6 +47,11 @@ import type {
   PipelineStage,
   RecordTripResult,
   RefreshResponse,
+  CapabilityCatalogueEntry,
+  FieldCatalogueEntry,
+  RoleDetail,
+  RoleFieldPermissionRow,
+  RoleScopeRow,
   RoleSummary,
   SlaStatus,
   BonusAccrual,
@@ -64,6 +69,7 @@ import type {
   PipelineStageRow,
   SendConversationMessageResult,
   TenantSettingsRow,
+  UserScopeAssignments,
   WhatsAppAccount,
   WhatsAppTemplateRow,
   Team,
@@ -410,6 +416,18 @@ export const usersApi = {
   setStatus: (id: string, status: UserStatus): Promise<AdminUser> =>
     apiFetch<AdminUser>(`/users/${id}/status`, { method: 'PATCH', body: { status } }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/users/${id}`, { method: 'DELETE' }),
+  /** Phase C — C9: read the user's company / country bindings. */
+  listScopeAssignments: (id: string): Promise<UserScopeAssignments> =>
+    apiFetch<UserScopeAssignments>(`/users/${id}/scope-assignments`),
+  /** Phase C — C9: replace the full set of company / country bindings. */
+  putScopeAssignments: (
+    id: string,
+    body: { companyIds: string[]; countryIds: string[] },
+  ): Promise<UserScopeAssignments> =>
+    apiFetch<UserScopeAssignments>(`/users/${id}/scope-assignments`, {
+      method: 'PUT',
+      body,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -418,6 +436,52 @@ export const usersApi = {
 
 export const rolesApi = {
   list: (): Promise<RoleSummary[]> => apiFetch<RoleSummary[]>('/rbac/roles'),
+  /** Phase C — C8: full payload for the role builder UI. */
+  get: (id: string): Promise<RoleDetail> => apiFetch<RoleDetail>(`/rbac/roles/${id}`),
+  listCapabilities: (): Promise<CapabilityCatalogueEntry[]> =>
+    apiFetch<CapabilityCatalogueEntry[]>('/rbac/capabilities'),
+  listFieldCatalogue: (): Promise<FieldCatalogueEntry[]> =>
+    apiFetch<FieldCatalogueEntry[]>('/rbac/field-catalogue'),
+  create: (input: {
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    level: number;
+    description?: string | null;
+    capabilities?: string[];
+    scopes?: RoleScopeRow[];
+    fieldPermissions?: RoleFieldPermissionRow[];
+  }): Promise<RoleDetail> => apiFetch<RoleDetail>('/rbac/roles', { method: 'POST', body: input }),
+  update: (
+    id: string,
+    input: {
+      nameEn?: string;
+      nameAr?: string;
+      level?: number;
+      description?: string | null;
+      capabilities?: string[];
+    },
+  ): Promise<RoleDetail> =>
+    apiFetch<RoleDetail>(`/rbac/roles/${id}`, { method: 'PATCH', body: input }),
+  remove: (id: string): Promise<void> => apiFetch<void>(`/rbac/roles/${id}`, { method: 'DELETE' }),
+  duplicate: (
+    id: string,
+    input: { code: string; nameEn: string; nameAr: string; description?: string | null },
+  ): Promise<RoleDetail> =>
+    apiFetch<RoleDetail>(`/rbac/roles/${id}/duplicate`, { method: 'POST', body: input }),
+  putScopes: (id: string, scopes: RoleScopeRow[]): Promise<RoleScopeRow[]> =>
+    apiFetch<RoleScopeRow[]>(`/rbac/roles/${id}/scopes`, {
+      method: 'PUT',
+      body: { scopes },
+    }),
+  putFieldPermissions: (
+    id: string,
+    permissions: RoleFieldPermissionRow[],
+  ): Promise<RoleFieldPermissionRow[]> =>
+    apiFetch<RoleFieldPermissionRow[]>(`/rbac/roles/${id}/field-permissions`, {
+      method: 'PUT',
+      body: { permissions },
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

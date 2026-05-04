@@ -568,6 +568,16 @@ export default function PipelineBuilderPage(): JSX.Element {
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
+                              {/* Phase B — B5: scaffolding marker for
+                                  the future stage-specific statuses.
+                                  Disabled hint only — no behavior. */}
+                              <span
+                                className="ms-1 inline-flex items-center gap-1 rounded-full border border-dashed border-surface-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-tertiary"
+                                aria-disabled="true"
+                                title={t('stageStatusComingSoonTitle')}
+                              >
+                                {t('stageStatusComingSoon')}
+                              </span>
                             </>
                           )}
                         </li>

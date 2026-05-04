@@ -39,6 +39,7 @@
       "countries": "Countries",
       "teams": "Teams",
       "users": "Users",
+      "roles": "Roles",
       "leads": "Leads",
       "pipeline": "Pipeline",
       "pipelineBuilder": "Pipeline Builder",
@@ -177,12 +178,57 @@
       "noTeam": "No team",
       "disable": "Disable",
       "enable": "Enable",
+      "scope": "Scope",
       "disableConfirm": "Disable this user? They will no longer be able to sign in.",
       "rolePickerHint": "Pick a role discovered from existing users.",
       "empty": "No users yet",
       "emptyHint": "Invite the first operator to start working in this tenant.",
       "emptyFiltered": "No users match the filters",
       "emptyFilteredHint": "Try widening the team / role / status filters."
+    },
+    "userScope": {
+      "title": "Manage data access — {name}",
+      "saved": "Data access updated.",
+      "notNeeded": "The role \"{role}\" already covers everything this user can see. No company or country selections are needed.",
+      "roleHeader": "Role: {name}",
+      "scopeNames": {
+        "global": "All tenants",
+        "country": "Country",
+        "company": "Company",
+        "team": "Team",
+        "own": "Own only"
+      },
+      "scopeExplanations": {
+        "global": "Sees everything across the tenant.",
+        "country": "Sees records in the countries you select below.",
+        "company": "Sees records in the companies you select below.",
+        "team": "Sees records belonging to anyone in their team.",
+        "own": "Sees only records assigned to them."
+      },
+      "companies": {
+        "label": "Companies this user can see",
+        "help": "Pick one or more companies. The user will see leads, captains, and conversations linked to these companies.",
+        "placeholder": "Search companies…",
+        "empty": "No companies match.",
+        "count": "{n} selected",
+        "required": "Pick at least one company — without it the user will see nothing."
+      },
+      "countries": {
+        "label": "Countries this user can see",
+        "help": "Pick one or more countries. The user will see records linked to these countries.",
+        "placeholder": "Search countries…",
+        "empty": "No countries match.",
+        "count": "{n} selected",
+        "required": "Pick at least one country — without it the user will see nothing."
+      },
+      "preview": {
+        "title": "What this user will see",
+        "companies": "{n} companies",
+        "countries": "{n} countries",
+        "empty": "Nothing yet — pick at least one item above.",
+        "blockedTitle": "This user will see no data",
+        "blockedBody": "Their role requires at least one selection above. Pick one to continue."
+      }
     },
     "leads": {
       "title": "Leads",
@@ -243,6 +289,15 @@
       "stage": "Stage",
       "assignee": "Assignee",
       "sla": "SLA",
+      "nextAction": "Next action",
+      "nextActionCell": {
+        "overdueBy": "Overdue {rel}",
+        "today": "Today {time}",
+        "tomorrow": "Tomorrow {time}"
+      },
+      "myOverdue": "My overdue",
+      "myOverdueDisabled": "Sign in to use this filter",
+      "overdueIndicator": "Has an overdue next action",
       "filterByStage": "Filter by stage",
       "search": "Search name / phone / email",
       "bulk": {
@@ -341,8 +396,75 @@
         "quickActions": {
           "call": "Call",
           "addNote": "Add note",
+          "addFollowUp": "+ Follow-up",
           "moveStage": "Move stage",
           "terminalHint": "Lead is in a terminal stage"
+        },
+        "navigator": {
+          "prev": "Previous lead (Alt + ← or k)",
+          "next": "Next lead (Alt + → or j)",
+          "label": "{pos} of {total}"
+        },
+        "timeline": {
+          "today": "Today",
+          "yesterday": "Yesterday",
+          "followUp": {
+            "created": "Follow-up scheduled",
+            "completed": "Follow-up completed",
+            "snoozed": "Follow-up snoozed",
+            "createdSummary": "{type} · due {due}",
+            "completedSummary": "{type} marked done",
+            "snoozedSummary": "Snoozed until {until}",
+            "types": {
+              "call": "Call",
+              "whatsapp": "WhatsApp",
+              "visit": "Visit",
+              "other": "Other"
+            }
+          }
+        },
+        "nextAction": {
+          "title": "Next action",
+          "emptyHint": "No follow-up scheduled. Schedule one so this lead doesn't fall through.",
+          "addCta": "Schedule follow-up",
+          "addAnother": "Add another",
+          "complete": "Mark done",
+          "snooze": "Snooze",
+          "snoozed": "Snoozed",
+          "dueIn": "Due in {rel}",
+          "overdueBy": "Overdue {rel}",
+          "dueAt": "Due {when}",
+          "completedToast": "Follow-up marked done",
+          "snoozedToast": "Snoozed until {when}",
+          "snoozeClearedToast": "Snooze cleared"
+        },
+        "lastActivity": {
+          "label": "Last activity",
+          "empty": "No activity yet"
+        },
+        "attribution": {
+          "label": "Attribution",
+          "empty": "No attribution data"
+        },
+        "adminActions": {
+          "title": "Admin actions"
+        },
+        "followUpModal": {
+          "title": "Schedule follow-up",
+          "titleNamed": "Schedule follow-up — {name}",
+          "intro": "Pick a type, when, and a short note.",
+          "actionType": "Type",
+          "date": "Date",
+          "time": "Time",
+          "note": "Note (optional)",
+          "noteHint": "Up to 500 characters.",
+          "notePlaceholder": "Confirm vehicle docs / Send WhatsApp template / …",
+          "save": "Schedule",
+          "created": "Follow-up scheduled",
+          "errors": {
+            "invalid": "Pick a valid date and time.",
+            "inPast": "Pick a time in the future."
+          }
         },
         "createdLabel": "Created",
         "lastResponseLabel": "Last response",
@@ -382,6 +504,11 @@
             "updated": "Lead profile updated"
           }
         }
+      },
+      "drawer": {
+        "whatsapp": "WhatsApp",
+        "openFullPage": "Open full page",
+        "stageMoved": "Stage moved"
       }
     },
     "discoveredRoles": "Discovered roles",
@@ -732,6 +859,8 @@
       "stageTerminalKindNone": "None",
       "stageTerminalKindWon": "Won",
       "stageTerminalKindLost": "Lost",
+      "stageStatusComingSoon": "Status options · soon",
+      "stageStatusComingSoonTitle": "Per-stage statuses (e.g. Awaiting reply / Replied) are planned for a later iteration.",
       "moveUp": "Move up",
       "moveDown": "Move down",
       "deleteStageConfirm": "Delete this stage?",
@@ -986,6 +1115,79 @@
       "handoverNotify": "Notify the new agent (records intent in the audit log).",
       "handoverConfirm": "Hand over",
       "handoverDone": "Conversation handed over."
+    },
+    "roles": {
+      "title": "Roles & permissions",
+      "subtitle": "Manage system and custom roles, capability matrix, data scope, and field-level permissions.",
+      "newRole": "New role",
+      "view": "View",
+      "edit": "Edit",
+      "duplicate": "Duplicate",
+      "deleteConfirm": "Delete role \"{name}\"? Users with this role must be reassigned first.",
+      "createTitle": "Create custom role",
+      "createSubmit": "Create role",
+      "duplicateTitle": "Duplicate \"{name}\"",
+      "duplicateSubmit": "Duplicate role",
+      "duplicateIntro": "Capabilities, data scope, and field permissions are copied from the source role into a new editable role.",
+      "deletedToast": "Role \"{name}\" deleted.",
+      "createdToast": "Role \"{name}\" created.",
+      "duplicatedToast": "Duplicated \"{from}\" → \"{to}\".",
+      "savedToast": "Role saved.",
+      "systemRoleNotice": "System roles are immutable. Use Duplicate to create a custom role based on this one.",
+      "backToList": "Back to roles",
+      "typeSystem": "System",
+      "typeCustom": "Custom",
+      "capabilitiesIntro": "Toggle the capabilities granted to this role. Capabilities are grouped by module.",
+      "scopesIntro": "Choose how broadly each role can read records — own only, team, company, country, or all tenants.",
+      "fieldsIntro": "Toggle which fields users with this role can read or write. Sensitive fields are highlighted.",
+      "selectAll": "Select all",
+      "deselectAll": "Deselect all",
+      "emptyTitle": "No roles yet",
+      "emptyBody": "Create a custom role or duplicate a system role to start building a permission profile.",
+      "cols": {
+        "code": "Code",
+        "name": "Name",
+        "level": "Level",
+        "type": "Type",
+        "capabilities": "Capabilities",
+        "description": "Description"
+      },
+      "tabs": {
+        "info": "Basic info",
+        "capabilities": "Capability matrix",
+        "scopes": "Data scope",
+        "fields": "Field permissions"
+      },
+      "form": {
+        "code": "Code",
+        "codeHint": "snake_case identifier — letters, digits, underscores. Used by API and integrations.",
+        "nameEn": "Name (English)",
+        "nameAr": "Name (Arabic)",
+        "level": "Level",
+        "levelHint": "0–100. Higher values rank higher in role hierarchy displays.",
+        "description": "Description"
+      },
+      "scopes": {
+        "resources": {
+          "lead": "Leads",
+          "captain": "Captains",
+          "followup": "Follow-ups",
+          "whatsapp.conversation": "WhatsApp conversations"
+        },
+        "values": {
+          "own": "Own only",
+          "team": "Team",
+          "company": "Company",
+          "country": "Country",
+          "global": "All tenants"
+        }
+      },
+      "fields": {
+        "field": "Field",
+        "canRead": "Read",
+        "canWrite": "Write",
+        "sensitive": "Sensitive"
+      }
     }
   },
   "agent": {
@@ -1048,6 +1250,7 @@
         "name": "Lead",
         "source": "Source",
         "stage": "Stage",
+        "nextAction": "Next action",
         "sla": "SLA",
         "actions": "Actions"
       },

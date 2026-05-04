@@ -10,6 +10,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
+import { AuditService } from '../audit/audit.service';
+import { FieldFilterService } from '../rbac/field-filter.service';
+import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { buildAttribution } from './attribution.util';
@@ -67,15 +70,165 @@ export class LeadsService {
      * throws a clear error if a lost move is attempted without it.
      */
     @Optional() private readonly lostReasons?: LostReasonsService,
+    /**
+     * Phase C — C3: per-(role × resource) scope filter applied to
+     * read paths. @Optional so existing test fixtures that build
+     * LeadsService without scope context (and exercise reads with
+     * no userClaims arg) keep working as before. When neither this
+     * dependency nor a userClaims arg is supplied at the call site,
+     * read paths run scope-free (today's behaviour).
+     */
+    @Optional() private readonly scopeContext?: ScopeContextService,
+    /**
+     * Phase C — C4: per-(role × resource × field) read-side filter.
+     * Strips denied fields from response payloads at the service
+     * boundary. @Optional for the same reason as scopeContext: legacy
+     * fixtures don't wire it; production wiring (CrmModule via the
+     * @Global RbacModule) always provides it.
+     */
+    @Optional() private readonly fieldFilter?: FieldFilterService,
+    /**
+     * Phase C — C5.5: emits `field_write_denied` audit events when a
+     * write call drops forbidden fields. @Optional so legacy
+     * fixtures keep compiling; production (CrmModule via the
+     * @Global AuditModule) always provides it.
+     *
+     * The audit row carries field NAMES only — never values — so
+     * the audit log itself can't leak the data the role was denied.
+     */
+    @Optional() private readonly audit?: AuditService,
   ) {}
+
+  /**
+   * Phase C — C4: convenience wrapper that resolves the calling
+   * user's denied-fields list once and applies it to a single
+   * payload. Returns `payload` unchanged when the dep / claims are
+   * absent (legacy fixtures) OR when the role has no denied fields
+   * for the resource (super_admin + most roles today).
+   */
+  private async applyLeadFieldFilter<T>(
+    userClaims: ScopeUserClaims | undefined,
+    payload: T,
+  ): Promise<T> {
+    if (!userClaims || !this.fieldFilter) return payload;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return payload;
+    return this.fieldFilter.filterRead(payload, paths);
+  }
+
+  /** List variant — same single round-trip for the role's deny list. */
+  private async applyLeadFieldFilterMany<T>(
+    userClaims: ScopeUserClaims | undefined,
+    rows: T[],
+  ): Promise<T[]> {
+    if (!userClaims || !this.fieldFilter) return rows;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return rows;
+    return this.fieldFilter.filterReadMany(rows, paths);
+  }
+
+  /**
+   * Phase C — C5 + C5.5: write-side companion to applyLeadFieldFilter.
+   * Strips any keys the calling user's role isn't allowed to WRITE
+   * from an incoming DTO before persistence AND reports which paths
+   * were actually present in the input so the caller can emit a
+   * `field_write_denied` audit row naming only the affected fields
+   * (no values).
+   *
+   * Returns `{ dto: input, denied: [] }` when no claims / no
+   * fieldFilter / no denies — so legacy fixtures that don't pass
+   * userClaims keep current behaviour byte-identically.
+   *
+   * SILENT STRIP POLICY (C5 rule 7):
+   *   Forbidden fields are dropped from the input and the operation
+   *   continues as if those keys were never sent. Callers MUST NOT
+   *   throw on a non-empty `denied` set; the API contract is "the
+   *   request succeeds with the forbidden change not applied".
+   *
+   * AUDIT POLICY (C5.5 rule 3):
+   *   When `denied` is non-empty, the caller emits a single audit
+   *   row of action `field_write_denied` carrying the field names
+   *   (never values). This is BEFORE the main write so the audit is
+   *   recorded even if the subsequent write fails for unrelated
+   *   reasons (validation error, RLS, etc.) — matching the existing
+   *   AuditService.writeForTenant best-effort semantics.
+   */
+  private async stripLeadWriteDeniesWithReport<T>(
+    userClaims: ScopeUserClaims | undefined,
+    dto: T,
+  ): Promise<{ dto: T; denied: string[] }> {
+    if (!userClaims || !this.fieldFilter) return { dto, denied: [] };
+    const { paths } = await this.fieldFilter.listDeniedWriteFields(userClaims, 'lead');
+    if (paths.length === 0) return { dto, denied: [] };
+    return this.fieldFilter.stripWithReport(dto, paths);
+  }
+
+  /**
+   * Phase C — C5: returns the user's lead write-deny paths once.
+   * Call sites that need to inspect the path set (e.g. assign /
+   * moveStage to short-circuit when the action only touches
+   * forbidden fields) use this directly instead of the generic
+   * stripper above.
+   */
+  private async leadWriteDenyPaths(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<readonly string[]> {
+    if (!userClaims || !this.fieldFilter) return [];
+    const { paths } = await this.fieldFilter.listDeniedWriteFields(userClaims, 'lead');
+    return paths;
+  }
+
+  /**
+   * Phase C — C5.5: emit a `field_write_denied` audit row.
+   *
+   * Best-effort via AuditService.writeForTenant — the audit failure
+   * never breaks the parent operation. Field NAMES are recorded;
+   * values are not. The `entityId` is the lead being written, or
+   * null on create (the lead doesn't exist yet at strip time).
+   */
+  private async auditFieldWriteDenied(
+    userClaims: ScopeUserClaims | undefined,
+    operation: 'create' | 'update' | 'assign' | 'moveStage',
+    entityId: string | null,
+    deniedFields: readonly string[],
+  ): Promise<void> {
+    if (!userClaims || !this.audit || deniedFields.length === 0) return;
+    await this.audit.writeForTenant(userClaims.tenantId, {
+      action: 'field_write_denied',
+      entityType: 'lead',
+      entityId,
+      actorUserId: userClaims.userId,
+      payload: {
+        resource: 'lead',
+        operation,
+        deniedFields: [...deniedFields],
+        roleId: userClaims.roleId,
+      },
+    });
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // create
   // ───────────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateLeadDto, actorUserId: string) {
+  async create(dto: CreateLeadDto, actorUserId: string, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     const settings = await this.tenantSettings.getCurrent();
+
+    // Phase C — C5 + C5.5: silently drop any fields the calling role
+    // isn't allowed to write, and emit `field_write_denied` audit
+    // when something was actually stripped. The remainder of the
+    // create flow proceeds normally — denied keys default through
+    // their schema-level defaults (e.g. `source` falls back to the
+    // column default 'manual' when the role can't write it).
+    // Activity / audit emissions further down read from the
+    // stripped dto, so the change log can't leak forbidden values
+    // either. entityId is null because the lead has no id yet.
+    {
+      const { dto: stripped, denied } = await this.stripLeadWriteDeniesWithReport(userClaims, dto);
+      dto = stripped;
+      await this.auditFieldWriteDenied(userClaims, 'create', null, denied);
+    }
 
     // P2-08 — the DTO only sanity-checks the shape; full E.164
     // normalisation happens here, with the tenant's defaultDialCode
@@ -239,6 +392,17 @@ export class LeadsService {
           },
           createdById: actorUserId,
         });
+        // Phase C — C10B-3: if the lead is linked to a Contact (via the
+        // C10B-1 column) and entered an OPEN lifecycle, mark the
+        // contact as `hasOpenLead`. Manual create today never carries
+        // contactId; this guard is the seam for future create paths
+        // (CSV import + Meta lead-ads webhook) that DO populate it.
+        if (lead.contactId && lifecycleState === 'open') {
+          await tx.contact.update({
+            where: { id: lead.contactId },
+            data: { hasOpenLead: true },
+          });
+        }
         return lead;
       });
     } catch (err) {
@@ -289,7 +453,64 @@ export class LeadsService {
     return lead;
   }
 
-  async list(query: ListLeadsQueryDto) {
+  /**
+   * Phase C — C3: scope-aware findById. Used by the GET endpoint so
+   * a user with role-scope='own' (or team / company / country) only
+   * resolves leads inside their scope. Out-of-scope rows raise the
+   * same 404 as a missing row — we deliberately don't differentiate
+   * to avoid leaking lead existence across scope boundaries.
+   *
+   * Internal write paths (moveStage, convert, addActivity, etc.)
+   * keep using `findByIdOrThrow` — write enforcement lands in a
+   * later chunk per the C-plan.
+   */
+  async findByIdInScopeOrThrow(id: string, userClaims: ScopeUserClaims) {
+    const tenantId = requireTenantId();
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const lead = await this.prisma.withTenant(tenantId, async (tx) => {
+      const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [{ id }, scopeWhere] } : { id };
+      return tx.lead.findFirst({
+        where,
+        include: {
+          assignedTo: { select: { id: true, name: true, email: true } },
+          stage: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              order: true,
+              isTerminal: true,
+              terminalKind: true,
+              pipelineId: true,
+            },
+          },
+          captain: true,
+        },
+      });
+    });
+    if (!lead) {
+      throw new NotFoundException({ code: 'lead.not_found', message: `Lead not found: ${id}` });
+    }
+    // Phase C — C4: strip denied fields before returning.
+    return this.applyLeadFieldFilter(userClaims, lead);
+  }
+
+  /**
+   * Phase C — C3: resolve the scope `where` once per call. Returns
+   * `null` when scope is `'global'` OR when the scope context dep
+   * isn't wired (legacy fixtures that don't pass userClaims) OR
+   * when the caller passed no claims. Either way, no extra filter
+   * is applied.
+   */
+  private async resolveLeadScopeWhere(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<Prisma.LeadWhereInput | null> {
+    if (!userClaims || !this.scopeContext) return null;
+    const { where } = await this.scopeContext.resolveLeadScope(userClaims);
+    return where;
+  }
+
+  async list(query: ListLeadsQueryDto, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
 
     // Phase 1B — three stage-filter inputs (mutually exclusive in
@@ -327,7 +548,12 @@ export class LeadsService {
           }
         : undefined;
 
-    const where: Prisma.LeadWhereInput = {
+    // Phase C — C3: AND the user's role-scope `where` clause on top
+    // of the explicit filter. `null` means 'global' (or no claims) →
+    // no extra filter. AND-array form keeps any existing OR (e.g. the
+    // search clause) intact.
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       ...(stageIdFilter && { stageId: stageIdFilter }),
       ...(query.pipelineId && { pipelineId: query.pipelineId }),
       ...(query.companyId && { companyId: query.companyId }),
@@ -345,9 +571,10 @@ export class LeadsService {
         ],
       }),
     };
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
 
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const [items, total] = await Promise.all([
+    const { items: rawItems, total } = await this.prisma.withTenant(tenantId, async (tx) => {
+      const [items, count] = await Promise.all([
         tx.lead.findMany({
           where,
           orderBy: { createdAt: 'desc' },
@@ -360,8 +587,11 @@ export class LeadsService {
         }),
         tx.lead.count({ where }),
       ]);
-      return { items, total, limit: query.limit, offset: query.offset };
+      return { items, total: count };
     });
+    // Phase C — C4: strip denied fields from every row.
+    const items = await this.applyLeadFieldFilterMany(userClaims, rawItems);
+    return { items, total, limit: query.limit, offset: query.offset };
   }
 
   /**
@@ -382,7 +612,7 @@ export class LeadsService {
    * than `perStage` cards in one column page in via the legacy
    * paginated `list()` with `pipelineStageId` set.
    */
-  async listByStage(query: ListLeadsByStageQueryDto) {
+  async listByStage(query: ListLeadsByStageQueryDto, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
 
     const assigneeFilter: Prisma.LeadWhereInput = query.assignedToId
@@ -401,7 +631,8 @@ export class LeadsService {
 
     // The pipelineId clause is the only invariant filter — every other
     // condition is optional.
-    const baseWhere: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const userWhere: Prisma.LeadWhereInput = {
       pipelineId: query.pipelineId,
       ...(query.companyId && { companyId: query.companyId }),
       ...(query.countryId && { countryId: query.countryId }),
@@ -418,6 +649,9 @@ export class LeadsService {
         ],
       }),
     };
+    const baseWhere: Prisma.LeadWhereInput = scopeWhere
+      ? { AND: [userWhere, scopeWhere] }
+      : userWhere;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       // Resolve the stage list first — it drives the response shape
@@ -450,11 +684,12 @@ export class LeadsService {
       // `perStage` cards each, ordered by createdAt desc so the
       // newest leads sit at the top of every column.
       const perStage = query.perStage;
+      type LeadCard = Awaited<ReturnType<typeof tx.lead.findMany>>[number];
       const buckets = await Promise.all(
         stages.map(async (s) => {
           const total = countByStageId.get(s.id) ?? 0;
           if (total === 0) {
-            return { stage: s, totalCount: 0, leads: [] };
+            return { stage: s, totalCount: 0, leads: [] as LeadCard[] };
           }
           const leads = await tx.lead.findMany({
             where: { ...baseWhere, stageId: s.id },
@@ -469,10 +704,18 @@ export class LeadsService {
         }),
       );
 
+      // Phase C — C4: filter every bucket's leads through the deny
+      // list. Resolved once per request inside applyLeadFieldFilterMany.
+      const filteredBuckets = await Promise.all(
+        buckets.map(async (b) => ({
+          ...b,
+          leads: await this.applyLeadFieldFilterMany<LeadCard>(userClaims, b.leads),
+        })),
+      );
       return {
         pipelineId: query.pipelineId,
         perStage,
-        stages: buckets,
+        stages: filteredBuckets,
       };
     });
   }
@@ -482,14 +725,19 @@ export class LeadsService {
    * non-null, i.e. there is a pending follow-up). Optionally filtered
    * to a specific assignee — the agent workspace passes `me`.
    */
-  async listOverdue(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+  async listOverdue(
+    opts: { assignedToId?: string; limit?: number; now?: Date } = {},
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const now = opts.now ?? new Date();
-    const where: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       nextActionDueAt: { lt: now },
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
+    const rows = await this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
         orderBy: { nextActionDueAt: 'asc' },
@@ -500,6 +748,8 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: strip denied fields from every overdue row.
+    return this.applyLeadFieldFilterMany(userClaims, rows);
   }
 
   /**
@@ -507,7 +757,10 @@ export class LeadsService {
    * window (server local time). Optionally filtered to a specific
    * assignee.
    */
-  async listDueToday(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+  async listDueToday(
+    opts: { assignedToId?: string; limit?: number; now?: Date } = {},
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const now = opts.now ?? new Date();
     // P2-08 — compute the day boundary in the TENANT's timezone, not
@@ -515,11 +768,13 @@ export class LeadsService {
     // running off the same server should each see "their" today.
     const settings = await this.tenantSettings.getCurrent();
     const { start, end } = dayBoundsInTimezone(now, settings.timezone);
-    const where: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       nextActionDueAt: { gte: start, lte: end },
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
+    const rows = await this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
         orderBy: { nextActionDueAt: 'asc' },
@@ -530,10 +785,12 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: strip denied fields from every due-today row.
+    return this.applyLeadFieldFilterMany(userClaims, rows);
   }
 
-  listActivities(leadId: string) {
-    return this.prisma.withTenant(requireTenantId(), (tx) =>
+  async listActivities(leadId: string, userClaims?: ScopeUserClaims) {
+    const rows = await this.prisma.withTenant(requireTenantId(), (tx) =>
       tx.leadActivity.findMany({
         where: { leadId },
         orderBy: { createdAt: 'desc' },
@@ -547,15 +804,46 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: an activity's `payload` JSON may mirror lead-
+    // shape fields (e.g. attribution.campaign was lifted into a
+    // payload by a future emitter). Apply the SAME lead-resource
+    // deny paths to each `payload` so the timeline can't leak a
+    // value the role isn't allowed to see directly. Today's
+    // emitters don't include any of the seeded sales_agent denies,
+    // so this is a defensive pass — but it ships now so future
+    // payload writers stay safe by default.
+    if (!userClaims || !this.fieldFilter) return rows;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return rows;
+    return rows.map((row) => ({
+      ...row,
+      payload:
+        row.payload == null
+          ? row.payload
+          : (this.fieldFilter!.filterRead(row.payload, paths) as typeof row.payload),
+    }));
   }
 
   // ───────────────────────────────────────────────────────────────────────
   // update / delete
   // ───────────────────────────────────────────────────────────────────────
 
-  async update(id: string, dto: UpdateLeadDto, actorUserId: string) {
+  async update(id: string, dto: UpdateLeadDto, actorUserId: string, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
+
+    // Phase C — C5 + C5.5: silently drop any keys the calling role
+    // can't write before we touch the row, and emit
+    // `field_write_denied` audit when something was actually
+    // stripped. After the strip, an empty dto simply produces a
+    // no-op update + activity row that records nothing meaningful.
+    // The activity emission below reads from the stripped dto so
+    // the change log doesn't leak forbidden values.
+    {
+      const { dto: stripped, denied } = await this.stripLeadWriteDeniesWithReport(userClaims, dto);
+      dto = stripped;
+      await this.auditFieldWriteDenied(userClaims, 'update', id, denied);
+    }
 
     const settings = await this.tenantSettings.getCurrent();
     let normalizedPhone: string | undefined;
@@ -613,9 +901,26 @@ export class LeadsService {
   // assign
   // ───────────────────────────────────────────────────────────────────────
 
-  async assign(id: string, assigneeUserId: string | null, actorUserId: string) {
+  async assign(
+    id: string,
+    assigneeUserId: string | null,
+    actorUserId: string,
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
+
+    // Phase C — C5 + C5.5: assignedToId is the only field this
+    // method touches. If the calling role can't write it, silently
+    // no-op (return the unchanged lead, same shape as a successful
+    // assign so the controller doesn't branch) AND emit a
+    // `field_write_denied` audit row naming the field. Consistent
+    // with create/update: silent strip, audit emission.
+    const denyPaths = await this.leadWriteDenyPaths(userClaims);
+    if (denyPaths.includes('assignedToId')) {
+      await this.auditFieldWriteDenied(userClaims, 'assign', id, ['assignedToId']);
+      return before;
+    }
 
     if (assigneeUserId !== null) {
       await this.assertUserInTenant(assigneeUserId);
@@ -849,6 +1154,7 @@ export class LeadsService {
       lostNote?: string;
     },
     actorUserId: string,
+    userClaims?: ScopeUserClaims,
   ) {
     if (Boolean(target.stageCode) === Boolean(target.pipelineStageId)) {
       throw new BadRequestException({
@@ -858,6 +1164,39 @@ export class LeadsService {
     }
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
+
+    // Phase C — C5.5: moveStage modifies several catalogued fields
+    // as side-effects (lifecycleState, lostReasonId, lostNote,
+    // slaStatus, slaDueAt, lastResponseAt, nextActionDueAt). If the
+    // calling role denies write on any of them, the natural flow
+    // would silently bypass that denial — so check the deny set
+    // up front and silent-no-op + audit when an overlap exists.
+    // Consistent with create/update/assign behaviour.
+    //
+    // Notes:
+    //   • `stageId` itself is NOT in the catalogue (it's a structural
+    //     pointer, not a value field) so `lead.stage.move`
+    //     capability is the primary gate. The catalogued fields
+    //     listed below are the *side-effects* of a stage move.
+    //   • TODO: when the catalogue gains `stageId` (or pipelineId
+    //     becomes write-controlled per role) the same overlap check
+    //     handles it without changes.
+    const denyPaths = await this.leadWriteDenyPaths(userClaims);
+    if (denyPaths.length > 0) {
+      const moveStageTouches = [
+        'lifecycleState',
+        'lostReasonId',
+        'lostNote',
+        'slaStatus',
+        'slaDueAt',
+        'nextActionDueAt',
+      ];
+      const overlap = moveStageTouches.filter((f) => denyPaths.includes(f));
+      if (overlap.length > 0) {
+        await this.auditFieldWriteDenied(userClaims, 'moveStage', id, overlap);
+        return before;
+      }
+    }
     // Lead's pipeline — denormalised column is the fast path; fall
     // back to the stage row for legacy leads still on NULL.
     const leadPipelineId = before.pipelineId ?? before.stage.pipelineId;
@@ -1012,6 +1351,36 @@ export class LeadsService {
         },
         createdById: actorUserId,
       });
+      // Phase C — C10B-3: maintain Contact.hasOpenLead on terminal
+      // transitions. If the lead is contact-linked AND the new stage
+      // is terminal, and no OTHER non-terminal lead exists for the
+      // same contact, the flag flips off. The recompute ignores `id`
+      // itself because the row we just updated reflects the new
+      // (terminal) state, but defending against read ordering with
+      // an explicit exclude keeps the predicate self-evident. The
+      // backfill (C10B-2) is the safety net for any drift.
+      if (updated.contactId && toStage.isTerminal) {
+        const stillOpen = await tx.lead.count({
+          where: {
+            contactId: updated.contactId,
+            id: { not: id },
+            lifecycleState: 'open',
+          },
+        });
+        if (stillOpen === 0) {
+          await tx.contact.update({
+            where: { id: updated.contactId },
+            data: { hasOpenLead: false },
+          });
+        }
+      }
+      // Inverse: a return-from-terminal stage flips the flag back on.
+      if (updated.contactId && !toStage.isTerminal && before.stage.isTerminal) {
+        await tx.contact.update({
+          where: { id: updated.contactId },
+          data: { hasOpenLead: true },
+        });
+      }
       return updated;
     });
   }
@@ -1020,10 +1389,52 @@ export class LeadsService {
   // activities (notes / calls)
   // ───────────────────────────────────────────────────────────────────────
 
+  /**
+   * addActivity (notes / calls).
+   *
+   * Phase C — C5.5: ACTIVITY CHANNEL POLICY
+   *
+   *   • `dto.body` is FREEFORM USER PROSE. The field-permission
+   *     system never censors body text — censoring user-typed
+   *     prose would be wrong (and ineffective: a user can also
+   *     type values into the email body or note title in any other
+   *     CRM field). UX guidance lives in the client.
+   *
+   *   • `dto` may NOT carry structured payload fields today —
+   *     AddActivityDto is `{ type, body }`. The internal
+   *     `payload` JSON column on `lead_activities` is set only by
+   *     other LeadsService methods (moveStage, assign, convert)
+   *     using payloads we author here, and those payloads never
+   *     contain catalogued lead values.
+   *
+   *   • TODO (when AddActivityDto grows a structured `payload`
+   *     field): pass it through `stripLeadWriteDenies` so a future
+   *     emitter that puts `{ source: '…' }` in there is filtered
+   *     against the calling role's lead-resource denies. The
+   *     defensive guard below already strips any keys outside the
+   *     known set so an unwired schema addition can't slip through.
+   *
+   *   • The C4 read filter mirrors lead-resource denies onto
+   *     activity-row payloads on read, so even if an internal
+   *     emitter accidentally writes a denied value, the role can't
+   *     SEE it. Defence in depth.
+   */
   async addActivity(id: string, dto: AddActivityDto, actorUserId: string) {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
     const settings = await this.tenantSettings.getCurrent();
+
+    // Phase C — C5.5: defensive guard. Today's AddActivityDto only
+    // carries `type` + `body`; if a future schema addition slips
+    // through without being explicitly threaded through the
+    // permission filter, drop any unknown structured keys here
+    // before the row hits the DB. Cheap belt-and-braces.
+    const knownKeys: ReadonlyArray<keyof AddActivityDto> = ['type', 'body'];
+    for (const k of Object.keys(dto) as Array<keyof AddActivityDto>) {
+      if (!knownKeys.includes(k)) {
+        delete (dto as Record<string, unknown>)[k as string];
+      }
+    }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const created = await tx.leadActivity.create({
@@ -1070,9 +1481,149 @@ export class LeadsService {
   // ───────────────────────────────────────────────────────────────────────
 
   /**
+   * Phase C — C10B-3: create a lead from an inbound WhatsApp message.
+   *
+   * Distinct from the public `create()` because:
+   *   - assignment is PRE-RESOLVED by the inbound flow's
+   *     `routeConversation` call, so we MUST NOT call DistributionService
+   *     a second time (would double-route + double-log).
+   *   - SLA is initialised from the tenant settings with `actorUserId`
+   *     null (system path; the webhook has no user claims).
+   *   - the activity row is tagged `actionSource='whatsapp'` so the
+   *     timeline distinguishes WhatsApp-sourced leads from manual /
+   *     import paths.
+   *   - `Contact.hasOpenLead` is set to true in the same tx so the
+   *     denormalised flag stays accurate.
+   *   - `Contact.id` is linked into `Lead.contactId`; the latest
+   *     conversation pointer becomes `Lead.primaryConversationId`.
+   *
+   * Race handling: the surrounding inbound orchestrator catches P2002
+   * on the `(tenantId, phone)` unique constraint and falls back to the
+   * "1-match-found" branch (link the conversation to the existing
+   * lead instead of failing). The orchestrator handles the catch; we
+   * just propagate the error with the typed code below.
+   */
+  async createFromWhatsApp(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      contactId: string;
+      phone: string;
+      name: string;
+      profileName?: string | null;
+      waId?: string | null;
+      companyId: string | null;
+      countryId: string | null;
+      assignedToId: string;
+      primaryConversationId: string;
+    },
+  ): Promise<{ id: string; stageCode: string }> {
+    const settings = await this.tenantSettings.getInTx(tx, input.tenantId);
+
+    // Pipeline resolution mirrors `create()`: the company × country
+    // fallback chain via PipelineService.
+    const pipeline = await this.pipeline.resolveForLeadInTx(tx, {
+      companyId: input.companyId,
+      countryId: input.countryId,
+    });
+    const stage = await tx.pipelineStage.findFirst({
+      where: { pipelineId: pipeline.id, isTerminal: false },
+      orderBy: { order: 'asc' },
+      select: { id: true, code: true },
+    });
+    if (!stage) {
+      throw new BadRequestException({
+        code: 'pipeline.no_entry_stage',
+        message: `Pipeline ${pipeline.id} has no non-terminal entry stage`,
+      });
+    }
+
+    const now = new Date();
+    const slaDueAt = this.sla.computeDueAt(now, settings.slaMinutes);
+
+    // C10B-3: stash the raw WhatsApp identity bits in the
+    // `custom` block of the attribution payload so reporting can
+    // surface them later without a schema migration. The `name`
+    // field on AttributionRef matches Meta's profile-name semantic
+    // for the campaign slot.
+    const attribution = buildAttribution('whatsapp', {
+      ...(input.profileName && { campaign: { name: input.profileName } }),
+      ...(input.waId && { ad: { id: input.waId } }),
+    });
+
+    try {
+      const lead = await tx.lead.create({
+        data: {
+          tenantId: input.tenantId,
+          name: input.name,
+          phone: input.phone,
+          source: 'whatsapp',
+          attribution: attribution as unknown as Prisma.InputJsonValue,
+          companyId: input.companyId,
+          countryId: input.countryId,
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          lifecycleState: 'open',
+          assignedToId: input.assignedToId,
+          createdById: null,
+          slaDueAt,
+          slaStatus: 'active',
+          contactId: input.contactId,
+          primaryConversationId: input.primaryConversationId,
+        },
+        select: { id: true },
+      });
+
+      await this.appendActivity(tx, {
+        tenantId: input.tenantId,
+        leadId: lead.id,
+        type: 'system',
+        body: 'Lead created from inbound WhatsApp',
+        payload: {
+          event: 'created',
+          stageCode: stage.code,
+          stageId: stage.id,
+          pipelineId: pipeline.id,
+          source: 'whatsapp',
+          contactId: input.contactId,
+          primaryConversationId: input.primaryConversationId,
+        },
+        createdById: null,
+        actionSource: 'whatsapp',
+      });
+
+      // C10B-3: keep Contact.hasOpenLead in sync — this freshly-created
+      // lead is by definition open. Backfill is the safety net (C10B-2)
+      // but the inbound flow needs the up-to-the-millisecond truth so
+      // the next inbound for the same phone sees `hasOpenLead = true`
+      // and routes to the "1 match" branch instead of duplicating.
+      await tx.contact.update({
+        where: { id: input.contactId },
+        data: { hasOpenLead: true, lastSeenAt: now },
+      });
+
+      return { id: lead.id, stageCode: stage.code };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Append a system / agent activity row inside an existing transaction.
    * Service callers use this to keep a single transaction around
    * lead-mutation + activity-write so the audit timeline never drifts.
+   *
+   * Phase C — C10B-3: `actionSource` carries the provenance of the
+   * activity — 'lead' (default; agent action on the lead detail page),
+   * 'whatsapp' (chat surface), 'system' (automation), or 'import'
+   * (CSV / batch). Defaults to 'lead' so every existing caller keeps
+   * the schema-default behaviour without code changes.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async appendActivity(
@@ -1084,6 +1635,7 @@ export class LeadsService {
       body?: string | null;
       payload?: Record<string, unknown> | null;
       createdById?: string | null;
+      actionSource?: 'lead' | 'whatsapp' | 'system' | 'import';
     },
   ) {
     await tx.leadActivity.create({
@@ -1094,6 +1646,7 @@ export class LeadsService {
         body: input.body ?? null,
         payload: (input.payload ?? null) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
         createdById: input.createdById ?? null,
+        ...(input.actionSource && { actionSource: input.actionSource }),
       },
     });
   }

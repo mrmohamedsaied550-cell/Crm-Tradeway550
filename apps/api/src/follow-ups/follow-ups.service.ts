@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { dayBoundsInTimezone } from '../crm/time.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import type {
@@ -27,7 +28,62 @@ export class FollowUpsService {
      * wiring (FollowUpsModule) always provides it.
      */
     private readonly tenantSettings: TenantSettingsService,
+    /**
+     * Phase C — C10A: data-scope resolver for the `followup`
+     * resource. Optional so existing fixtures + system jobs that
+     * don't pass user claims keep working with no extra filter
+     * (the resolver returns `null` when claims are absent).
+     */
+    @Optional() private readonly scopeContext?: ScopeContextService,
   ) {}
+
+  /**
+   * Phase C — C10A: resolve the LeadFollowUp `where` for the calling
+   * user. Returns `null` when the resolver is wired-out, the caller
+   * passed no claims, or the role's scope is `global` — the call
+   * site simply skips the AND in those cases.
+   */
+  private async resolveFollowUpScopeWhere(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<Prisma.LeadFollowUpWhereInput | null> {
+    if (!userClaims || !this.scopeContext) return null;
+    const { where } = await this.scopeContext.resolveFollowUpScope(userClaims);
+    return where;
+  }
+
+  /**
+   * Phase C — C10A: lead-side scope check used by every write path
+   * to confirm the actor can see the parent lead before mutating
+   * one of its follow-ups. Mirrors `LeadsService.findByIdInScopeOrThrow`
+   * but kept here as a private helper so the modules don't have to
+   * cross-import (FollowUps and Crm are separate Nest modules).
+   *
+   * Returns `null` shape on failure to avoid leaking lead existence
+   * across scope boundaries — callers throw `lead.not_found`.
+   */
+  private async assertLeadVisible(
+    tx: Prisma.TransactionClient,
+    leadId: string,
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<void> {
+    // No claims OR scope service unwired → fall back to a tenant-only
+    // lookup. This preserves behaviour for legacy fixtures and system
+    // jobs that never plumbed user claims through.
+    const scopeWhere =
+      userClaims && this.scopeContext
+        ? (await this.scopeContext.resolveLeadScope(userClaims)).where
+        : null;
+    const where: Prisma.LeadWhereInput = scopeWhere
+      ? { AND: [{ id: leadId }, scopeWhere] }
+      : { id: leadId };
+    const lead = await tx.lead.findFirst({ where, select: { id: true } });
+    if (!lead) {
+      throw new NotFoundException({
+        code: 'lead.not_found',
+        message: `Lead ${leadId} not found in active tenant`,
+      });
+    }
+  }
 
   /**
    * Recompute the lead's `nextActionDueAt` denormalised column to
@@ -73,18 +129,13 @@ export class FollowUpsService {
     });
   }
 
-  async listForLead(leadId: string) {
+  async listForLead(leadId: string, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     return this.prisma.withTenant(tenantId, async (tx) => {
-      // Confirm the lead is visible to the active tenant; RLS does
-      // the heavy lifting but the explicit lookup gives a clear 404.
-      const lead = await tx.lead.findUnique({ where: { id: leadId }, select: { id: true } });
-      if (!lead) {
-        throw new NotFoundException({
-          code: 'lead.not_found',
-          message: `Lead ${leadId} not found in active tenant`,
-        });
-      }
+      // Phase C — C10A: lead must be visible under the caller's scope.
+      // Surfaces lead.not_found on cross-scope reads so we don't leak
+      // the existence of leads outside the user's accessible set.
+      await this.assertLeadVisible(tx, leadId, userClaims);
       return tx.leadFollowUp.findMany({
         where: { leadId },
         orderBy: [{ completedAt: 'asc' }, { dueAt: 'asc' }],
@@ -103,17 +154,28 @@ export class FollowUpsService {
   async listInRange(
     callingUserId: string,
     query: CalendarFollowUpsQueryDto & { allowAllAssignees: boolean },
+    userClaims?: ScopeUserClaims,
   ) {
     const tenantId = requireTenantId();
     const from = new Date(query.from);
     const to = new Date(query.to);
     const restrictToCaller = query.mine === '1' || !query.allowAllAssignees;
+    // Phase C — C10A: AND the role's follow-up scope into the calendar
+    // window. For mine='1' the caller's user-id filter already narrows
+    // visibility; the scope filter still applies on top so a team-lead
+    // looking at the tenant calendar (mine='0') sees only follow-ups on
+    // leads their role can reach.
+    const scopeWhere = await this.resolveFollowUpScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadFollowUpWhereInput = {
+      dueAt: { gte: from, lte: to },
+      ...(restrictToCaller && { assignedToId: callingUserId }),
+    };
+    const where: Prisma.LeadFollowUpWhereInput = scopeWhere
+      ? { AND: [baseWhere, scopeWhere] }
+      : baseWhere;
     return this.prisma.withTenant(tenantId, (tx) =>
       tx.leadFollowUp.findMany({
-        where: {
-          dueAt: { gte: from, lte: to },
-          ...(restrictToCaller && { assignedToId: callingUserId }),
-        },
+        where,
         orderBy: [{ dueAt: 'asc' }],
         take: query.limit,
         include: { lead: { select: { id: true, name: true, phone: true } } },
@@ -121,7 +183,7 @@ export class FollowUpsService {
     );
   }
 
-  async listMine(userId: string, query: ListMyFollowUpsQueryDto) {
+  async listMine(userId: string, query: ListMyFollowUpsQueryDto, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     const now = new Date();
     // Phase A — A5: a row whose `snoozedUntil > now` is hidden from
@@ -130,9 +192,16 @@ export class FollowUpsService {
     const notSnoozed = {
       OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
     } satisfies Prisma.LeadFollowUpWhereInput;
+    // Phase C — C10A: the caller is always the assignee here so the
+    // scope filter is redundant in most cases (you can see your own
+    // follow-ups). The AND still matters for `company` / `country`
+    // scopes — a follow-up the user owns on a lead in a company/country
+    // they no longer have access to should disappear from `mine`. We
+    // mirror leads' behaviour and apply scope on top.
+    const scopeWhere = await this.resolveFollowUpScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, (tx) => {
       const base = { assignedToId: userId };
-      const where =
+      const statusWhere: Prisma.LeadFollowUpWhereInput =
         query.status === 'done'
           ? { ...base, completedAt: { not: null } }
           : query.status === 'overdue'
@@ -140,6 +209,9 @@ export class FollowUpsService {
             : query.status === 'all'
               ? base
               : /* pending */ { ...base, completedAt: null, ...notSnoozed };
+      const where: Prisma.LeadFollowUpWhereInput = scopeWhere
+        ? { AND: [statusWhere, scopeWhere] }
+        : statusWhere;
       return tx.leadFollowUp.findMany({
         where,
         orderBy: [{ dueAt: 'asc' }],
@@ -163,7 +235,10 @@ export class FollowUpsService {
    * Cheap two-COUNT(*) per request — the `(tenant_id, assignedToId,
    * completedAt, dueAt)` index from C37 covers both predicates.
    */
-  async summaryForUser(userId: string): Promise<{
+  async summaryForUser(
+    userId: string,
+    userClaims?: ScopeUserClaims,
+  ): Promise<{
     overdueCount: number;
     dueTodayCount: number;
   }> {
@@ -171,6 +246,10 @@ export class FollowUpsService {
     const now = new Date();
     const settings = await this.tenantSettings.getCurrent();
     const today = dayBoundsInTimezone(now, settings.timezone);
+    // Phase C — C10A: same rationale as listMine — apply scope on top of
+    // the assignee filter so company/country scope shrinks the badge
+    // counters when a user loses access to a parent lead's company.
+    const scopeWhere = await this.resolveFollowUpScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
       const notSnoozed = {
         OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
@@ -180,19 +259,38 @@ export class FollowUpsService {
         completedAt: null,
         ...notSnoozed,
       };
+      const overdueWhere: Prisma.LeadFollowUpWhereInput = {
+        ...baseActive,
+        dueAt: { lt: now },
+      };
+      const dueTodayWhere: Prisma.LeadFollowUpWhereInput = {
+        ...baseActive,
+        dueAt: { gte: today.start, lte: today.end },
+      };
       const [overdueCount, dueTodayCount] = await Promise.all([
-        tx.leadFollowUp.count({ where: { ...baseActive, dueAt: { lt: now } } }),
         tx.leadFollowUp.count({
-          where: { ...baseActive, dueAt: { gte: today.start, lte: today.end } },
+          where: scopeWhere ? { AND: [overdueWhere, scopeWhere] } : overdueWhere,
+        }),
+        tx.leadFollowUp.count({
+          where: scopeWhere ? { AND: [dueTodayWhere, scopeWhere] } : dueTodayWhere,
         }),
       ]);
       return { overdueCount, dueTodayCount };
     });
   }
 
-  async create(leadId: string, dto: CreateFollowUpDto, actorUserId: string | null) {
+  async create(
+    leadId: string,
+    dto: CreateFollowUpDto,
+    actorUserId: string | null,
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Phase C — C10A: visibility check on the parent lead before
+      // any write. Out-of-scope leads surface as `lead.not_found` to
+      // avoid leaking which leads exist outside the user's scope.
+      await this.assertLeadVisible(tx, leadId, userClaims);
       const lead = await tx.lead.findUnique({
         where: { id: leadId },
         select: { id: true, assignedToId: true },
@@ -262,7 +360,12 @@ export class FollowUpsService {
    *   • No notification — snooze is a self-action that doesn't
    *     change ownership.
    */
-  async update(id: string, dto: UpdateFollowUpDto, actorUserId: string | null = null) {
+  async update(
+    id: string,
+    dto: UpdateFollowUpDto,
+    actorUserId: string | null = null,
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.leadFollowUp.findUnique({
@@ -275,6 +378,11 @@ export class FollowUpsService {
           message: `Follow-up ${id} not found in active tenant`,
         });
       }
+      // Phase C — C10A: even though the follow-up exists, the actor
+      // may not be allowed to see its parent lead. Out-of-scope writes
+      // surface as `lead.not_found` (not `followup.not_found`) to keep
+      // the failure shape consistent with the read-side guard.
+      await this.assertLeadVisible(tx, row.leadId, userClaims);
 
       const data: Prisma.LeadFollowUpUncheckedUpdateInput = {};
       if (dto.snoozedUntil !== undefined) {
@@ -308,7 +416,7 @@ export class FollowUpsService {
     });
   }
 
-  async complete(id: string, actorUserId: string | null = null) {
+  async complete(id: string, actorUserId: string | null = null, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     return this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.leadFollowUp.findUnique({
@@ -321,6 +429,8 @@ export class FollowUpsService {
           message: `Follow-up ${id} not found in active tenant`,
         });
       }
+      // Phase C — C10A: parent-lead visibility check before mutating.
+      await this.assertLeadVisible(tx, row.leadId, userClaims);
       const updated = await tx.leadFollowUp.update({
         where: { id },
         data: { completedAt: new Date() },
@@ -337,12 +447,22 @@ export class FollowUpsService {
     });
   }
 
-  async remove(id: string, actorUserId: string | null = null) {
+  async remove(id: string, actorUserId: string | null = null, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
     await this.prisma.withTenant(tenantId, async (tx) => {
       const row = await tx.leadFollowUp
         .findUnique({ where: { id }, select: { leadId: true } })
         .catch(() => null);
+      // Phase C — C10A: visibility check on the parent lead before
+      // delete. Out-of-scope deletes throw lead.not_found instead of
+      // silently swallowing — the previous swallow-and-noop made the
+      // endpoint look idempotent in good cases but masked real
+      // permission errors. The guard runs only when we actually have
+      // a row to check; a missing row falls through to the existing
+      // catch-and-ignore (idempotent delete behaviour preserved).
+      if (row?.leadId) {
+        await this.assertLeadVisible(tx, row.leadId, userClaims);
+      }
       await tx.leadFollowUp.delete({ where: { id } }).catch(() => {});
       if (row?.leadId) {
         await this.recomputeNextActionDueAt(tx, row.leadId);

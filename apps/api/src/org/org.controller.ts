@@ -9,13 +9,16 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
 
+import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
 
@@ -31,6 +34,7 @@ import {
   ListCountriesQuerySchema,
   ListTeamsQuerySchema,
   ListUsersQuerySchema,
+  PutUserScopeAssignmentsSchema,
   SetUserRoleSchema,
   SetUserStatusSchema,
   SetUserTeamSchema,
@@ -39,6 +43,7 @@ import {
   UpdateTeamSchema,
   UpdateUserSchema,
 } from './org.dto';
+import { UserScopeAssignmentsService } from './user-scope-assignments.service';
 
 class CreateCompanyDto extends createZodDto(CreateCompanySchema) {}
 class UpdateCompanyDto extends createZodDto(UpdateCompanySchema) {}
@@ -54,6 +59,7 @@ class ListUsersQueryDto extends createZodDto(ListUsersQuerySchema) {}
 class SetUserRoleDto extends createZodDto(SetUserRoleSchema) {}
 class SetUserTeamDto extends createZodDto(SetUserTeamSchema) {}
 class SetUserStatusDto extends createZodDto(SetUserStatusSchema) {}
+class PutUserScopeAssignmentsDto extends createZodDto(PutUserScopeAssignmentsSchema) {}
 
 /**
  * /api/v1 — org-structure admin surface (C12).
@@ -74,6 +80,7 @@ export class OrgController {
     private readonly countries: CountriesService,
     private readonly teams: TeamsService,
     private readonly users: AdminUsersService,
+    private readonly userScopes: UserScopeAssignmentsService,
   ) {}
 
   // ───────── Companies ─────────
@@ -266,5 +273,30 @@ export class OrgController {
   @ApiOperation({ summary: 'Hard-delete a user' })
   async deleteUser(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.users.delete(id);
+  }
+
+  // ───────── User scope assignments (C9) ─────────
+
+  @Get('users/:id/scope-assignments')
+  @RequireCapability('users.read')
+  @ApiOperation({
+    summary: 'List the company / country bindings consumed by company / country scope',
+  })
+  listUserScopeAssignments(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.userScopes.listForUser(id);
+  }
+
+  @Put('users/:id/scope-assignments')
+  @RequireCapability('users.write')
+  @ApiOperation({
+    summary:
+      'Replace the user company / country bindings (full set). Validates each id belongs to the active tenant; emits user.scope.update + assign / revoke audit events.',
+  })
+  putUserScopeAssignments(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PutUserScopeAssignmentsDto,
+    @CurrentUser() actor: AccessTokenClaims,
+  ) {
+    return this.userScopes.replaceForUser(id, body, actor.sub);
   }
 }

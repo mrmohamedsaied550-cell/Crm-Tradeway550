@@ -40,37 +40,44 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  roles            Role[]
-  users            User[]
-  sessions         UserSession[]
-  settings         TenantSettings?
-  pipelines        Pipeline[]
-  pipelineStages   PipelineStage[]
-  leads            Lead[]
-  captains         Captain[]
-  leadActivities   LeadActivity[]
-  companies        Company[]
-  countries        Country[]
-  teams            Team[]
-  whatsAppAccounts      WhatsAppAccount[]
-  whatsAppMessages      WhatsAppMessage[]
-  whatsAppConversations WhatsAppConversation[]
-  whatsAppTemplates     WhatsAppTemplate[]
-  bonusRules            BonusRule[]
-  bonusAccruals         BonusAccrual[]
-  competitions          Competition[]
-  leadFollowUps         LeadFollowUp[]
-  auditEvents           AuditEvent[]
-  notifications         Notification[]
-  metaLeadSources       MetaLeadSource[]
-  captainDocuments      CaptainDocument[]
-  captainTrips          CaptainTrip[]
+  roles                       Role[]
+  users                       User[]
+  sessions                    UserSession[]
+  settings                    TenantSettings?
+  pipelines                   Pipeline[]
+  pipelineStages              PipelineStage[]
+  leads                       Lead[]
+  captains                    Captain[]
+  leadActivities              LeadActivity[]
+  companies                   Company[]
+  countries                   Country[]
+  teams                       Team[]
+  whatsAppAccounts            WhatsAppAccount[]
+  whatsAppMessages            WhatsAppMessage[]
+  whatsAppConversations       WhatsAppConversation[]
+  whatsAppTemplates           WhatsAppTemplate[]
+  bonusRules                  BonusRule[]
+  bonusAccruals               BonusAccrual[]
+  competitions                Competition[]
+  leadFollowUps               LeadFollowUp[]
+  auditEvents                 AuditEvent[]
+  notifications               Notification[]
+  metaLeadSources             MetaLeadSource[]
+  captainDocuments            CaptainDocument[]
+  captainTrips                CaptainTrip[]
   /// Phase 1A — distribution engine back-relations.
-  distributionRules     DistributionRule[]
-  agentCapacities       AgentCapacity[]
-  leadRoutingLogs       LeadRoutingLog[]
+  distributionRules           DistributionRule[]
+  agentCapacities             AgentCapacity[]
+  leadRoutingLogs             LeadRoutingLog[]
   /// Phase A — per-tenant rejection-reason catalogue.
-  lostReasons           LostReason[]
+  lostReasons                 LostReason[]
+  /// Phase C — C1: dynamic permissions back-relations.
+  roleScopes                  RoleScope[]
+  fieldPermissions            FieldPermission[]
+  userScopeAssignments        UserScopeAssignment[]
+  /// Phase C — C10B-1: WhatsApp ownership + contact identity.
+  contacts                    Contact[]
+  whatsAppConversationReviews WhatsAppConversationReview[]
 
   @@map("tenants")
 }
@@ -95,24 +102,45 @@ model Capability {
 /// `level` is a sortable hierarchy proxy (super_admin = 100, ops = 90,
 /// account_manager = 80, team_leader = 60, qa_specialist = 50, agents = 30,
 /// viewer = 20). Used by future scope guards for "rank-at-least" checks.
+///
+/// Phase C — C1: `isSystem` marks the 11 seeded role templates. System
+/// roles are fully immutable at the service layer (C2): no rename, no
+/// level change, no capability grant/revoke, no delete. Admins clone
+/// them via `POST /rbac/roles/:id/duplicate` to customize.
+/// `description` is admin-supplied helper text for the role builder UI.
 model Role {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  code      String
-  nameAr    String   @map("name_ar")
-  nameEn    String   @map("name_en")
-  level     Int
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code        String
+  nameAr      String   @map("name_ar")
+  nameEn      String   @map("name_en")
+  level       Int
+  isActive    Boolean  @default(true) @map("is_active")
+  /// Phase C — C1: TRUE for the 11 seeded role templates. Service-
+  /// layer guards block all mutations + deletion when set.
+  isSystem    Boolean  @default(false) @map("is_system")
+  /// Phase C — C1: optional admin-supplied description for the role
+  /// builder UI. Free text; rendered as helper copy under the role
+  /// name.
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  capabilities RoleCapability[]
-  users        User[]
-  bonusRules   BonusRule[]
+  capabilities     RoleCapability[]
+  users            User[]
+  bonusRules       BonusRule[]
+  /// Phase C — C1: per-resource data scope ('own' | 'team' | 'company'
+  /// | 'country' | 'global'). One row per (role, resource).
+  scopes           RoleScope[]
+  /// Phase C — C1: per-(resource, field) read/write toggles. Default
+  /// for absent rows is read=TRUE / write=TRUE — restrictions are
+  /// explicit denials.
+  fieldPermissions FieldPermission[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
+  @@index([tenantId, isSystem])
   @@map("roles")
 }
 
@@ -133,6 +161,107 @@ model RoleCapability {
   @@index([tenantId])
   @@index([capabilityId])
   @@map("role_capabilities")
+}
+
+/// Phase C — C1: per-resource data scope for a role.
+///
+/// One row per (role × resource). The `scope` value drives the
+/// service-layer filter (C3) that ANDs into every list/find query
+/// for the resource:
+///
+///   'own'      WHERE assignedToId = :userId
+///   'team'     WHERE assignedToId IN (members of :userTeamId)
+///   'company'  WHERE companyId IN (:userScopeAssignments.companyIds)
+///   'country'  WHERE countryId IN (:userScopeAssignments.countryIds)
+///   'global'   no extra filter (legacy / admin behaviour).
+///
+/// The 11 seeded system roles all default to 'global' so the existing
+/// 452 tests are unaffected. Custom roles created via the UI in C8
+/// pick a per-resource scope.
+///
+/// Resources currently supported: lead, captain, followup,
+/// whatsapp.conversation. Extending the list = add a row to the
+/// `(resource)` CHECK constraint via a follow-up migration + the
+/// service registry that consumes this table.
+model RoleScope {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleId    String   @map("role_id") @db.Uuid
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  resource  String
+  scope     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([roleId, resource])
+  @@index([tenantId, resource])
+  @@map("role_scopes")
+}
+
+/// Phase C — C1: per-(role × resource × field) read/write toggle.
+///
+/// Default for absent rows is read=TRUE / write=TRUE — restrictions
+/// are explicit denials, not whitelists. C4 wires read-side
+/// enforcement at the service exit; C5 wires write-side at the DTO
+/// boundary. Field paths use dot-syntax for nested JSON, eg.
+/// 'attribution.campaign.id'.
+///
+/// The seed installs 3 deny rows for the `sales_agent` role on the
+/// `lead` resource:
+///   - 'id'                    canRead = FALSE
+///   - 'attribution.campaign'  canRead = FALSE
+///   - 'source'                canRead = FALSE
+/// Until C4 ships, these rows are present but unread, so the test
+/// suite is unaffected.
+model FieldPermission {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleId    String   @map("role_id") @db.Uuid
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  resource  String
+  field     String
+  canRead   Boolean  @default(true) @map("can_read")
+  canWrite  Boolean  @default(true) @map("can_write")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([roleId, resource, field])
+  @@index([tenantId, resource])
+  @@map("field_permissions")
+}
+
+/// Phase C — C1: binds a user to one or more (company, country)
+/// tuples for the `company` and `country` data scopes.
+///
+/// At least one of `companyId` / `countryId` must be set (CHECK
+/// constraint in the migration). A user can be assigned to N rows —
+/// e.g. an account manager covering EG-Uber and EG-inDrive gets two
+/// rows. No backfill on existing users; they keep their current
+/// 'global' behaviour because every system role's RoleScope row is
+/// 'global' by default.
+///
+/// Resolution rule (C9):
+///   - 'company' scope → (lead.companyId IN userCompanyIds) OR
+///                       (lead.countryId IN userCountryIds where
+///                        company is implicit through country.companyId).
+///   - 'country' scope → (lead.countryId IN userCountryIds).
+model UserScopeAssignment {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  countryId String?  @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([userId, companyId, countryId])
+  @@index([tenantId, userId])
+  @@index([tenantId, companyId])
+  @@index([tenantId, countryId])
+  @@map("user_scope_assignments")
 }
 
 /// A user inside a single tenant.
@@ -182,33 +311,40 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  sessions       UserSession[]
+  sessions                    UserSession[]
   // Back-relations for CRM core (C10). A user may own / be assigned to leads
   // and may author activities. Kept on the User side so we can later list
   // "all leads I created" or "all activities I logged" without a JOIN
   // through the join table.
-  createdLeads   Lead[]         @relation("LeadCreator")
-  assignedLeads  Lead[]         @relation("LeadAssignee")
-  authoredActivities LeadActivity[]
+  createdLeads                Lead[]                 @relation("LeadCreator")
+  assignedLeads               Lead[]                 @relation("LeadAssignee")
+  authoredActivities          LeadActivity[]
   /// C36 — follow-ups the user is responsible for. The owner of a
   /// follow-up is `assignedToId`; `createdById` is who scheduled it
   /// (may be the same).
-  assignedFollowUps  LeadFollowUp[] @relation("LeadFollowUpAssignee")
-  createdFollowUps   LeadFollowUp[] @relation("LeadFollowUpCreator")
+  assignedFollowUps           LeadFollowUp[]         @relation("LeadFollowUpAssignee")
+  createdFollowUps            LeadFollowUp[]         @relation("LeadFollowUpCreator")
   /// C40 — audit-event rows authored by this user.
-  auditEvents        AuditEvent[]
+  auditEvents                 AuditEvent[]
   /// P2-02 — in-app notifications addressed to this user.
-  notifications      Notification[]
+  notifications               Notification[]
   /// P2-03 — bonus accruals earned by this user.
-  bonusAccruals      BonusAccrual[] @relation("BonusAccrualRecipient")
+  bonusAccruals               BonusAccrual[]         @relation("BonusAccrualRecipient")
   /// P2-09 — captain-document review trail.
-  reviewedDocuments  CaptainDocument[] @relation("CaptainDocumentReviewer")
-  uploadedDocuments  CaptainDocument[] @relation("CaptainDocumentUploader")
+  reviewedDocuments           CaptainDocument[]      @relation("CaptainDocumentReviewer")
+  uploadedDocuments           CaptainDocument[]      @relation("CaptainDocumentUploader")
   /// Phase 1A — distribution engine back-relations.
-  agentCapacity      AgentCapacity?
-  routedLeads        LeadRoutingLog[]      @relation("LeadRoutingLogChosen")
-  authoredDistributionRules DistributionRule[] @relation("DistributionRuleAuthor")
-  targetedByDistributionRules DistributionRule[] @relation("DistributionRuleTargetUser")
+  agentCapacity               AgentCapacity?
+  routedLeads                 LeadRoutingLog[]       @relation("LeadRoutingLogChosen")
+  authoredDistributionRules   DistributionRule[]     @relation("DistributionRuleAuthor")
+  targetedByDistributionRules DistributionRule[]     @relation("DistributionRuleTargetUser")
+  /// Phase C — C1: per-user (company × country) scope bindings used
+  /// by the 'company' / 'country' data scopes. Empty = no extra
+  /// access path beyond `own` / `team`.
+  scopeAssignments            UserScopeAssignment[]
+  /// Phase C — C10B-1: WhatsApp conversations currently assigned to
+  /// this user. Set by the inbound router or manual handover.
+  whatsappConversations       WhatsAppConversation[] @relation("WhatsAppConversationAssignee")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -230,18 +366,18 @@ model User {
 /// chain: if a client presents a refresh token whose row already has
 /// `revoked_at`, every descendant session is revoked too.
 model UserSession {
-  id               String   @id @default(uuid()) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
-  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId           String   @map("user_id") @db.Uuid
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  refreshTokenHash String   @map("refresh_token_hash")
-  userAgent        String?  @map("user_agent")
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @map("tenant_id") @db.Uuid
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String    @map("user_id") @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
   ip               String?
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  expiresAt        DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
-  replacedById     String?  @map("replaced_by_id") @db.Uuid
+  replacedById     String?   @map("replaced_by_id") @db.Uuid
 
   @@index([tenantId, userId])
   @@index([refreshTokenHash])
@@ -305,22 +441,22 @@ model Pipeline {
 /// `tenantId` is duplicated from the parent pipeline so the FORCE'd
 /// RLS policy can do a single GUC compare without joining.
 model PipelineStage {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String   @map("tenant_id") @db.Uuid
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  pipelineId String   @map("pipeline_id") @db.Uuid
-  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
-  code       String
-  name       String
-  order      Int
-  isTerminal Boolean  @default(false) @map("is_terminal")
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pipelineId   String   @map("pipeline_id") @db.Uuid
+  pipeline     Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  code         String
+  name         String
+  order        Int
+  isTerminal   Boolean  @default(false) @map("is_terminal")
   /// Phase A — A1: classifies a terminal stage as 'won' or 'lost'.
   /// Drives `Lead.lifecycleState` on stage moves. NULL on non-terminal
   /// stages and on terminal stages that are neither (rare; admin can
   /// configure later via Pipeline Builder).
-  terminalKind String? @map("terminal_kind")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  terminalKind String?  @map("terminal_kind")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   leads Lead[]
 
@@ -337,26 +473,26 @@ model PipelineStage {
 /// 1-1 Captain relation lives on the Captain side (`captains.lead_id`
 /// UNIQUE) — a Lead has at-most-one Captain via the back-relation.
 model Lead {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String   @map("tenant_id") @db.Uuid
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name         String
-  phone        String
-  email        String?
-  source       String   @default("manual")
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  phone    String
+  email    String?
+  source   String  @default("manual")
 
   /// Phase 1B — B1: explicit (company, country) scope on the lead.
   /// Both nullable: a lead with NULL/NULL falls back to the tenant's
   /// default pipeline at read time (preserves pre-1B behaviour).
   /// Once the Pipeline Builder is the canonical surface, new leads
   /// get these populated based on the source / form they came from.
-  companyId    String?  @map("company_id") @db.Uuid
-  company      Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  countryId    String?  @map("country_id") @db.Uuid
-  country      Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  countryId String?  @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
 
-  stageId      String   @map("stage_id") @db.Uuid
-  stage        PipelineStage @relation(fields: [stageId], references: [id])
+  stageId String        @map("stage_id") @db.Uuid
+  stage   PipelineStage @relation(fields: [stageId], references: [id])
 
   /// Phase 1B — B1: denormalised pipeline pointer. Always equal to
   /// `stage.pipelineId`; kept on the row so Kanban / reporting can
@@ -364,14 +500,14 @@ model Lead {
   /// guard can catch cross-pipeline transitions cheaply.
   /// Nullable today; will be promoted to NOT NULL after B3 ships
   /// and a backfill window closes.
-  pipelineId   String?  @map("pipeline_id") @db.Uuid
-  pipeline     Pipeline? @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+  pipelineId String?   @map("pipeline_id") @db.Uuid
+  pipeline   Pipeline? @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
 
-  assignedToId String?  @map("assigned_to_id") @db.Uuid
-  assignedTo   User?    @relation("LeadAssignee", fields: [assignedToId], references: [id])
+  assignedToId String? @map("assigned_to_id") @db.Uuid
+  assignedTo   User?   @relation("LeadAssignee", fields: [assignedToId], references: [id])
 
-  createdById  String?  @map("created_by_id") @db.Uuid
-  createdBy    User?    @relation("LeadCreator", fields: [createdById], references: [id])
+  createdById String? @map("created_by_id") @db.Uuid
+  createdBy   User?   @relation("LeadCreator", fields: [createdById], references: [id])
 
   /// Response-SLA tracking (C11).
   /// `slaDueAt` is when the assigned agent must produce a `note` or `call`
@@ -381,9 +517,9 @@ model Lead {
   /// `lastResponseAt` is the timestamp of the most recent agent-driven
   /// activity (note/call/stage_change/assignment); used both for the
   /// reset-on-activity rule and for reporting.
-  slaDueAt        DateTime? @map("sla_due_at") @db.Timestamptz(6)
-  slaStatus       String    @default("active") @map("sla_status")
-  lastResponseAt  DateTime? @map("last_response_at") @db.Timestamptz(6)
+  slaDueAt       DateTime? @map("sla_due_at") @db.Timestamptz(6)
+  slaStatus      String    @default("active") @map("sla_status")
+  lastResponseAt DateTime? @map("last_response_at") @db.Timestamptz(6)
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -422,17 +558,35 @@ model Lead {
   /// CSV import, manual). Distribution rules + reporting will read
   /// from this in Phase D. Backfilled to `{ source: <flat source> }`
   /// for legacy rows; `Lead.source` is preserved for backward compat.
-  attribution  Json?       @map("attribution")
+  attribution Json? @map("attribution")
 
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Phase C — C10B-1: stable identity for the person behind a phone.
+  /// One Contact per (tenantId, phone); a single Contact may be tied
+  /// to multiple Leads across the funnel's lifetime (re-entry, churn,
+  /// captain → re-lead). Nullable for now — backfill happens in B2.
+  contactId String?  @map("contact_id") @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
-  captain    Captain?
-  activities LeadActivity[]
-  whatsappConversations WhatsAppConversation[]
-  followUps  LeadFollowUp[]
+  /// Phase C — C10B-1: latest WhatsApp conversation for this lead, if
+  /// any. Set by the inbound flow (B3) when a conversation is auto-
+  /// linked or when an agent links manually. Optional and SetNull on
+  /// conversation delete so a closed conversation doesn't cascade-
+  /// delete the lead. Read-only "open chat from lead" pointer — the
+  /// authoritative lead↔conversation relation is the conversation's
+  /// own `leadId` column (multiple conversations may map to one lead
+  /// over time).
+  primaryConversationId String?               @map("primary_conversation_id") @db.Uuid
+  primaryConversation   WhatsAppConversation? @relation("LeadPrimaryConversation", fields: [primaryConversationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  captain               Captain?
+  activities            LeadActivity[]
+  whatsappConversations WhatsAppConversation[] @relation("ConversationLead")
+  followUps             LeadFollowUp[]
   /// Phase 1A — append-only routing decisions for this lead.
-  routingLogs LeadRoutingLog[]
+  routingLogs           LeadRoutingLog[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
@@ -448,6 +602,8 @@ model Lead {
   @@index([tenantId, companyId, countryId])
   // Phase A — workspace + reports filter by lifecycle state.
   @@index([tenantId, lifecycleState])
+  // Phase C — C10B-1: lead lookups via contact identity.
+  @@index([tenantId, contactId])
   @@map("leads")
 }
 
@@ -463,11 +619,11 @@ model Lead {
 /// from `onboardingStatus` (active / inactive / archived) so the captain
 /// can be deactivated without touching the onboarding state.
 model Captain {
-  id                     String   @id @default(uuid()) @db.Uuid
-  tenantId               String   @map("tenant_id") @db.Uuid
-  tenant                 Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  leadId                 String   @unique @map("lead_id") @db.Uuid
-  lead                   Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId   String @unique @map("lead_id") @db.Uuid
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   /// Denormalised from the lead at conversion time.
   name  String
@@ -482,10 +638,10 @@ model Captain {
   status String @default("active")
 
   /// `pending`, `in_progress`, `active`, `rejected`.
-  onboardingStatus       String   @default("pending") @map("onboarding_status")
-  hasIdCard              Boolean  @default(false) @map("has_id_card")
-  hasLicense             Boolean  @default(false) @map("has_license")
-  hasVehicleRegistration Boolean  @default(false) @map("has_vehicle_registration")
+  onboardingStatus       String    @default("pending") @map("onboarding_status")
+  hasIdCard              Boolean   @default(false) @map("has_id_card")
+  hasLicense             Boolean   @default(false) @map("has_license")
+  hasVehicleRegistration Boolean   @default(false) @map("has_vehicle_registration")
   activatedAt            DateTime? @map("activated_at") @db.Timestamptz(6)
 
   /// P2-09 — trip telemetry. `firstTripAt` is the timestamp of the
@@ -530,28 +686,28 @@ model Captain {
 /// it open so a tenant in a market with extra paperwork (e.g. KSA
 /// `iqama`) can extend without a schema change.
 model CaptainDocument {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  captainId   String   @map("captain_id") @db.Uuid
-  captain     Captain  @relation(fields: [captainId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  captainId String  @map("captain_id") @db.Uuid
+  captain   Captain @relation(fields: [captainId], references: [id], onDelete: Cascade)
 
-  kind        String
-  storageRef  String   @map("storage_ref")
-  fileName    String   @map("file_name")
-  mimeType    String   @map("mime_type")
-  sizeBytes   Int      @map("size_bytes")
+  kind       String
+  storageRef String @map("storage_ref")
+  fileName   String @map("file_name")
+  mimeType   String @map("mime_type")
+  sizeBytes  Int    @map("size_bytes")
 
-  status      String   @default("pending")
-  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  status    String    @default("pending")
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
 
-  reviewerUserId String?  @map("reviewer_user_id") @db.Uuid
-  reviewer       User?    @relation("CaptainDocumentReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  reviewerUserId String?   @map("reviewer_user_id") @db.Uuid
+  reviewer       User?     @relation("CaptainDocumentReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
   reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
   reviewNotes    String?   @map("review_notes")
 
-  uploadedById String?  @map("uploaded_by_id") @db.Uuid
-  uploadedBy   User?    @relation("CaptainDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedById String? @map("uploaded_by_id") @db.Uuid
+  uploadedBy   User?   @relation("CaptainDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -582,7 +738,7 @@ model CaptainTrip {
   occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
   payload    Json?
 
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@unique([captainId, tripId])
   @@index([tenantId, captainId, occurredAt])
@@ -595,17 +751,26 @@ model CaptainTrip {
 /// `payload` carries structured data for system events (e.g. from/to
 /// stage codes) so the UI can render diffs without regex on the body.
 model LeadActivity {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  leadId      String   @map("lead_id") @db.Uuid
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  type        String
-  body        String?
-  payload     Json?
-  createdById String?  @map("created_by_id") @db.Uuid
-  createdBy   User?    @relation(fields: [createdById], references: [id])
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId       String   @map("lead_id") @db.Uuid
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type         String
+  body         String?
+  payload      Json?
+  /// Phase C — C10B-1: provenance for the activity — which surface
+  /// produced it. Lets the timeline + audit distinguish:
+  ///   'lead'      — agent action inside the lead detail page (default).
+  ///   'whatsapp'  — chat send/receive that mirrored to the activity feed.
+  ///   'system'    — automation / SLA / distribution / bonus engine.
+  ///   'import'    — CSV / batch import.
+  /// Default 'lead' preserves existing behaviour for the 555 tests; the
+  /// inbound flow (B3) and chat-send paths (B4) write 'whatsapp'.
+  actionSource String   @default("lead") @map("action_source")
+  createdById  String?  @map("created_by_id") @db.Uuid
+  createdBy    User?    @relation(fields: [createdById], references: [id])
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, leadId, createdAt])
   @@index([tenantId, type])
@@ -629,14 +794,20 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  countries    Country[]
-  bonusRules   BonusRule[]
-  competitions Competition[]
-  pipelines    Pipeline[]
+  countries             Country[]
+  bonusRules            BonusRule[]
+  competitions          Competition[]
+  pipelines             Pipeline[]
   /// Phase 1A — distribution rules scoped to this company.
-  distributionRules DistributionRule[]
+  distributionRules     DistributionRule[]
   /// Phase 1B — leads explicitly scoped to this company.
-  leads        Lead[]
+  leads                 Lead[]
+  /// Phase C — C1: users granted access to this company via
+  /// `company` / `country` data scopes.
+  userScopeAssignments  UserScopeAssignment[]
+  /// Phase C — C10B-1: WhatsApp conversations whose ownership chain
+  /// resolves to this company.
+  whatsappConversations WhatsAppConversation[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -662,14 +833,20 @@ model Country {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  teams        Team[]
-  bonusRules   BonusRule[]
-  competitions Competition[]
-  pipelines    Pipeline[]
+  teams                 Team[]
+  bonusRules            BonusRule[]
+  competitions          Competition[]
+  pipelines             Pipeline[]
   /// Phase 1A — distribution rules scoped to this country.
-  distributionRules DistributionRule[]
+  distributionRules     DistributionRule[]
   /// Phase 1B — leads explicitly scoped to this country.
-  leads        Lead[]
+  leads                 Lead[]
+  /// Phase C — C1: users granted access to this country via the
+  /// `country` data scope.
+  userScopeAssignments  UserScopeAssignment[]
+  /// Phase C — C10B-1: WhatsApp conversations whose ownership chain
+  /// resolves to this country.
+  whatsappConversations WhatsAppConversation[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.
@@ -695,16 +872,144 @@ model Team {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users        User[]
-  captains     Captain[]
-  bonusRules   BonusRule[]
-  competitions Competition[]
+  users                 User[]
+  captains              Captain[]
+  bonusRules            BonusRule[]
+  competitions          Competition[]
   /// Phase 1A — distribution rules that target this team's pool.
-  distributionRules DistributionRule[]
+  distributionRules     DistributionRule[]
+  /// Phase C — C10B-1: WhatsApp conversations currently owned by an
+  /// agent in this team (denormalised for scope resolution).
+  whatsappConversations WhatsAppConversation[]
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
   @@map("teams")
+}
+
+/// Phase C — C10B-1: Contact — stable identity for the human behind a
+/// phone number, decoupled from the lead lifecycle.
+///
+/// One row per (tenantId, phone). Multiple Lead rows may point at the
+/// same Contact across the customer's lifetime: a churned lead who
+/// re-applies, a captain who later re-enters as a lead in a different
+/// country, etc. The Lead remains the source of truth for
+/// pipeline-state (stage / lifecycleState / next actions); Contact
+/// holds the stable phone identity + the WhatsApp profile snapshot.
+///
+/// `displayName` is the latest WhatsApp profile name we've seen
+/// (mutable — overwritten on every inbound webhook). `originalDisplayName`
+/// and `originalPhone` capture the FIRST values we observed and are
+/// never overwritten — they preserve the raw provider-supplied identity
+/// for audit / dedupe even after agents clean up the lead.
+/// `rawProfile` stores the verbatim provider profile payload (Meta's
+/// `contacts[0].profile.*`) in case future fields land before a schema
+/// migration ships.
+///
+/// Denormalised flags `isCaptain` / `hasOpenLead` let the inbound
+/// router decide between "auto-create lead", "link to existing lead",
+/// and "queue for review" in O(1) without a join. They are kept in
+/// sync by lead/captain create/update triggers (wired in B3).
+model Contact {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// E.164 normalised phone (e.g. `+201001234567`). Unique per tenant.
+  phone               String
+  /// Latest known WhatsApp profile name. Mutable — overwritten on
+  /// every inbound webhook that carries a profile payload.
+  displayName         String? @map("display_name")
+  /// Optional language hint sourced from the WhatsApp profile (e.g.
+  /// 'ar', 'en', 'ar-EG'). Used by the inbound flow to choose a
+  /// default lead language without prompting.
+  language            String?
+  /// Raw provider profile payload — verbatim copy of what arrived on
+  /// the webhook. Preserved for audit / future field harvesting.
+  rawProfile          Json?   @map("raw_profile")
+  /// IMMUTABLE — first-seen phone, snapshot of `phone` at create time.
+  /// Used for dedupe forensics if the canonical `phone` is later
+  /// re-normalised (rare, e.g. a tenant default-dial-code correction).
+  originalPhone       String  @map("original_phone")
+  /// IMMUTABLE — first-seen display name. Preserves what the provider
+  /// initially sent so an agent's `displayName` cleanup never
+  /// destroys the original identity.
+  originalDisplayName String? @map("original_display_name")
+
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  /// Denormalised flags consumed by the inbound router (B3) and the
+  /// admin UI. Kept in sync by triggers on captains / leads.
+  isCaptain   Boolean @default(false) @map("is_captain")
+  hasOpenLead Boolean @default(false) @map("has_open_lead")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  conversations WhatsAppConversation[]
+  leads         Lead[]
+  reviews       WhatsAppConversationReview[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, lastSeenAt])
+  @@index([tenantId, isCaptain])
+  @@index([tenantId, hasOpenLead])
+  @@map("contacts")
+}
+
+/// Phase C — C10B-1: WhatsAppConversationReview — duplicate / captain
+/// review queue.
+///
+/// Created by the inbound router (B3) when an inbound message can't
+/// be routed straight into the normal sales funnel:
+///   - 'captain_active'           — the contact is already an active
+///                                  captain; never auto-create a sales lead.
+///   - 'duplicate_lead'            — multiple non-terminal leads match
+///                                  the contact's phone.
+///   - 'unmatched_after_routing'   — no rule matched + no eligible
+///                                  agent found for round-robin.
+///
+/// One row per conversation (UNIQUE on conversationId): a queued
+/// conversation cannot enter the queue twice. `resolvedAt` flips the
+/// row out of the active queue without deleting it — full audit trail
+/// preserved.
+model WhatsAppConversationReview {
+  id             String               @id @default(uuid()) @db.Uuid
+  tenantId       String               @map("tenant_id") @db.Uuid
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversationId String               @unique @map("conversation_id") @db.Uuid
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contactId      String               @map("contact_id") @db.Uuid
+  contact        Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  /// 'captain_active' | 'duplicate_lead' | 'unmatched_after_routing'
+  reason             String
+  /// Populated when reason='duplicate_lead'. Lead UUIDs that share
+  /// the contact's phone and are NOT in a terminal stage. The
+  /// reviewer picks one, dismisses, or creates a new lead.
+  candidateLeadIds   String[] @map("candidate_lead_ids") @db.Uuid
+  /// Populated when reason='captain_active'.
+  candidateCaptainId String?  @map("candidate_captain_id") @db.Uuid
+
+  /// Snapshot of the last 2 inbound message bodies at the moment the
+  /// review row was created. Gives reviewers context without paging
+  /// through the conversation. Stored as a small JSON array of
+  /// `{ text, createdAt }` rather than a relation so the snapshot
+  /// remains stable even if future messages arrive.
+  contextSnapshot Json? @map("context_snapshot")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Resolution metadata — written by the resolveReview write path (B4).
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolvedById String?   @map("resolved_by_id") @db.Uuid
+  /// 'linked_to_lead' | 'linked_to_captain' | 'new_lead' | 'dismissed'
+  resolution   String?
+
+  @@index([tenantId, resolvedAt])
+  @@index([tenantId, reason])
+  @@map("whatsapp_conversation_reviews")
 }
 
 /// WhatsAppAccount — per-tenant configuration for one provider connection.
@@ -773,17 +1078,17 @@ model WhatsAppAccount {
 /// Meta's side, but we constrain uniqueness per-tenant so duplicate
 /// webhook deliveries are idempotent (P2002 → no-op).
 model WhatsAppMessage {
-  id                String  @id @default(uuid()) @db.Uuid
-  tenantId          String  @map("tenant_id") @db.Uuid
-  tenant            Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId         String  @map("account_id") @db.Uuid
-  account           WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id        String          @id @default(uuid()) @db.Uuid
+  tenantId  String          @map("tenant_id") @db.Uuid
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId String          @map("account_id") @db.Uuid
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   /// Conversation this message belongs to (C22). Required after migration —
   /// every inbound + outbound message attaches to exactly one conversation
   /// keyed on (tenantId, accountId, phone).
-  conversationId    String  @map("conversation_id") @db.Uuid
-  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String               @map("conversation_id") @db.Uuid
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   /// Other party's E.164 phone number.
   phone             String
@@ -840,18 +1145,18 @@ model WhatsAppMessage {
 /// sync at every message-insert. The inbox UI (later chunks) renders the
 /// list against these columns without joining the messages table.
 model WhatsAppConversation {
-  id              String  @id @default(uuid()) @db.Uuid
-  tenantId        String  @map("tenant_id") @db.Uuid
-  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId       String  @map("account_id") @db.Uuid
-  account         WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id        String          @id @default(uuid()) @db.Uuid
+  tenantId  String          @map("tenant_id") @db.Uuid
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId String          @map("account_id") @db.Uuid
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   /// Other party's E.164 phone number.
   phone           String
   /// `open` | `closed`. The partial unique index below enforces "one
   /// open conversation per (tenantId, accountId, phone)" — a closed
   /// thread doesn't block a new one.
-  status          String  @default("open")
+  status          String    @default("open")
   /// Most recent message timestamp + text body, denormalised for cheap
   /// inbox-list rendering. Kept in sync at message-insert time.
   lastMessageAt   DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
@@ -867,18 +1172,67 @@ model WhatsAppConversation {
   /// tenant-scoped lead matches `phone`. Multiple-match leads are not
   /// auto-linked (admin must pick). FK is ON DELETE SET NULL so deleting
   /// a lead does not cascade-delete the conversation history.
-  leadId          String?  @map("lead_id") @db.Uuid
-  lead            Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId String? @map("lead_id") @db.Uuid
+  lead   Lead?   @relation("ConversationLead", fields: [leadId], references: [id], onDelete: SetNull)
+
+  /// Phase C — C10B-1: stable contact identity. Required after the B2
+  /// migration step backfills every existing conversation; nullable
+  /// for now so the schema change is non-breaking. Inbound flow (B3)
+  /// will create or match a Contact per (tenantId, phone) on every
+  /// webhook hit.
+  contactId String?  @map("contact_id") @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// Phase C — C10B-1: ownership chain. All four columns are
+  /// denormalised at routing/handover time so the scope resolver can
+  /// filter conversations directly without joining through the lead
+  /// (critical for unlinked-but-assigned conversations). Set by the
+  /// inbound router (B3) and the manual handover endpoint; rewritten
+  /// when a lead is reassigned (per the open-question decision in
+  /// the C10B plan).
+  assignedToId     String?   @map("assigned_to_id") @db.Uuid
+  assignedTo       User?     @relation("WhatsAppConversationAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  teamId           String?   @map("team_id") @db.Uuid
+  team             Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  companyId        String?   @map("company_id") @db.Uuid
+  company          Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  countryId        String?   @map("country_id") @db.Uuid
+  country          Country?  @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  /// Provenance for the current ownership row. Lets audit + UI tell
+  /// "auto-routed" from "manually handed over" from "agent self-claim
+  /// on outbound" from "migrated by backfill". Values:
+  ///   'inbound_route'    — assigned by the inbound router (B3)
+  ///   'manual_handover'  — handover endpoint (B4)
+  ///   'outbound_self'    — agent replied to an unowned conversation
+  ///   'migrated'         — written by the C10B-2 backfill script
+  ///   'lead_propagation' — re-denormalised when the linked lead was
+  ///                        reassigned
+  assignmentSource String?   @map("assignment_source")
+  assignedAt       DateTime? @map("assigned_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  messages WhatsAppMessage[]
+  messages        WhatsAppMessage[]
+  /// Phase C — C10B-1: review queue rows (1:0..1) for this conversation.
+  review          WhatsAppConversationReview?
+  /// Phase C — C10B-1: leads that point to this conversation as their
+  /// primary chat surface ("open WhatsApp from Lead"). 0..N because
+  /// the same conversation may be the primary surface for multiple
+  /// leads across re-entries.
+  primaryForLeads Lead[]                      @relation("LeadPrimaryConversation")
 
   @@index([tenantId, accountId, lastMessageAt])
   @@index([tenantId, status, lastMessageAt])
   @@index([tenantId, leadId])
   @@index([tenantId, lastInboundAt])
+  /// Phase C — C10B-1: scope-resolver hot paths. Each scope value
+  /// hits one of these indexes directly.
+  @@index([tenantId, assignedToId, status])
+  @@index([tenantId, teamId, status])
+  @@index([tenantId, companyId, status])
+  @@index([tenantId, countryId, status])
+  @@index([tenantId, contactId])
   @@map("whatsapp_conversations")
 }
 
@@ -894,28 +1248,28 @@ model WhatsAppConversation {
 /// CRM tracks `status` so an admin can mark a template "rejected" or
 /// "paused" and it disappears from the picker.
 model WhatsAppTemplate {
-  id          String  @id @default(uuid()) @db.Uuid
-  tenantId    String  @map("tenant_id") @db.Uuid
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId   String  @map("account_id") @db.Uuid
-  account     WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id        String          @id @default(uuid()) @db.Uuid
+  tenantId  String          @map("tenant_id") @db.Uuid
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId String          @map("account_id") @db.Uuid
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   /// Meta-approved template name (e.g. "appointment_reminder").
-  name        String
+  name          String
   /// BCP-47 language code (e.g. "en", "ar", "en_US").
-  language    String
+  language      String
   /// Meta category — determines Meta's pricing / latency profile.
   /// One of: `marketing` | `utility` | `authentication`.
-  category    String
+  category      String
   /// Body template with positional placeholders `{{1}}`, `{{2}}`, ...
-  bodyText    String  @map("body_text")
+  bodyText      String @map("body_text")
   /// Number of placeholder variables in `bodyText`. Pre-computed at
   /// upsert time so the picker can validate the variable count
   /// without re-parsing the template body on every render.
-  variableCount Int   @default(0) @map("variable_count")
+  variableCount Int    @default(0) @map("variable_count")
   /// Lifecycle in the CRM: `approved` (default — agent can use it),
   /// `paused` (admin disabled), `rejected` (Meta rejected).
-  status      String  @default("approved")
+  status        String @default("approved")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -955,28 +1309,28 @@ model WhatsAppRoute {
 /// engine + bonus-period accruals land in a later chunk; for the MVP
 /// we only manage rules.
 model BonusRule {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  companyId String   @map("company_id") @db.Uuid
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  countryId String   @map("country_id") @db.Uuid
-  country   Country  @relation(fields: [countryId], references: [id], onDelete: Restrict)
-  teamId    String?  @map("team_id") @db.Uuid
-  team      Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  roleId    String?  @map("role_id") @db.Uuid
-  role      Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  companyId String  @map("company_id") @db.Uuid
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  countryId String  @map("country_id") @db.Uuid
+  country   Country @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  teamId    String? @map("team_id") @db.Uuid
+  team      Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  roleId    String? @map("role_id") @db.Uuid
+  role      Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull)
 
-  bonusType String   @map("bonus_type")
+  bonusType String  @map("bonus_type")
   trigger   String
-  amount    Decimal  @db.Decimal(12, 2)
-  isActive  Boolean  @default(true) @map("is_active")
+  amount    Decimal @db.Decimal(12, 2)
+  isActive  Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  accruals  BonusAccrual[]
+  accruals BonusAccrual[]
 
   @@index([tenantId, isActive])
   @@index([tenantId, companyId, countryId])
@@ -993,32 +1347,32 @@ model BonusRule {
 /// through `pending → paid` (or `void` via admin action) — payout
 /// pipeline ships in P2-13.
 model BonusAccrual {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  bonusRuleId     String   @map("bonus_rule_id") @db.Uuid
-  bonusRule       BonusRule @relation(fields: [bonusRuleId], references: [id], onDelete: Restrict)
+  bonusRuleId String    @map("bonus_rule_id") @db.Uuid
+  bonusRule   BonusRule @relation(fields: [bonusRuleId], references: [id], onDelete: Restrict)
 
-  recipientUserId String   @map("recipient_user_id") @db.Uuid
-  recipient       User     @relation("BonusAccrualRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  recipientUserId String @map("recipient_user_id") @db.Uuid
+  recipient       User   @relation("BonusAccrualRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
 
-  captainId       String?  @map("captain_id") @db.Uuid
-  captain         Captain? @relation(fields: [captainId], references: [id], onDelete: SetNull)
+  captainId String?  @map("captain_id") @db.Uuid
+  captain   Captain? @relation(fields: [captainId], references: [id], onDelete: SetNull)
 
-  triggerKind     String   @map("trigger_kind")
-  amount          Decimal  @db.Decimal(12, 2)
-  status          String   @default("pending")
-  payload         Json?
+  triggerKind String  @map("trigger_kind")
+  amount      Decimal @db.Decimal(12, 2)
+  status      String  @default("pending")
+  payload     Json?
 
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Idempotency: a rule fires once per (rule, captain, trigger).
+  @@unique([bonusRuleId, captainId, triggerKind])
   // "all my pending accruals, newest first" + admin filter by status.
   @@index([tenantId, recipientUserId, status, createdAt])
   @@index([tenantId, status, createdAt])
-  // Idempotency: a rule fires once per (rule, captain, trigger).
-  @@unique([bonusRuleId, captainId, triggerKind])
   @@map("bonus_accruals")
 }
 
@@ -1033,20 +1387,20 @@ model BonusAccrual {
 /// Payload carries the relevant entity ids; the inbox UI deep-links.
 /// `readAt` flips when the recipient marks it read; null = unread.
 model Notification {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   recipientUserId String @map("recipient_user_id") @db.Uuid
   recipient       User   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
 
-  kind        String
-  title       String
-  body        String?
-  payload     Json?
-  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+  kind    String
+  title   String
+  body    String?
+  payload Json?
+  readAt  DateTime? @map("read_at") @db.Timestamptz(6)
 
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // "My inbox, unread first then newest first" — covering index.
   @@index([tenantId, recipientUserId, readAt, createdAt])
@@ -1062,19 +1416,19 @@ model Notification {
 /// streams both tables in a single normalized view sorted desc by
 /// timestamp.
 model AuditEvent {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Stable action verb, e.g. "bonus.create", "competition.status_change".
   action      String
-  entityType  String?  @map("entity_type")
-  entityId    String?  @map("entity_id") @db.Uuid
+  entityType  String? @map("entity_type")
+  entityId    String? @map("entity_id") @db.Uuid
   payload     Json?
-  actorUserId String?  @map("actor_user_id") @db.Uuid
-  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([tenantId, createdAt])
   @@index([tenantId, action, createdAt])
@@ -1089,28 +1443,32 @@ model AuditEvent {
 /// overridden at create time). `completedAt` flips when the agent
 /// marks it done — overdue = !completed && dueAt < now.
 model LeadFollowUp {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  leadId      String   @map("lead_id") @db.Uuid
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId   String @map("lead_id") @db.Uuid
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
-  actionType  String   @map("action_type")
-  dueAt       DateTime @map("due_at") @db.Timestamptz(6)
-  note        String?
-  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  actionType   String    @map("action_type")
+  dueAt        DateTime  @map("due_at") @db.Timestamptz(6)
+  note         String?
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
   /// Phase A — A1: when set + > now, the row is hidden from
   /// "overdue" / "due-today" counters until snoozedUntil passes.
   /// Cleared on completion.
   snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
+  /// Phase C — C10B-1: provenance — same enum-like values as
+  /// LeadActivity.actionSource. Lets reports break down "follow-ups
+  /// scheduled from chat" vs "from the lead page".
+  actionSource String    @default("lead") @map("action_source")
 
   assignedToId String? @map("assigned_to_id") @db.Uuid
   assignedTo   User?   @relation("LeadFollowUpAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   createdById  String? @map("created_by_id") @db.Uuid
   createdBy    User?   @relation("LeadFollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, leadId, dueAt])
   // Hot path: "my open follow-ups, soonest first" + the overdue scan.
@@ -1156,9 +1514,9 @@ model LostReason {
 /// Leaderboard computation is best-effort against the existing data
 /// (leads + lead_activities); a richer materialised view ships later.
 model Competition {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name      String
   companyId String?  @map("company_id") @db.Uuid
@@ -1197,28 +1555,28 @@ model Competition {
 /// the values to a `CreateLeadDto`. A `name` and `phone` are
 /// required to ingest; missing → drop with an audit row.
 model MetaLeadSource {
-  id          String  @id @default(uuid()) @db.Uuid
-  tenantId    String  @map("tenant_id") @db.Uuid
-  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   /// Friendly label shown in admin (e.g. "Cairo — Uber driver page").
-  displayName String  @map("display_name")
+  displayName   String  @map("display_name")
   /// Meta Page id receiving the webhook delivery.
-  pageId      String  @map("page_id")
+  pageId        String  @map("page_id")
   /// Optional form id (when the same page runs multiple lead forms).
-  formId      String? @map("form_id")
+  formId        String? @map("form_id")
   /// GET handshake verify token (unique-per-tenant by convention).
-  verifyToken String  @map("verify_token")
+  verifyToken   String  @map("verify_token")
   /// Meta App secret for HMAC signature verification.
-  appSecret   String? @map("app_secret")
+  appSecret     String? @map("app_secret")
   /// Lead source value written on every ingested lead. Defaults to "meta".
-  defaultSource String @default("meta") @map("default_source")
+  defaultSource String  @default("meta") @map("default_source")
   /// Field mapping (Meta form field name → CRM lead field). JSON.
-  fieldMapping Json   @map("field_mapping")
-  isActive    Boolean @default(true) @map("is_active")
+  fieldMapping  Json    @map("field_mapping")
+  isActive      Boolean @default(true) @map("is_active")
 
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([tenantId, pageId, formId])
   @@index([tenantId, isActive])
@@ -1249,24 +1607,24 @@ model MetaLeadSource {
 ///
 /// Tenant-scoped via FORCE'd RLS, same as the rest of the CRM.
 model TenantSettings {
-  tenantId        String   @id @map("tenant_id") @db.Uuid
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  timezone        String   @default("Africa/Cairo")
-  slaMinutes      Int      @default(60) @map("sla_minutes")
-  defaultDialCode String   @default("+20") @map("default_dial_code")
+  tenantId          String   @id @map("tenant_id") @db.Uuid
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  timezone          String   @default("Africa/Cairo")
+  slaMinutes        Int      @default(60) @map("sla_minutes")
+  defaultDialCode   String   @default("+20") @map("default_dial_code")
   /// PL-3 — legacy `{source, assigneeUserId}` JSONB. Phase 1A migrates
   /// these into the relational `distribution_rules` table; the column is
   /// kept for one release as a rollback safety net but services no
   /// longer read it. Drop in a future migration.
-  distributionRules Json   @default("[]") @map("distribution_rules")
+  distributionRules Json     @default("[]") @map("distribution_rules")
   /// Phase 1A — fallback strategy when DistributionService.route() finds
   /// no matching rule. One of: 'capacity' | 'round_robin' | 'weighted'.
   /// `specific_user` is intentionally excluded here (it requires a per-rule
   /// target). Defaults to 'capacity' so existing tenants behave identically
   /// to today's implementation.
-  defaultStrategy String   @default("capacity") @map("default_strategy")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  defaultStrategy   String   @default("capacity") @map("default_strategy")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("tenant_settings")
 }
@@ -1287,33 +1645,33 @@ model TenantSettings {
 /// `targetTeamId` (when set) restricts the candidate pool to that team
 /// regardless of strategy.
 model DistributionRule {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @map("tenant_id") @db.Uuid
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name          String
-  isActive      Boolean  @default(true) @map("is_active")
-  priority      Int      @default(100)
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+  priority Int     @default(100)
 
   /// Match conditions (NULL = any). All non-NULL fields must match.
-  source        String?
-  companyId     String?  @map("company_id") @db.Uuid
-  company       Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  countryId     String?  @map("country_id") @db.Uuid
-  country       Country? @relation(fields: [countryId], references: [id], onDelete: Cascade)
-  targetTeamId  String?  @map("target_team_id") @db.Uuid
-  targetTeam    Team?    @relation(fields: [targetTeamId], references: [id], onDelete: SetNull)
+  source       String?
+  companyId    String?  @map("company_id") @db.Uuid
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  countryId    String?  @map("country_id") @db.Uuid
+  country      Country? @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  targetTeamId String?  @map("target_team_id") @db.Uuid
+  targetTeam   Team?    @relation(fields: [targetTeamId], references: [id], onDelete: SetNull)
 
   /// Strategy + per-strategy target.
-  strategy      String
-  targetUserId  String?  @map("target_user_id") @db.Uuid
-  targetUser    User?    @relation("DistributionRuleTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  strategy     String
+  targetUserId String? @map("target_user_id") @db.Uuid
+  targetUser   User?   @relation("DistributionRuleTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
 
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById   String?  @map("created_by_id") @db.Uuid
-  createdBy     User?    @relation("DistributionRuleAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdBy   User?    @relation("DistributionRuleAuthor", fields: [createdById], references: [id], onDelete: SetNull)
 
-  routingLogs   LeadRoutingLog[]
+  routingLogs LeadRoutingLog[]
 
   @@index([tenantId, priority, isActive])
   @@index([tenantId, source])
@@ -1332,17 +1690,17 @@ model DistributionRule {
 ///   { mon: { start: "09:00", end: "18:00" }, tue: { ... }, ... }
 /// Times are in the tenant's IANA timezone (`tenant_settings.timezone`).
 model AgentCapacity {
-  userId            String    @id @map("user_id") @db.Uuid
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenantId          String    @map("tenant_id") @db.Uuid
-  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  maxActiveLeads    Int?      @map("max_active_leads")
-  weight            Int       @default(1)
-  isAvailable       Boolean   @default(true) @map("is_available")
-  outOfOfficeUntil  DateTime? @map("out_of_office_until") @db.Timestamptz(6)
-  workingHours      Json?     @map("working_hours")
-  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  userId           String    @id @map("user_id") @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId         String    @map("tenant_id") @db.Uuid
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  maxActiveLeads   Int?      @map("max_active_leads")
+  weight           Int       @default(1)
+  isAvailable      Boolean   @default(true) @map("is_available")
+  outOfOfficeUntil DateTime? @map("out_of_office_until") @db.Timestamptz(6)
+  workingHours     Json?     @map("working_hours")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([tenantId, isAvailable])
   @@map("agent_capacities")
@@ -1355,21 +1713,21 @@ model AgentCapacity {
 /// cases ops needs to see). `excludedReasons` is keyed by user id so
 /// the UI can render "candidate Bob excluded — out_of_office".
 model LeadRoutingLog {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  leadId          String   @map("lead_id") @db.Uuid
-  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  ruleId          String?  @map("rule_id") @db.Uuid
+  id              String            @id @default(uuid()) @db.Uuid
+  tenantId        String            @map("tenant_id") @db.Uuid
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId          String            @map("lead_id") @db.Uuid
+  lead            Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  ruleId          String?           @map("rule_id") @db.Uuid
   rule            DistributionRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   strategy        String
-  chosenUserId    String?  @map("chosen_user_id") @db.Uuid
-  chosenUser      User?    @relation("LeadRoutingLogChosen", fields: [chosenUserId], references: [id], onDelete: SetNull)
-  candidateCount  Int      @map("candidate_count")
-  excludedCount   Int      @map("excluded_count")
-  excludedReasons Json     @default("{}") @map("excluded_reasons")
-  decidedAt       DateTime @default(now()) @map("decided_at") @db.Timestamptz(6)
-  requestId       String?  @map("request_id")
+  chosenUserId    String?           @map("chosen_user_id") @db.Uuid
+  chosenUser      User?             @relation("LeadRoutingLogChosen", fields: [chosenUserId], references: [id], onDelete: SetNull)
+  candidateCount  Int               @map("candidate_count")
+  excludedCount   Int               @map("excluded_count")
+  excludedReasons Json              @default("{}") @map("excluded_reasons")
+  decidedAt       DateTime          @default(now()) @map("decided_at") @db.Timestamptz(6)
+  requestId       String?           @map("request_id")
 
   @@index([tenantId, leadId, decidedAt(sort: Desc)])
   @@index([tenantId, decidedAt(sort: Desc)])

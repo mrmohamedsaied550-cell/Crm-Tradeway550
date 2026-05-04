@@ -73,6 +73,36 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'whatsapp.template.read', description: 'View WhatsApp templates (picker dropdown)' },
   { code: 'whatsapp.template.write', description: 'Create / update / delete WhatsApp templates' },
   { code: 'whatsapp.media.send', description: 'Send image / document media in a conversation' },
+  // Phase C — C10B-4: WhatsApp ownership + review-queue + contact
+  // capabilities. `assign` is admin-style override (vs. handover, the
+  // guided agent action). `close / reopen` gate conversation
+  // lifecycle. `review.*` gates the duplicate / captain / unmatched
+  // queue (created by the C10B-3 inbound flow). `contact.*` gates
+  // editing the cleaned identity fields; `contact.write.raw` is the
+  // super-admin-only override for the immutable provider snapshot.
+  {
+    code: 'whatsapp.conversation.assign',
+    description: 'Direct assign / reassign a conversation (admin override)',
+  },
+  { code: 'whatsapp.conversation.close', description: 'Close an open WhatsApp conversation' },
+  { code: 'whatsapp.conversation.reopen', description: 'Reopen a previously closed conversation' },
+  {
+    code: 'whatsapp.review.read',
+    description: 'View the WhatsApp duplicate / captain / unmatched review queue',
+  },
+  {
+    code: 'whatsapp.review.resolve',
+    description: 'Resolve a review row (link / new lead / dismiss)',
+  },
+  { code: 'whatsapp.contact.read', description: 'View Contact rows (cleaned customer identity)' },
+  {
+    code: 'whatsapp.contact.write',
+    description: 'Update Contact cleaned fields (displayName, language)',
+  },
+  {
+    code: 'whatsapp.contact.write.raw',
+    description: 'Override the immutable Contact provider snapshot (super-admin only)',
+  },
 
   // Bonuses (P2-01)
   { code: 'bonus.read', description: 'View bonus rules' },
@@ -91,6 +121,16 @@ export const CAPABILITY_DEFINITIONS = [
   // System / catalogue
   { code: 'audit.read', description: 'View the audit log' },
   { code: 'roles.read', description: 'View roles' },
+  /**
+   * Phase C — C2: gate role/permission writes (CRUD on roles, scope
+   * + field-permission updates, role duplication). Granted to
+   * super_admin (auto via ALL_CAPABILITY_CODES), ops_manager, and
+   * account_manager.
+   */
+  {
+    code: 'roles.write',
+    description: 'Create / update / delete roles + manage scopes and field permissions',
+  },
   { code: 'capabilities.read', description: 'View capabilities' },
 
   // Tenant settings (P2-08)

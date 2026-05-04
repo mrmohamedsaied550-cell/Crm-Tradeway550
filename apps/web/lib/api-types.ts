@@ -67,7 +67,75 @@ export interface RoleSummary {
   nameAr: string;
   nameEn: string;
   level: number;
+  /** Phase C — C2: TRUE for the 11 seeded role templates. Immutable in the UI. */
+  isSystem: boolean;
+  description: string | null;
   capabilitiesCount: number;
+}
+
+/** Phase C — C8: full role payload returned by GET /rbac/roles/:id. */
+export interface RoleScopeRow {
+  resource: 'lead' | 'captain' | 'followup' | 'whatsapp.conversation';
+  scope: 'own' | 'team' | 'company' | 'country' | 'global';
+}
+
+export interface RoleFieldPermissionRow {
+  resource: string;
+  field: string;
+  canRead: boolean;
+  canWrite: boolean;
+}
+
+export interface RoleDetail {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  level: number;
+  isActive: boolean;
+  isSystem: boolean;
+  description: string | null;
+  capabilities: readonly string[];
+  scopes: readonly RoleScopeRow[];
+  fieldPermissions: readonly RoleFieldPermissionRow[];
+}
+
+export interface CapabilityCatalogueEntry {
+  id: string;
+  code: string;
+  description: string;
+}
+
+export interface FieldCatalogueEntry {
+  resource: 'lead';
+  field: string;
+  sensitive: boolean;
+  defaultRead: boolean;
+  defaultWrite: boolean;
+  labelEn: string;
+}
+
+/**
+ * Phase C — C9: shape returned by /users/:id/scope-assignments.
+ *
+ * Joined to the company / country tables so the UI can render
+ * names without a follow-up round-trip. The PUT body sends only
+ * the id arrays — names are derived server-side.
+ */
+export interface UserScopeCompanyRef {
+  id: string;
+  code: string;
+  name: string;
+}
+export interface UserScopeCountryRef {
+  id: string;
+  code: string;
+  name: string;
+  companyId: string;
+}
+export interface UserScopeAssignments {
+  companies: readonly UserScopeCompanyRef[];
+  countries: readonly UserScopeCountryRef[];
 }
 
 export interface PipelineStage {
@@ -292,6 +360,19 @@ export interface MeUser {
     level: number;
   };
   capabilities: readonly string[];
+  /**
+   * Phase C — C4/C6: per-(resource × field) read/write toggles for
+   * the user's role. Empty array on the super_admin bypass. The
+   * client-side `permissions.ts` lib + `<FieldGated>` UI consume
+   * this list to mirror the server-side filter — UX guidance only;
+   * the API is the source of truth.
+   */
+  fieldPermissions: ReadonlyArray<{
+    resource: string;
+    field: string;
+    canRead: boolean;
+    canWrite: boolean;
+  }>;
 }
 
 export interface LoginResponse {

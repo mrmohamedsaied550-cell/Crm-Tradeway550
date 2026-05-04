@@ -7,18 +7,16 @@ import { useTranslations, useLocale } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRightLeft,
+  CalendarPlus,
   CheckCircle2,
   ChevronDown,
   Mail,
   Phone,
   PhoneCall,
-  Settings,
   StickyNote,
   Trophy,
-  TriangleAlert,
   UserCog,
-  UserPlus,
-  Users,
+  XCircle,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -26,11 +24,24 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { LifecycleBadge } from '@/components/ui/lifecycle-badge';
+import { FieldGated } from '@/components/ui/field-gated';
 import { Notice } from '@/components/ui/notice';
-import { PageHeader } from '@/components/ui/page-header';
+import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
+import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
+import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
+import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
+import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
+import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
+import {
+  AttributionCard,
+  LastActivityCard,
+  SlaCard,
+} from '@/components/admin/lead-detail/sidebar-cards';
+import { SnoozeModal } from '@/components/agent/snooze-modal';
 import {
   ApiError,
+  followUpsApi,
   leadsApi,
   lostReasonsApi,
   pipelineApi,
@@ -42,13 +53,14 @@ import type {
   AdminUser,
   Lead,
   LeadActivity,
-  LeadActivityType,
+  LeadFollowUp,
   LeadStageCode,
   LostReason,
   PipelineStage,
   SlaStatus,
   Team,
 } from '@/lib/api-types';
+import { readListContext, type NavigatorPosition } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
 
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
@@ -56,35 +68,6 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'paused') return 'inactive';
   return 'healthy';
 }
-
-function activityTone(
-  type: LeadActivityType,
-): 'info' | 'warning' | 'breach' | 'neutral' | 'healthy' {
-  switch (type) {
-    case 'sla_breach':
-      return 'breach';
-    case 'assignment':
-    case 'auto_assignment':
-      return 'info';
-    case 'stage_change':
-      return 'warning';
-    case 'note':
-    case 'call':
-      return 'healthy';
-    default:
-      return 'neutral';
-  }
-}
-
-const ACTIVITY_ICON: Record<LeadActivityType, React.ComponentType<{ className?: string }>> = {
-  note: StickyNote,
-  call: Phone,
-  stage_change: ArrowRightLeft,
-  assignment: UserPlus,
-  auto_assignment: Users,
-  sla_breach: TriangleAlert,
-  system: Settings,
-};
 
 /** Compact relative-time formatter without bringing in date-fns. */
 function formatRelative(target: Date, now: Date, locale: string): string {
@@ -141,8 +124,11 @@ export default function LeadDetailPage(): JSX.Element {
   const tCommon = useTranslations('admin.common');
   const tDetail = useTranslations('admin.leads.detail');
 
+  const { toast } = useToast();
+
   const [lead, setLead] = useState<Lead | null>(null);
   const [activities, setActivities] = useState<LeadActivity[]>([]);
+  const [followUps, setFollowUps] = useState<LeadFollowUp[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -155,7 +141,6 @@ export default function LeadDetailPage(): JSX.Element {
 
   // Inline action state
   const [assigneeId, setAssigneeId] = useState<string>('');
-  const [stageCode, setStageCode] = useState<LeadStageCode | ''>('');
   const [activityType, setActivityType] = useState<'note' | 'call'>('note');
   const [activityBody, setActivityBody] = useState<string>('');
   const [actionPending, setActionPending] = useState<string | null>(null);
@@ -173,12 +158,74 @@ export default function LeadDetailPage(): JSX.Element {
   const [lostModalOpen, setLostModalOpen] = useState<boolean>(false);
   const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
 
+  // Phase B — B1: + Follow-up modal + snooze modal state.
+  const [followUpModalOpen, setFollowUpModalOpen] = useState<boolean>(false);
+  const [snoozeFor, setSnoozeFor] = useState<LeadFollowUp | null>(null);
+
+  // Tick once a minute so relative-time labels stay fresh in the
+  // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
+  // Cheap; the page doesn't refetch on tick.
+  const [tickNow, setTickNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setTickNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Phase B — Navigation: read the list-context cache (filled by the
+  // /admin/leads page) and re-resolve when the lead id changes —
+  // walking prev/next pushes a new id, which re-fires this.
+  const [navigatorPos, setNavigatorPos] = useState<NavigatorPosition | null>(null);
+  useEffect(() => {
+    setNavigatorPos(readListContext(id));
+  }, [id]);
+
+  // Keyboard shortcuts: Alt+←/→ + j/k. Active only when no input,
+  // textarea, or contentEditable element is focused — typing in the
+  // composer must not jump to a different lead.
+  useEffect(() => {
+    if (!navigatorPos) return;
+    function isTypingTarget(t: EventTarget | null): boolean {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    }
+    function onKey(e: KeyboardEvent): void {
+      if (isTypingTarget(e.target)) return;
+      // Alt+Arrow normally walks browser history. Inside the lead
+      // detail we override it for prev/next-lead — preventDefault so
+      // both intents don't fire.
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        const id = e.key === 'ArrowLeft' ? navigatorPos!.prevId : navigatorPos!.nextId;
+        if (id) {
+          e.preventDefault();
+          router.push(`/admin/leads/${id}`);
+        }
+        return;
+      }
+      // j/k vim-style; ignore when any modifier is held so app
+      // shortcuts (Ctrl+K command palette, etc.) keep working.
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key === 'j' && navigatorPos!.nextId) {
+        e.preventDefault();
+        router.push(`/admin/leads/${navigatorPos!.nextId}`);
+      } else if (e.key === 'k' && navigatorPos!.prevId) {
+        e.preventDefault();
+        router.push(`/admin/leads/${navigatorPos!.prevId}`);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigatorPos, router]);
+
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const [l, acts, usrs, tms, lr] = await Promise.all([
+      const [l, acts, usrs, tms, lr, fus] = await Promise.all([
         leadsApi.get(id),
         leadsApi.listActivities(id),
         usersApi
@@ -189,6 +236,9 @@ export default function LeadDetailPage(): JSX.Element {
         // "Lost reason" panel can resolve labels without a per-render
         // fetch + the modal can re-use the same list.
         lostReasonsApi.listActive().catch(() => [] as LostReason[]),
+        // Phase B — B1: per-lead follow-ups feed the NextActionCard
+        // (earliest pending wins; effective-due aware).
+        followUpsApi.listForLead(id).catch(() => [] as LeadFollowUp[]),
       ]);
       // Phase 1B — load stages from the LEAD'S OWN pipeline, not the
       // tenant default. Custom pipelines define their own stages;
@@ -200,12 +250,12 @@ export default function LeadDetailPage(): JSX.Element {
       ).catch(() => [] as PipelineStage[]);
       setLead(l);
       setActivities(acts);
+      setFollowUps(fus);
       setStages(st);
       setUsers(usrs.items);
       setTeams(tms);
       setLostReasons(lr);
       setAssigneeId(l.assignedToId ?? '');
-      setStageCode(l.stage.code);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -220,6 +270,33 @@ export default function LeadDetailPage(): JSX.Element {
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const teamById = useMemo(() => new Map(teams.map((tm) => [tm.id, tm])), [teams]);
   const stageByCode = useMemo(() => new Map(stages.map((s) => [s.code, s])), [stages]);
+
+  // Phase B — B1: pick the earliest pending follow-up (effective-due
+  // aware) so the NextActionCard renders the right row + lets the
+  // agent complete / snooze without leaving the page.
+  const nextFollowUp = useMemo<LeadFollowUp | null>(() => {
+    let best: { row: LeadFollowUp; eff: number } | null = null;
+    for (const f of followUps) {
+      if (f.completedAt) continue;
+      const due = new Date(f.dueAt).getTime();
+      const sn = f.snoozedUntil ? new Date(f.snoozedUntil).getTime() : 0;
+      const eff = Math.max(due, sn);
+      if (!best || eff < best.eff) best = { row: f, eff };
+    }
+    return best?.row ?? null;
+  }, [followUps]);
+
+  // Most-recent activity drives the "Last activity" sidebar card.
+  // Activities arrive newest-first from the API today, but sort
+  // defensively so the card can't surprise us.
+  const lastActivity = useMemo<LeadActivity | null>(() => {
+    if (activities.length === 0) return null;
+    let best = activities[0]!;
+    for (const a of activities) {
+      if (new Date(a.createdAt).getTime() > new Date(best.createdAt).getTime()) best = a;
+    }
+    return best;
+  }, [activities]);
   // Phase A — A6: id → reason lookup for the "Lost reason" panel on
   // the profile card. Cheap O(1) reads inside render.
   const lostReasonsById = useMemo(() => new Map(lostReasons.map((r) => [r.id, r])), [lostReasons]);
@@ -298,21 +375,13 @@ export default function LeadDetailPage(): JSX.Element {
     }
   }
 
-  async function onMoveStage(): Promise<void> {
-    if (!stageCode) return;
-    await performMoveStage(stageCode);
-  }
-
   /**
-   * Quick-action variant: move the lead to `code` directly (skipping the
-   * sidebar's "select then save" two-step). The sidebar's `stageCode`
-   * state is updated optimistically so the dropdown stays in sync after
-   * reload.
+   * Quick-action variant: move the lead to `code` directly from the
+   * top quick-actions dropdown.
    */
   async function quickMoveToStage(code: LeadStageCode): Promise<void> {
     if (!lead || code === lead.stage.code) return;
     setStageMenuOpen(false);
-    setStageCode(code);
     await performMoveStage(code);
   }
 
@@ -334,10 +403,6 @@ export default function LeadDetailPage(): JSX.Element {
   function onLostReasonCancel(): void {
     setLostModalOpen(false);
     setPendingLostStageId(null);
-    // Restore the sidebar dropdown to the lead's actual current
-    // stage so the user isn't stuck with the lost stage selected
-    // but no move performed.
-    if (lead) setStageCode(lead.stage.code);
   }
 
   /**
@@ -367,6 +432,44 @@ export default function LeadDetailPage(): JSX.Element {
     } finally {
       setActionPending(null);
     }
+  }
+
+  // ─────── Phase B — B1: follow-up handlers + derived next action ───
+
+  async function onAddFollowUp(input: {
+    actionType: 'call' | 'whatsapp' | 'visit' | 'other';
+    dueAt: string;
+    note?: string;
+  }): Promise<void> {
+    if (!lead) return;
+    await followUpsApi.create(lead.id, input);
+    setFollowUpModalOpen(false);
+    await reload();
+    toast({ tone: 'success', title: tDetail('followUpModal.created') });
+  }
+
+  async function onCompleteFollowUp(id: string): Promise<void> {
+    setError(null);
+    try {
+      await followUpsApi.complete(id);
+      await reload();
+      toast({ tone: 'success', title: tDetail('nextAction.completedToast') });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function onSnoozeConfirm(snoozedUntil: string | null): Promise<void> {
+    if (!snoozeFor) return;
+    await followUpsApi.update(snoozeFor.id, { snoozedUntil });
+    setSnoozeFor(null);
+    await reload();
+    toast({
+      tone: 'success',
+      title: snoozedUntil
+        ? tDetail('nextAction.snoozedToast', { when: new Date(snoozedUntil).toLocaleString() })
+        : tDetail('nextAction.snoozeClearedToast'),
+    });
   }
 
   async function onConvert(): Promise<void> {
@@ -438,24 +541,76 @@ export default function LeadDetailPage(): JSX.Element {
 
   return (
     <div className="flex flex-col gap-4">
-      <Link
-        href="/admin/leads"
-        className="inline-flex items-center gap-1 text-xs font-medium text-ink-secondary hover:text-brand-700"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" /> {t('title')}
-      </Link>
+      {/* Top strip: Back link + prev/next navigator. The navigator
+          gracefully renders disabled chevrons (no count) when the
+          list cache is missing — feature is absent, not broken. */}
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/admin/leads"
+          className="inline-flex items-center gap-1 text-xs font-medium text-ink-secondary hover:text-brand-700"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> {t('title')}
+        </Link>
+        <ListNavigator position={navigatorPos} />
+      </div>
 
-      <PageHeader
-        title={lead.name}
-        actions={
-          <div className="flex items-center gap-2">
-            {/* Phase A — A6: lifecycle classifier sits next to stage
-                + SLA so a glance tells you "this lead is open / won
-                / lost / archived". Using the standalone badge means
-                future surfaces (Kanban card, list row) can drop it
-                in without re-deriving the tone. */}
+      {/* ───── Header card (B1) ─────
+          Identity + at-a-glance state in one compact card so the
+          page's first 100px tell the agent who they're dealing with
+          and where the lead stands. Quick actions sit right below
+          and Next Action is the first thing in the right column. */}
+      <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 flex-col gap-1">
+            <h1 className="truncate text-2xl font-semibold leading-tight text-ink-primary">
+              {lead.name}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-secondary">
+              <FieldGated resource="lead" field="phone">
+                <a
+                  href={`tel:${lead.phone}`}
+                  className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
+                >
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                  {lead.phone}
+                </a>
+              </FieldGated>
+              {lead.email ? (
+                <FieldGated resource="lead" field="email">
+                  <a
+                    href={`mailto:${lead.email}`}
+                    className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                  >
+                    <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                    {lead.email}
+                  </a>
+                </FieldGated>
+              ) : null}
+              <span className="inline-flex items-center gap-1">
+                <UserCog className="h-3.5 w-3.5 text-ink-tertiary" aria-hidden="true" />
+                {assignee ? (
+                  <span>
+                    <span className="font-medium text-ink-primary">{assignee.name}</span>
+                    {assigneeTeam ? (
+                      <span className="text-ink-tertiary"> · {assigneeTeam.name}</span>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span className="text-ink-tertiary">{tDetail('unassigned')}</span>
+                )}
+              </span>
+              <span className="text-ink-tertiary">
+                {tDetail('createdLabel')}: {createdAtRelative}
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <LifecycleBadge state={lead.lifecycleState} />
             <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
+            {/* Phase B — B5: placeholder slot for the stage-specific
+                status badge (renders null today; activates when the
+                backend ships actual statuses). */}
+            <StageStatusSlot />
             <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
             {isConverted ? (
               <Badge tone="healthy">
@@ -464,13 +619,10 @@ export default function LeadDetailPage(): JSX.Element {
               </Badge>
             ) : null}
           </div>
-        }
-      />
+        </div>
+      </section>
 
-      {/* ───── Quick actions bar (C20) ─────
-          Three high-frequency actions surfaced right under the header so an
-          agent doesn't have to scroll into the sidebar to call / take a
-          note / move the stage. */}
+      {/* ───── Quick actions bar (B1: + Follow-up added) ───── */}
       <QuickActionsBar
         phone={lead.phone}
         currentStageCode={lead.stage.code}
@@ -481,10 +633,12 @@ export default function LeadDetailPage(): JSX.Element {
         actionPending={actionPending}
         onCall={() => focusComposer('call')}
         onAddNote={() => focusComposer('note')}
+        onAddFollowUp={() => setFollowUpModalOpen(true)}
         onPickStage={(c) => void quickMoveToStage(c)}
         labels={{
           call: tDetail('quickActions.call'),
           addNote: tDetail('quickActions.addNote'),
+          addFollowUp: tDetail('quickActions.addFollowUp'),
           moveStage: tDetail('quickActions.moveStage'),
           terminalHint: tDetail('quickActions.terminalHint'),
         }}
@@ -502,122 +656,8 @@ export default function LeadDetailPage(): JSX.Element {
       ) : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      {/* ───── Profile card ───── */}
-      <section className="grid gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card sm:grid-cols-2 lg:grid-cols-4">
-        <ProfileField label={tDetail('phoneLabel')}>
-          <a
-            href={`tel:${lead.phone}`}
-            className="inline-flex items-center gap-1 font-mono text-sm text-brand-700 hover:underline"
-          >
-            <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-            {lead.phone}
-          </a>
-        </ProfileField>
-
-        <ProfileField label={tDetail('emailLabel')}>
-          {lead.email ? (
-            <a
-              href={`mailto:${lead.email}`}
-              className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"
-            >
-              <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-              {lead.email}
-            </a>
-          ) : (
-            <span className="text-sm text-ink-tertiary">—</span>
-          )}
-        </ProfileField>
-
-        <ProfileField label={tDetail('assigneeLabel')}>
-          {assignee ? (
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-medium text-ink-primary">{assignee.name}</span>
-              <span className="text-xs text-ink-secondary">
-                {assignee.email}
-                {assigneeTeam ? <> · {assigneeTeam.name}</> : null}
-              </span>
-            </div>
-          ) : (
-            <span className="text-sm text-ink-tertiary">{tDetail('unassigned')}</span>
-          )}
-        </ProfileField>
-
-        <ProfileField label={tDetail('stageLabel')}>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-medium text-ink-primary">{lead.stage.name}</span>
-            <span className="text-xs text-ink-tertiary">
-              {tDetail('source')}: {lead.source}
-            </span>
-          </div>
-        </ProfileField>
-
-        <ProfileField label={tDetail('slaLabel')}>
-          <div className="flex flex-col leading-tight">
-            <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
-            {slaDueRelative ? (
-              <span className="mt-0.5 text-xs text-ink-tertiary">
-                {tDetail('slaDue')} {slaDueRelative}
-              </span>
-            ) : null}
-          </div>
-        </ProfileField>
-
-        <ProfileField label={tDetail('captainLabel')}>
-          {isConverted ? (
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-medium text-status-healthy">
-                {lead.captain?.onboardingStatus
-                  ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
-                  : tDetail('captainBadge')}
-              </span>
-              <Link
-                href="/admin/captains"
-                className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-              >
-                {tDetail('viewCaptain')}
-              </Link>
-            </div>
-          ) : isLost ? (
-            <span className="text-sm text-ink-tertiary">{tDetail('captainLost')}</span>
-          ) : (
-            <span className="text-sm text-ink-tertiary">{tDetail('captainNotYet')}</span>
-          )}
-        </ProfileField>
-
-        {/* Phase A — A6: surface the lost reason + optional note when
-            the lead is in the lost lifecycle. The reason name comes
-            from the lookup map; the note is free text the agent left
-            at the time of the move. */}
-        {lead.lifecycleState === 'lost' && lead.lostReasonId ? (
-          <ProfileField label={tDetail('lostReasonLabel')}>
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-medium text-ink-primary">
-                {lostReasonsById.get(lead.lostReasonId)
-                  ? locale === 'ar'
-                    ? lostReasonsById.get(lead.lostReasonId)!.labelAr
-                    : lostReasonsById.get(lead.lostReasonId)!.labelEn
-                  : '—'}
-              </span>
-              {lead.lostNote ? (
-                <span className="mt-0.5 text-xs text-ink-tertiary">{lead.lostNote}</span>
-              ) : null}
-            </div>
-          </ProfileField>
-        ) : null}
-
-        <ProfileField label={tDetail('createdLabel')}>
-          <span className="text-sm text-ink-secondary">{createdAtRelative}</span>
-        </ProfileField>
-
-        <ProfileField label={tDetail('lastResponseLabel')}>
-          <span className="text-sm text-ink-secondary">
-            {lead.lastResponseAt ? formatRelative(new Date(lead.lastResponseAt), now, locale) : '—'}
-          </span>
-        </ProfileField>
-      </section>
-
-      {/* ───── Two-column body: timeline + sidebar actions ───── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      {/* ───── Two-column body: timeline left, action stack right ───── */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* Left: activity timeline + add-activity composer */}
         <div className="flex flex-col gap-4">
           {/* Add activity composer */}
@@ -669,105 +709,177 @@ export default function LeadDetailPage(): JSX.Element {
             </form>
           </section>
 
-          {/* Activity timeline */}
+          {/* Activity timeline (B2) — chat-like, merges follow-up
+              events into the activity stream. Bucketed by day with
+              "Today" / "Yesterday" / dated separators. */}
           <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
             <h2 className="mb-4 text-sm font-semibold text-ink-primary">
               {t('activitiesTitle')}
               <span className="ms-2 text-xs font-normal text-ink-tertiary">
-                ({activities.length})
+                ({activities.length + followUps.length})
               </span>
             </h2>
-
-            {activities.length === 0 ? (
-              <EmptyState title={tDetail('noActivities')} body={tDetail('noActivitiesHint')} />
-            ) : (
-              <ol className="relative flex flex-col gap-3 ps-4">
-                <span
-                  className="absolute inset-y-0 start-1.5 w-px bg-surface-border"
-                  aria-hidden="true"
-                />
-                {activities.map((a) => (
-                  <ActivityItem
-                    key={a.id}
-                    activity={a}
-                    locale={locale}
-                    now={now}
-                    stageLabel={stageLabel}
-                    userLabel={userLabel}
-                    tDetail={tDetail}
-                  />
-                ))}
-              </ol>
-            )}
+            <ActivityTimeline
+              activities={activities}
+              followUps={followUps}
+              now={now}
+              locale={locale}
+              stageLabel={stageLabel}
+              userLabel={userLabel}
+              tDetail={tDetail}
+              formatRelative={(target) => formatRelative(target, now, locale)}
+            />
           </section>
         </div>
 
-        {/* Right: quick actions sidebar */}
-        <aside className="flex flex-col gap-4">
-          <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-primary">
-              <UserCog className="h-4 w-4 text-brand-700" aria-hidden="true" />
-              {tDetail('quickActionsTitle')}
-            </h2>
+        {/* Right: action stack — Next Action is the visual hero;
+            everything else is supporting context. */}
+        <aside className="flex flex-col gap-3">
+          <NextActionCard
+            next={nextFollowUp}
+            now={tickNow}
+            busy={actionPending !== null}
+            onComplete={onCompleteFollowUp}
+            onSnooze={(f) => setSnoozeFor(f)}
+            onAdd={() => setFollowUpModalOpen(true)}
+          />
 
-            {/* Assign / reassign */}
+          <LastActivityCard
+            activity={lastActivity}
+            relativeTime={
+              lastActivity ? formatRelative(new Date(lastActivity.createdAt), now, locale) : null
+            }
+            authorLabel={
+              lastActivity
+                ? `${tDetail('activityAuthorBy')} ${
+                    lastActivity.createdById !== null
+                      ? userLabel(lastActivity.createdById)
+                      : tDetail('systemAuthor')
+                  }`
+                : ''
+            }
+            summary={
+              lastActivity
+                ? formatActivitySummary(
+                    lastActivity,
+                    readPayload(lastActivity.payload),
+                    stageLabel,
+                    userLabel,
+                    tDetail,
+                  )
+                : null
+            }
+            label={tDetail('lastActivity.label')}
+            emptyLabel={tDetail('lastActivity.empty')}
+            typeLabel={(type) => tDetail(`activity.type.${type}`)}
+          />
+
+          <SlaCard
+            status={lead.slaStatus}
+            dueRelative={slaDueRelative}
+            label={tDetail('slaLabel')}
+            dueLabel={tDetail('slaDue')}
+          />
+
+          <AttributionCard
+            attribution={lead.attribution ?? null}
+            fallbackSource={lead.source}
+            label={tDetail('attribution.label')}
+            emptyLabel={tDetail('attribution.empty')}
+          />
+
+          {/* Captain card — only when converted */}
+          {isConverted ? (
+            <section className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-4 shadow-card">
+              <header className="mb-2 flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-status-healthy" aria-hidden="true" />
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                  {tDetail('captainLabel')}
+                </h3>
+              </header>
+              <p className="text-sm font-medium text-status-healthy">
+                {lead.captain?.onboardingStatus
+                  ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
+                  : tDetail('captainBadge')}
+              </p>
+              <Link
+                href="/admin/captains"
+                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+              >
+                {tDetail('viewCaptain')}
+              </Link>
+            </section>
+          ) : null}
+
+          {/* Lost reason card — only when lost */}
+          {lead.lifecycleState === 'lost' && lead.lostReasonId ? (
+            <section className="rounded-lg border border-status-breach/30 bg-status-breach/5 p-4 shadow-card">
+              <header className="mb-2 flex items-center gap-2">
+                <XCircle className="h-4 w-4 text-status-breach" aria-hidden="true" />
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                  {tDetail('lostReasonLabel')}
+                </h3>
+              </header>
+              <p className="text-sm font-medium text-ink-primary">
+                {lostReasonsById.get(lead.lostReasonId)
+                  ? locale === 'ar'
+                    ? lostReasonsById.get(lead.lostReasonId)!.labelAr
+                    : lostReasonsById.get(lead.lostReasonId)!.labelEn
+                  : '—'}
+              </p>
+              {lead.lostNote ? (
+                <p className="mt-1 text-xs text-ink-secondary">{lead.lostNote}</p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {/* Admin actions — assign + convert. Move stage lives in the
+              top quick-actions bar; we don't duplicate it here. */}
+          <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+            <header className="mb-3 flex items-center gap-2">
+              <UserCog className="h-4 w-4 text-brand-700" aria-hidden="true" />
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                {tDetail('adminActions.title')}
+              </h3>
+            </header>
+
             <div className="flex flex-col gap-2">
               <Field label={t('assignAction')}>
-                <Select
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
-                  disabled={isConverted}
-                >
-                  <option value="">{tDetail('unassigned')}</option>
-                  {activeUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} ({u.email})
-                    </option>
-                  ))}
-                </Select>
+                {/* Phase C — C6: edit-mode FieldGated. When the role
+                    can't write `assignedToId`, the Select is rendered
+                    disabled / readOnly so the agent sees the current
+                    value but can't change it. The server (C5) silently
+                    no-ops the write either way. */}
+                <FieldGated resource="lead" field="assignedToId" mode="edit">
+                  <Select
+                    value={assigneeId}
+                    onChange={(e) => setAssigneeId(e.target.value)}
+                    disabled={isConverted}
+                  >
+                    <option value="">{tDetail('unassigned')}</option>
+                    {activeUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.email})
+                      </option>
+                    ))}
+                  </Select>
+                </FieldGated>
               </Field>
-              <Button
-                onClick={() => void onAssign()}
-                loading={actionPending === 'assign'}
-                disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
-                size="sm"
-              >
-                {tDetail('saveAssignee')}
-              </Button>
+              <FieldGated resource="lead" field="assignedToId" mode="edit">
+                <Button
+                  onClick={() => void onAssign()}
+                  loading={actionPending === 'assign'}
+                  disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
+                  size="sm"
+                >
+                  {tDetail('saveAssignee')}
+                </Button>
+              </FieldGated>
             </div>
 
-            <hr className="my-4 border-surface-border" />
+            <hr className="my-3 border-surface-border" />
 
-            {/* Move stage */}
             <div className="flex flex-col gap-2">
-              <Field label={t('moveStageAction')}>
-                <Select
-                  value={stageCode}
-                  onChange={(e) => setStageCode(e.target.value as LeadStageCode)}
-                  disabled={isConverted}
-                >
-                  {stages.map((s) => (
-                    <option key={s.code} value={s.code}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Button
-                onClick={() => void onMoveStage()}
-                loading={actionPending === 'stage'}
-                disabled={isConverted || stageCode === lead.stage.code}
-                size="sm"
-              >
-                {tDetail('saveStage')}
-              </Button>
-            </div>
-
-            <hr className="my-4 border-surface-border" />
-
-            {/* Convert */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs text-ink-secondary">{t('convertHint')}</span>
               <Button
                 variant="primary"
                 onClick={() => void onConvert()}
@@ -797,6 +909,26 @@ export default function LeadDetailPage(): JSX.Element {
         onConfirm={onLostReasonConfirm}
         onClose={onLostReasonCancel}
       />
+
+      {/* Phase B — B1: + Follow-up modal (opens from the quick-actions
+          bar and from NextActionCard's CTA). */}
+      <FollowUpQuickModal
+        open={followUpModalOpen}
+        leadName={lead.name}
+        onConfirm={onAddFollowUp}
+        onClose={() => setFollowUpModalOpen(false)}
+      />
+
+      {/* Phase B — B1: snooze the active follow-up from NextActionCard. */}
+      <SnoozeModal
+        open={snoozeFor !== null}
+        leadName={lead.name}
+        currentlySnoozed={Boolean(
+          snoozeFor?.snoozedUntil && Date.parse(snoozeFor.snoozedUntil) > Date.now(),
+        )}
+        onConfirm={onSnoozeConfirm}
+        onClose={() => setSnoozeFor(null)}
+      />
     </div>
   );
 }
@@ -815,8 +947,16 @@ interface QuickActionsBarProps {
   actionPending: string | null;
   onCall: () => void;
   onAddNote: () => void;
+  /** Phase B — B1: opens the FollowUpQuickModal. */
+  onAddFollowUp: () => void;
   onPickStage: (code: LeadStageCode) => void;
-  labels: { call: string; addNote: string; moveStage: string; terminalHint: string };
+  labels: {
+    call: string;
+    addNote: string;
+    addFollowUp: string;
+    moveStage: string;
+    terminalHint: string;
+  };
 }
 
 /**
@@ -838,6 +978,7 @@ function QuickActionsBar({
   actionPending,
   onCall,
   onAddNote,
+  onAddFollowUp,
   onPickStage,
   labels,
 }: QuickActionsBarProps): JSX.Element {
@@ -875,6 +1016,11 @@ function QuickActionsBar({
       <Button variant="secondary" size="md" onClick={onAddNote}>
         <StickyNote className="h-4 w-4" aria-hidden="true" />
         {labels.addNote}
+      </Button>
+
+      <Button variant="secondary" size="md" onClick={onAddFollowUp}>
+        <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+        {labels.addFollowUp}
       </Button>
 
       <div ref={wrapperRef} className="relative">
@@ -924,95 +1070,6 @@ function QuickActionsBar({
 
       {disabled ? <span className="text-xs text-ink-tertiary">{labels.terminalHint}</span> : null}
     </div>
-  );
-}
-
-function ProfileField({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-tertiary">
-        {label}
-      </span>
-      {children}
-    </div>
-  );
-}
-
-interface ActivityItemProps {
-  activity: LeadActivity;
-  locale: string;
-  now: Date;
-  stageLabel: (code: string | undefined) => string;
-  userLabel: (uid: string | null | undefined) => string;
-  tDetail: ReturnType<typeof useTranslations>;
-}
-
-function ActivityItem({
-  activity,
-  locale,
-  now,
-  stageLabel,
-  userLabel,
-  tDetail,
-}: ActivityItemProps): JSX.Element {
-  const Icon = ACTIVITY_ICON[activity.type] ?? Settings;
-  const tone = activityTone(activity.type);
-  const dotTone: Record<typeof tone, string> = {
-    healthy: 'bg-status-healthy',
-    info: 'bg-status-info',
-    warning: 'bg-status-warning',
-    breach: 'bg-status-breach',
-    neutral: 'bg-ink-tertiary',
-  };
-
-  const payload = readPayload(activity.payload);
-  const summary = formatActivitySummary(activity, payload, stageLabel, userLabel, tDetail);
-  const author =
-    activity.createdById !== null ? userLabel(activity.createdById) : tDetail('systemAuthor');
-  const when = formatRelative(new Date(activity.createdAt), now, locale);
-
-  return (
-    <li className="relative">
-      <span
-        className={cn(
-          'absolute -start-[18px] top-1 inline-flex h-3 w-3 items-center justify-center rounded-full ring-2 ring-surface-card',
-          dotTone[tone],
-        )}
-        aria-hidden="true"
-      />
-      <div className="rounded-md border border-surface-border bg-surface px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5 text-ink-secondary" aria-hidden="true" />
-            <Badge tone={tone}>{tDetail(`activity.type.${activity.type}`)}</Badge>
-          </div>
-          <span
-            className="text-xs text-ink-tertiary"
-            title={new Date(activity.createdAt).toLocaleString()}
-          >
-            {when}
-          </span>
-        </div>
-
-        {summary ? <p className="mt-1.5 text-sm text-ink-primary">{summary}</p> : null}
-        {activity.body && activity.type !== 'note' && activity.type !== 'call' ? (
-          <p className="mt-1 text-xs text-ink-secondary">{activity.body}</p>
-        ) : null}
-        {activity.body && (activity.type === 'note' || activity.type === 'call') ? (
-          <p className="mt-1.5 text-sm text-ink-primary">{activity.body}</p>
-        ) : null}
-
-        <p className="mt-1.5 text-[11px] text-ink-tertiary">
-          {tDetail('activityAuthorBy')} {author}
-        </p>
-      </div>
-    </li>
   );
 }
 

@@ -33,6 +33,22 @@ export interface AuthResult extends AuthTokens {
     roleId: string;
     role: { id: string; code: string; nameAr: string; nameEn: string; level: number };
     capabilities: readonly string[];
+    /**
+     * Phase C — C4: per-(resource × field) read/write toggles for the
+     * user's role. Empty array when the role has no field-permission
+     * rows OR when the bypass kicks in (super_admin returns []).
+     * The frontend uses this to mirror the server-side filter:
+     * fields with `canRead = false` should be hidden from forms /
+     * detail surfaces. The server is the source of truth — the
+     * client list is only a UX guide so that nothing renders that
+     * the API would strip anyway.
+     */
+    fieldPermissions: ReadonlyArray<{
+      resource: string;
+      field: string;
+      canRead: boolean;
+      canWrite: boolean;
+    }>;
   };
 }
 
@@ -495,7 +511,13 @@ export class AuthService {
     // tenant scope explicitly via withTenant so login (pre-context) can work.
     const roles = await this.prisma.withTenant(tenantId, (tx) =>
       tx.role.findMany({
-        include: { capabilities: { include: { capability: { select: { code: true } } } } },
+        include: {
+          capabilities: { include: { capability: { select: { code: true } } } },
+          scopes: { select: { resource: true, scope: true } },
+          fieldPermissions: {
+            select: { resource: true, field: true, canRead: true, canWrite: true },
+          },
+        },
       }),
     );
     const r = roles.find((row) => row.id === roleId);
@@ -507,7 +529,19 @@ export class AuthService {
       nameEn: r.nameEn,
       level: r.level,
       isActive: r.isActive,
+      isSystem: r.isSystem,
+      description: r.description,
       capabilities: r.capabilities.map((rc) => rc.capability.code as string),
+      scopes: r.scopes.map((s) => ({
+        resource: s.resource as RoleWithCapabilities['scopes'][number]['resource'],
+        scope: s.scope as RoleWithCapabilities['scopes'][number]['scope'],
+      })),
+      fieldPermissions: r.fieldPermissions.map((p) => ({
+        resource: p.resource,
+        field: p.field,
+        canRead: p.canRead,
+        canWrite: p.canWrite,
+      })),
     } as RoleWithCapabilities;
   }
 
@@ -521,6 +555,21 @@ export class AuthService {
     },
     role: RoleWithCapabilities,
   ): AuthResult['user'] {
+    // Phase C — C4: ship the role's field permissions to the client
+    // so the UI can mirror the server-side filter. Super-admin gets
+    // an empty list (the bypass means nothing's denied) — client
+    // code that gates on `canRead === false` simply renders every
+    // field. Today's seed installs 3 deny rows for sales_agent
+    // (lead.id / lead.attribution.campaign / lead.source).
+    const fieldPermissions =
+      role.code === 'super_admin'
+        ? []
+        : role.fieldPermissions.map((p) => ({
+            resource: p.resource,
+            field: p.field,
+            canRead: p.canRead,
+            canWrite: p.canWrite,
+          }));
     return {
       id: u.id,
       email: u.email,
@@ -535,6 +584,7 @@ export class AuthService {
         level: role.level,
       },
       capabilities: role.capabilities,
+      fieldPermissions,
     };
   }
 

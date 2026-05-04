@@ -14,6 +14,7 @@ import { IdentityModule } from './identity/identity.module';
 import { CrmModule } from './crm/crm.module';
 import { OrgModule } from './org/org.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { ContactModule } from './contact/contact.module';
 import { BonusesModule } from './bonuses/bonuses.module';
 import { CompetitionsModule } from './competitions/competitions.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
@@ -54,6 +55,7 @@ import { buildLoggerConfig } from './common/logger';
     CrmModule,
     OrgModule,
     WhatsAppModule,
+    ContactModule,
     BonusesModule,
     CompetitionsModule,
     FollowUpsModule,

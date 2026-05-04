@@ -59,6 +59,12 @@ export function AuthBar(): JSX.Element {
           roleNameEn: u.role.nameEn,
           roleNameAr: u.role.nameAr,
           capabilities: u.capabilities,
+          // Phase C — C6: cache the role's per-(resource × field)
+          // toggles so `lib/permissions.ts` and `<FieldGated>` can
+          // mirror the server-side filter without a per-render
+          // network call. Defaults permissive when the cached
+          // /auth/me predates the C4 server change.
+          fieldPermissions: u.fieldPermissions ?? [],
         };
         setCachedMe(next);
         setMe(next);

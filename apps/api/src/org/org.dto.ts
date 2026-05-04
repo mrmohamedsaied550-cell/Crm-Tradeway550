@@ -161,3 +161,27 @@ export type SetUserTeamDto = z.infer<typeof SetUserTeamSchema>;
 
 export const SetUserStatusSchema = z.object({ status: userStatus }).strict();
 export type SetUserStatusDto = z.infer<typeof SetUserStatusSchema>;
+
+// ───────── User scope assignments (C9) ─────────
+
+/**
+ * Phase C — C9: replace-the-set DTO for user_scope_assignments.
+ *
+ * The body declares the FULL desired list of company / country ids the
+ * user should be associated with. The service computes the diff against
+ * the current rows and translates it into delete / create operations
+ * inside a transaction. Empty arrays are valid — they revoke every
+ * assignment for that dimension.
+ *
+ * Both arrays are constrained to a sensible upper bound to keep the
+ * audit payload (and the UI list) manageable; tenants with more than
+ * 64 companies / 256 countries should compose roles around `country`
+ * scope rather than enumerating individually.
+ */
+export const PutUserScopeAssignmentsSchema = z
+  .object({
+    companyIds: z.array(z.string().uuid()).max(64).default([]),
+    countryIds: z.array(z.string().uuid()).max(256).default([]),
+  })
+  .strict();
+export type PutUserScopeAssignmentsDto = z.input<typeof PutUserScopeAssignmentsSchema>;

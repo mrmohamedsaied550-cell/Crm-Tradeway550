@@ -22,7 +22,9 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
+import { FieldGated } from '@/components/ui/field-gated';
 import { useToast } from '@/components/ui/toast';
+import { NextActionCell } from '@/components/admin/next-action-cell';
 import { SnoozeModal } from '@/components/agent/snooze-modal';
 import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
 import type {
@@ -280,32 +282,50 @@ export default function AgentWorkspacePage(): JSX.Element {
     });
   }
 
+  // B3 — Now ref for the NextActionCell column. Re-derived per
+  // render so relative labels track the wall clock (the worklist
+  // reloads on lead.assigned realtime + on every user action).
+  const tableNow = new Date();
+
+  // Phase C — C7: same field-permission gating pattern as the
+  // /admin/leads list (cell-level placeholders keep table layout
+  // stable; the Open detail link hides when `id` is denied because
+  // the URL would be broken).
+  const placeholder = <span className="text-ink-tertiary">—</span>;
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
       header: t('cols.name'),
       render: (l) => (
         <div className="flex flex-col leading-tight">
-          <span className="flex items-center gap-1.5">
-            {overdueLeadIds.has(l.id) ? (
-              <AlertTriangle
-                className="h-3.5 w-3.5 text-status-breach"
-                aria-label={t('overdueIndicator')}
-              />
-            ) : null}
-            <span className="font-medium text-ink-primary">{l.name}</span>
-          </span>
-          <span className="flex items-center gap-1 text-xs text-ink-tertiary">
-            <Phone className="h-3 w-3" aria-hidden="true" />
-            <code className="font-mono">{l.phone}</code>
-          </span>
+          <FieldGated resource="lead" field="name" fallback={placeholder}>
+            <span className="flex items-center gap-1.5">
+              {overdueLeadIds.has(l.id) ? (
+                <AlertTriangle
+                  className="h-3.5 w-3.5 text-status-breach"
+                  aria-label={t('overdueIndicator')}
+                />
+              ) : null}
+              <span className="font-medium text-ink-primary">{l.name}</span>
+            </span>
+          </FieldGated>
+          <FieldGated resource="lead" field="phone">
+            <span className="flex items-center gap-1 text-xs text-ink-tertiary">
+              <Phone className="h-3 w-3" aria-hidden="true" />
+              <code className="font-mono">{l.phone}</code>
+            </span>
+          </FieldGated>
         </div>
       ),
     },
     {
       key: 'source',
       header: t('cols.source'),
-      render: (l) => <span className="text-xs uppercase tracking-wide">{l.source}</span>,
+      render: (l) => (
+        <FieldGated resource="lead" field="source" fallback={placeholder}>
+          <span className="text-xs uppercase tracking-wide">{l.source}</span>
+        </FieldGated>
+      ),
     },
     {
       key: 'stage',
@@ -317,43 +337,62 @@ export default function AgentWorkspacePage(): JSX.Element {
       ),
     },
     {
+      key: 'nextAction',
+      header: t('cols.nextAction'),
+      render: (l) => (
+        <FieldGated resource="lead" field="nextActionDueAt" fallback={placeholder}>
+          <NextActionCell dueAt={l.nextActionDueAt} now={tableNow} />
+        </FieldGated>
+      ),
+    },
+    {
       key: 'sla',
       header: t('cols.sla'),
-      render: (l) => <Badge tone={slaTone(l.slaStatus)}>{l.slaStatus}</Badge>,
+      render: (l) => (
+        <FieldGated resource="lead" field="slaStatus" fallback={placeholder}>
+          <Badge tone={slaTone(l.slaStatus)}>{l.slaStatus}</Badge>
+        </FieldGated>
+      ),
     },
     {
       key: 'actions',
       header: t('cols.actions'),
       render: (l) => (
         <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={telHref(l.phone)}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
-            title={t('actions.call')}
-            aria-label={t('actions.call')}
-          >
-            <Phone className="h-4 w-4" aria-hidden="true" />
-          </a>
-          <a
-            href={whatsappHref(l.phone)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
-            title={t('actions.whatsapp')}
-            aria-label={t('actions.whatsapp')}
-          >
-            <MessageCircle className="h-4 w-4" aria-hidden="true" />
-          </a>
+          <FieldGated resource="lead" field="phone">
+            <a
+              href={telHref(l.phone)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
+              title={t('actions.call')}
+              aria-label={t('actions.call')}
+            >
+              <Phone className="h-4 w-4" aria-hidden="true" />
+            </a>
+            <a
+              href={whatsappHref(l.phone)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-surface-border bg-surface-card text-ink-primary hover:bg-brand-50"
+              title={t('actions.whatsapp')}
+              aria-label={t('actions.whatsapp')}
+            >
+              <MessageCircle className="h-4 w-4" aria-hidden="true" />
+            </a>
+          </FieldGated>
           <Button variant="secondary" size="sm" onClick={() => openUpdate(l)}>
             <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
             {t('actions.update')}
           </Button>
-          <Link
-            href={`/admin/leads/${l.id}`}
-            className="text-xs font-medium text-brand-700 hover:text-brand-800"
-          >
-            {t('actions.openDetail')} →
-          </Link>
+          {/* C7: hide the Open Detail link when `id` is denied —
+              the URL would resolve to /admin/leads/undefined. */}
+          <FieldGated resource="lead" field="id">
+            <Link
+              href={`/admin/leads/${l.id}`}
+              className="text-xs font-medium text-brand-700 hover:text-brand-800"
+            >
+              {t('actions.openDetail')} →
+            </Link>
+          </FieldGated>
         </div>
       ),
     },
@@ -593,12 +632,17 @@ export default function AgentWorkspacePage(): JSX.Element {
            * agents can act with one thumb.
            */}
           <div className="hidden sm:block">
-            <DataTable<Lead> rows={rows} columns={columns} keyOf={(l) => l.id} />
+            <DataTable<Lead>
+              rows={rows}
+              columns={columns}
+              /* C7: phone fallback when `lead.id` is denied. */
+              keyOf={(l) => l.id ?? l.phone ?? ''}
+            />
           </div>
           <ul className="flex flex-col gap-2 sm:hidden">
             {rows.map((l) => (
               <li
-                key={l.id}
+                key={l.id ?? l.phone ?? ''}
                 className={cn(
                   'flex flex-col gap-2 rounded-lg border bg-surface-card p-3 shadow-card',
                   overdueLeadIds.has(l.id)
@@ -608,49 +652,59 @@ export default function AgentWorkspacePage(): JSX.Element {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex min-w-0 flex-col leading-tight">
-                    <span className="flex items-center gap-1.5">
-                      {overdueLeadIds.has(l.id) ? (
-                        <AlertTriangle
-                          className="h-3.5 w-3.5 shrink-0 text-status-breach"
-                          aria-label={t('overdueIndicator')}
-                        />
-                      ) : null}
-                      <span className="truncate text-sm font-semibold text-ink-primary">
-                        {l.name}
+                    <FieldGated resource="lead" field="name">
+                      <span className="flex items-center gap-1.5">
+                        {overdueLeadIds.has(l.id) ? (
+                          <AlertTriangle
+                            className="h-3.5 w-3.5 shrink-0 text-status-breach"
+                            aria-label={t('overdueIndicator')}
+                          />
+                        ) : null}
+                        <span className="truncate text-sm font-semibold text-ink-primary">
+                          {l.name}
+                        </span>
                       </span>
-                    </span>
-                    <span className="flex items-center gap-1 text-xs text-ink-tertiary">
-                      <Phone className="h-3 w-3" aria-hidden="true" />
-                      <code className="font-mono">{l.phone}</code>
-                    </span>
+                    </FieldGated>
+                    <FieldGated resource="lead" field="phone">
+                      <span className="flex items-center gap-1 text-xs text-ink-tertiary">
+                        <Phone className="h-3 w-3" aria-hidden="true" />
+                        <code className="font-mono">{l.phone}</code>
+                      </span>
+                    </FieldGated>
                   </div>
-                  <Badge tone={slaTone(l.slaStatus)}>{l.slaStatus}</Badge>
+                  <FieldGated resource="lead" field="slaStatus">
+                    <Badge tone={slaTone(l.slaStatus)}>{l.slaStatus}</Badge>
+                  </FieldGated>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-ink-secondary">
                   <span className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface px-2 py-0.5">
                     {l.stage.name}
                   </span>
-                  <span className="uppercase tracking-wide">{l.source}</span>
+                  <FieldGated resource="lead" field="source">
+                    <span className="uppercase tracking-wide">{l.source}</span>
+                  </FieldGated>
                 </div>
                 <div className="flex items-center gap-2">
-                  <a
-                    href={telHref(l.phone)}
-                    className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
-                    aria-label={t('actions.call')}
-                  >
-                    <Phone className="h-4 w-4" aria-hidden="true" />
-                    {t('actions.call')}
-                  </a>
-                  <a
-                    href={whatsappHref(l.phone)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
-                    aria-label={t('actions.whatsapp')}
-                  >
-                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
-                    {t('actions.whatsapp')}
-                  </a>
+                  <FieldGated resource="lead" field="phone">
+                    <a
+                      href={telHref(l.phone)}
+                      className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
+                      aria-label={t('actions.call')}
+                    >
+                      <Phone className="h-4 w-4" aria-hidden="true" />
+                      {t('actions.call')}
+                    </a>
+                    <a
+                      href={whatsappHref(l.phone)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-md border border-surface-border bg-surface text-sm font-medium text-ink-primary hover:bg-brand-50"
+                      aria-label={t('actions.whatsapp')}
+                    >
+                      <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                      {t('actions.whatsapp')}
+                    </a>
+                  </FieldGated>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -661,12 +715,14 @@ export default function AgentWorkspacePage(): JSX.Element {
                     {t('actions.update')}
                   </Button>
                 </div>
-                <Link
-                  href={`/admin/leads/${l.id}`}
-                  className="self-end text-xs font-medium text-brand-700 hover:text-brand-800"
-                >
-                  {t('actions.openDetail')} →
-                </Link>
+                <FieldGated resource="lead" field="id">
+                  <Link
+                    href={`/admin/leads/${l.id}`}
+                    className="self-end text-xs font-medium text-brand-700 hover:text-brand-800"
+                  >
+                    {t('actions.openDetail')} →
+                  </Link>
+                </FieldGated>
               </li>
             ))}
           </ul>

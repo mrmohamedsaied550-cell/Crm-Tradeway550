@@ -131,6 +131,23 @@ export class MetaCloudProvider implements WhatsAppProvider {
             ? (metadata['phone_number_id'] as string)
             : '';
 
+        // Phase C — C10B-3: build a per-wa_id index of profile names
+        // from the sibling `contacts` array. Meta delivers contacts +
+        // messages as separate arrays inside the same change; we
+        // correlate via wa_id (which equals the inbound message's
+        // `from` field on Cloud API).
+        const contacts = Array.isArray(value['contacts']) ? value['contacts'] : [];
+        const profileByWaId = new Map<string, string>();
+        for (const c of contacts) {
+          if (!isRecord(c)) continue;
+          const waId = typeof c['wa_id'] === 'string' ? (c['wa_id'] as string) : '';
+          if (waId.length === 0) continue;
+          const profile = isRecord(c['profile']) ? c['profile'] : null;
+          const name =
+            profile && typeof profile['name'] === 'string' ? (profile['name'] as string) : '';
+          if (name.length > 0) profileByWaId.set(waId, name);
+        }
+
         for (const m of messages) {
           if (!isRecord(m)) continue;
           if (m['type'] !== 'text') continue; // skip media / interactive in C21
@@ -157,12 +174,18 @@ export class MetaCloudProvider implements WhatsAppProvider {
             this.logger.warn(`parseInbound: dropping message with malformed phone`);
             continue;
           }
+          // C10B-3: enrich with profile name when present. `phone` from
+          // Meta is the digits-only wa_id, so we look up the profile
+          // map with the original (unnormalised) wa_id.
+          const profileName = profileByWaId.get(phone);
           out.push({
             phone: normalizedPhone,
             text,
             providerMessageId: id,
             receivedAt,
             phoneNumberId,
+            ...(profileName !== undefined && { profileName }),
+            waId: phone,
           });
         }
       }

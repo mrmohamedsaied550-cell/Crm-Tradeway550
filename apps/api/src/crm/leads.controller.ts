@@ -20,6 +20,17 @@ import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import type { ScopeUserClaims } from '../rbac/scope-context.service';
+
+/**
+ * Phase C — C3: shrink the AccessTokenClaims to the trio LeadsService
+ * needs for scope resolution. Keeps the service signature decoupled
+ * from the JWT shape — feature modules outside identity don't have
+ * to depend on the full claims type.
+ */
+function claimsToScope(claims: AccessTokenClaims): ScopeUserClaims {
+  return { userId: claims.sub, tenantId: claims.tid, roleId: claims.rid };
+}
 
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
@@ -81,14 +92,14 @@ export class LeadsController {
   @RequireCapability('lead.write')
   @ApiOperation({ summary: 'Create a lead (phone normalised to E.164)' })
   create(@Body() body: CreateLeadDto, @CurrentUser() user: AccessTokenClaims) {
-    return this.leads.create(body, user.sub);
+    return this.leads.create(body, user.sub, claimsToScope(user));
   }
 
   @Get('leads')
   @RequireCapability('lead.read')
   @ApiOperation({ summary: 'List leads with filters + pagination' })
-  list(@Query() query: ListLeadsQueryDto) {
-    return this.leads.list(query);
+  list(@Query() query: ListLeadsQueryDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.list(query, claimsToScope(user));
   }
 
   /**
@@ -100,8 +111,8 @@ export class LeadsController {
   @Get('leads/by-stage')
   @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Group leads by pipeline stage (Kanban view)' })
-  listByStage(@Query() query: ListLeadsByStageQueryDto) {
-    return this.leads.listByStage(query);
+  listByStage(@Query() query: ListLeadsByStageQueryDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.listByStage(query, claimsToScope(user));
   }
 
   @Get('leads/overdue')
@@ -113,7 +124,7 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     const filter = assignedToId ?? (mine === '0' ? undefined : user.sub);
-    return this.leads.listOverdue({ assignedToId: filter });
+    return this.leads.listOverdue({ assignedToId: filter }, claimsToScope(user));
   }
 
   @Get('leads/due-today')
@@ -125,14 +136,14 @@ export class LeadsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     const filter = assignedToId ?? (mine === '0' ? undefined : user.sub);
-    return this.leads.listDueToday({ assignedToId: filter });
+    return this.leads.listDueToday({ assignedToId: filter }, claimsToScope(user));
   }
 
   @Get('leads/:id')
   @RequireCapability('lead.read')
-  @ApiOperation({ summary: 'Get a lead by id' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.leads.findByIdOrThrow(id);
+  @ApiOperation({ summary: 'Get a lead by id (scope-aware)' })
+  findOne(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.findByIdInScopeOrThrow(id, claimsToScope(user));
   }
 
   @Patch('leads/:id')
@@ -143,7 +154,7 @@ export class LeadsController {
     @Body() body: UpdateLeadDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.update(id, body, user.sub);
+    return this.leads.update(id, body, user.sub, claimsToScope(user));
   }
 
   @Delete('leads/:id')
@@ -163,7 +174,7 @@ export class LeadsController {
     @Body() body: AssignLeadDto,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    return this.leads.assign(id, body.assignedToId, user.sub);
+    return this.leads.assign(id, body.assignedToId, user.sub, claimsToScope(user));
   }
 
   @Post('leads/:id/auto-assign')
@@ -210,8 +221,8 @@ export class LeadsController {
   @Get('leads/:id/activities')
   @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
-  activities(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.leads.listActivities(id);
+  activities(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.listActivities(id, claimsToScope(user));
   }
 
   @Post('leads/:id/activities')

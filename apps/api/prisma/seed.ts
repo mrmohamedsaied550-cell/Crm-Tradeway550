@@ -74,7 +74,10 @@ async function seedRolesAndMappings(
 ): Promise<void> {
   await withTenant(tenantId, async (tx) => {
     for (const def of ROLE_DEFINITIONS) {
-      // Upsert by (tenantId, code).
+      // Upsert by (tenantId, code). Phase C — C1: every role in the
+      // registry is a system template (immutable at the service layer
+      // in C2); `isSystem = true` is forced on both create and update
+      // so a tenant can never accidentally drop the flag.
       const role = await tx.role.upsert({
         where: { tenantId_code: { tenantId, code: def.code } },
         update: {
@@ -82,6 +85,7 @@ async function seedRolesAndMappings(
           nameEn: def.nameEn,
           level: def.level,
           isActive: true,
+          isSystem: true,
         },
         create: {
           tenantId,
@@ -89,6 +93,7 @@ async function seedRolesAndMappings(
           nameAr: def.nameAr,
           nameEn: def.nameEn,
           level: def.level,
+          isSystem: true,
         },
       });
 
@@ -109,6 +114,36 @@ async function seedRolesAndMappings(
           skipDuplicates: true,
         });
       }
+
+      // Phase C — C1: default 'global' scope per (role × resource).
+      // Idempotent via the (roleId, resource) PK.
+      await tx.roleScope.createMany({
+        data: PHASE_C_SCOPED_RESOURCES.map((resource) => ({
+          tenantId,
+          roleId: role.id,
+          resource,
+          scope: 'global',
+        })),
+        skipDuplicates: true,
+      });
+
+      // Phase C — C1: explicit deny rows for sales_agent. The migration
+      // installs these once; the seed re-runs safely. Read-side
+      // enforcement lands in C4 — until then these rows exist but are
+      // unread, so existing tests are unaffected.
+      if (def.code === 'sales_agent') {
+        await tx.fieldPermission.createMany({
+          data: SALES_AGENT_FIELD_DENIES.map(([resource, field]) => ({
+            tenantId,
+            roleId: role.id,
+            resource,
+            field,
+            canRead: false,
+            canWrite: false,
+          })),
+          skipDuplicates: true,
+        });
+      }
     }
   });
   // eslint-disable-next-line no-console
@@ -116,6 +151,24 @@ async function seedRolesAndMappings(
     `seed: roles + mappings ready — ${ROLE_DEFINITIONS.length} roles for tenant ${tenantId}`,
   );
 }
+
+/**
+ * Phase C — C1: resources gated by the data-scope system. Each role
+ * gets one RoleScope row per resource at seed time, defaulting to
+ * 'global' so existing behaviour is preserved.
+ */
+const PHASE_C_SCOPED_RESOURCES = ['lead', 'captain', 'followup', 'whatsapp.conversation'] as const;
+
+/**
+ * Phase C — C1: explicit deny rows for the sales_agent role. C4 wires
+ * the read-side enforcement; until then these rows exist but are
+ * unread.
+ */
+const SALES_AGENT_FIELD_DENIES: ReadonlyArray<readonly [resource: string, field: string]> = [
+  ['lead', 'id'],
+  ['lead', 'attribution.campaign'],
+  ['lead', 'source'],
+];
 
 // ───────────────────────────────────────────────────────────────────────
 // C12 — org structure: Company / Country / Team
