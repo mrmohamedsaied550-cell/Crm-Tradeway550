@@ -19,6 +19,7 @@ import {
   Flag,
   MessagesSquare,
   MessageSquareDashed,
+  ShieldQuestion,
   Megaphone,
   Calendar,
   Database,
@@ -30,6 +31,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { reviewsApi } from '@/lib/api';
 import { getCachedMe } from '@/lib/auth';
 
 interface NavItem {
@@ -47,6 +49,7 @@ interface NavItem {
     | 'bonuses'
     | 'competitions'
     | 'whatsapp'
+    | 'whatsappReviews'
     | 'whatsappTemplates'
     | 'metaLeadSources'
     | 'reports'
@@ -91,6 +94,18 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'whatsapp',
     icon: MessagesSquare,
     cap: 'whatsapp.conversation.read',
+  },
+  // D1.5 — WhatsApp Review Queue. Visible only to roles with
+  // whatsapp.review.read (super_admin / ops_manager / account_manager
+  // by default; TLs see read-only). Renders an unresolved-count
+  // badge on the link itself when the count endpoint succeeds —
+  // a failed count call is silently dropped so the nav never
+  // breaks on a transient backend issue.
+  {
+    href: '/admin/whatsapp/reviews',
+    labelKey: 'whatsappReviews',
+    icon: ShieldQuestion,
+    cap: 'whatsapp.review.read',
   },
   {
     href: '/admin/whatsapp/templates',
@@ -155,9 +170,35 @@ export function AdminSideNav() {
   // we filter to those the user can read. This avoids both an SSR
   // mismatch and a flash-of-empty-nav while localStorage loads.
   const [caps, setCaps] = useState<readonly string[] | null>(null);
+  // D1.5/D1.6 — best-effort count badge for the review queue.
+  // Initially fetched once on mount when the actor has
+  // whatsapp.review.read; D1.6 also re-fetches whenever the
+  // review queue page dispatches `whatsapp.review.count.invalidate`
+  // so a resolve action drops the badge live. A failed call is
+  // silently dropped so a transient backend issue never blanks
+  // the nav.
+  const [reviewCount, setReviewCount] = useState<number>(0);
   useEffect(() => {
     const me = getCachedMe();
-    setCaps(me?.capabilities ?? []);
+    const c = me?.capabilities ?? [];
+    setCaps(c);
+    if (!c.includes('whatsapp.review.read')) return undefined;
+    function refreshCount(): void {
+      reviewsApi
+        .count()
+        .then((r) => setReviewCount(r.unresolved))
+        .catch(() => {
+          /* silent — nav must never break on count fetch */
+        });
+    }
+    refreshCount();
+    function onInvalidate(): void {
+      refreshCount();
+    }
+    window.addEventListener('whatsapp.review.count.invalidate', onInvalidate);
+    return () => {
+      window.removeEventListener('whatsapp.review.count.invalidate', onInvalidate);
+    };
   }, []);
 
   const visible = ITEMS.filter((item) => {
@@ -186,10 +227,19 @@ export function AdminSideNav() {
                 : 'text-ink-secondary hover:bg-brand-50 hover:text-brand-700',
           );
 
+          const showReviewBadge = item.labelKey === 'whatsappReviews' && reviewCount > 0;
           const content = (
             <>
               <Icon className="h-4 w-4" aria-hidden="true" />
               <span className="flex-1">{t(item.labelKey)}</span>
+              {showReviewBadge ? (
+                <span
+                  className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-status-warning/15 px-1.5 text-[11px] font-semibold text-status-warning"
+                  aria-label={t('whatsappReviewsBadge', { n: reviewCount })}
+                >
+                  {reviewCount > 99 ? '99+' : reviewCount}
+                </span>
+              ) : null}
               {item.pending ? (
                 <span className="text-[11px] font-medium uppercase text-ink-tertiary">
                   {tCommon('comingSoon')}

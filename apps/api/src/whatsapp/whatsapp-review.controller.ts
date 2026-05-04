@@ -72,6 +72,23 @@ export class WhatsAppReviewController {
     });
   }
 
+  /**
+   * D1.1 — small endpoint for the sidebar badge so the count is
+   * cheap to fetch without paying the full listing cost.
+   * Returns only the unresolved count under the actor's scope.
+   */
+  @Get('count')
+  @RequireCapability('whatsapp.review.read')
+  @ApiOperation({ summary: 'Count of unresolved review rows in scope' })
+  async count(@CurrentUser() user: AccessTokenClaims) {
+    const result = await this.reviews.listForUser(claimsToScope(user), {
+      resolved: false,
+      limit: 1,
+      offset: 0,
+    });
+    return { unresolved: result.total };
+  }
+
   @Get(':id')
   @RequireCapability('whatsapp.review.read')
   @ApiOperation({ summary: 'Get a review row + its conversation + contact' })

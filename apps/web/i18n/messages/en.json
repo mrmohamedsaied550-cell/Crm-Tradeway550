@@ -47,6 +47,7 @@
       "bonuses": "Bonuses",
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
+      "whatsappReviews": "WA Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
       "calendar": "Calendar",
@@ -55,7 +56,8 @@
       "lostReasons": "Lost reasons",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
-      "backup": "Backup"
+      "backup": "Backup",
+      "whatsappReviewsBadge": "{n} unresolved reviews"
     },
     "authBar": {
       "notSignedIn": "You're not signed in. Sign in to access the admin API.",
@@ -753,6 +755,120 @@
         "cannotDeactivateProtected": "The 'other' reason is protected and cannot be deactivated."
       }
     },
+    "whatsappReviews": {
+      "title": "WhatsApp Review Queue",
+      "subtitle": "Conversations that need manual triage before they can continue.",
+      "refresh": "Refresh",
+      "noAccess": "You don't have access to the WhatsApp review queue.",
+      "openThread": "Open thread",
+      "recentMessages": "Latest messages",
+      "candidateLeads": "{n} possible matches",
+      "showMoreCandidates": "Show {n} more",
+      "readOnlyHint": "Read-only access — your role can view review items but not resolve them.",
+      "count": "Showing {n} of {total}",
+      "filter": {
+        "tabsLabel": "Queue state",
+        "active": "Active",
+        "resolved": "Resolved",
+        "reasonLabel": "Reason"
+      },
+      "reason": {
+        "captain_active": "Active captain",
+        "duplicate_lead": "Possible duplicate",
+        "unmatched_after_routing": "No agent available"
+      },
+      "reasonExplain": {
+        "captain_active": "This phone appears to belong to an already active captain. Don't create a new sales lead automatically.",
+        "duplicate_lead": "This conversation may match an existing lead. Pick the right one — or create a new lead if none of the candidates fit.",
+        "unmatched_after_routing": "Routing couldn't find an eligible assignee for this conversation. Create a new lead and pick up triage manually."
+      },
+      "resolutionLabel": {
+        "linked_to_lead": "Linked to lead",
+        "linked_to_captain": "Linked to captain",
+        "new_lead": "New lead created",
+        "dismissed": "Dismissed"
+      },
+      "time": {
+        "now": "just now",
+        "m": "{n}m ago",
+        "h": "{n}h ago",
+        "d": "{n}d ago"
+      },
+      "candidate": {
+        "lead": {
+          "loading": "Loading lead…",
+          "outOfScope": "This lead isn't visible in your scope.",
+          "loadFailed": "Couldn't load lead.",
+          "openCta": "Open",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          }
+        },
+        "captain": {
+          "loading": "Loading captain…",
+          "outOfScope": "This captain isn't visible in your scope.",
+          "loadFailed": "Couldn't load captain.",
+          "openCta": "Open",
+          "tripCount": "{count} trips",
+          "status": {
+            "active": "Active",
+            "inactive": "Inactive",
+            "archived": "Archived"
+          }
+        }
+      },
+      "action": {
+        "linkToCaptain": "Confirm captain",
+        "createNewLead": "Create new lead",
+        "dismiss": "Dismiss"
+      },
+      "resolve": {
+        "title": {
+          "linked_to_lead": "Link conversation to this lead",
+          "linked_to_captain": "Confirm — this is an active captain",
+          "new_lead": "Create a new sales lead",
+          "dismissed": "Dismiss this review"
+        },
+        "body": {
+          "linked_to_lead": "The conversation will be attached to the chosen lead. The lead's owner, company, and country denormalise onto the conversation. Messages and the lead are not changed.",
+          "linked_to_captain": "The conversation will be tagged as belonging to the existing captain. No new sales lead is created. The conversation stays in the captain-support queue, not the sales pipeline.",
+          "new_lead": "A fresh sales lead will be created from this conversation, owned by you. The contact stays linked.",
+          "dismissed": "The review is marked resolved without changing the conversation. Use this when the alert is a false positive."
+        },
+        "confirm": {
+          "linked_to_lead": "Link lead",
+          "linked_to_captain": "Confirm captain",
+          "new_lead": "Create lead",
+          "dismissed": "Dismiss review"
+        },
+        "success": {
+          "linked_to_lead": "Conversation linked to the lead.",
+          "linked_to_captain": "Marked as captain.",
+          "new_lead": "New lead created.",
+          "dismissed": "Review dismissed."
+        },
+        "leadIdLabel": "Lead ID",
+        "leadIdHint": "Paste the Lead ID — only leads inside your scope can be linked.",
+        "leadIdHintPreset": "Picked from the candidate list above.",
+        "leadIdRequired": "Enter a Lead ID first.",
+        "invalidLeadId": "That doesn't look like a valid Lead ID.",
+        "leadNotFound": "Lead not found in your scope.",
+        "alreadyResolved": "This review was resolved by someone else. Refresh the queue."
+      },
+      "empty": {
+        "active": {
+          "title": "Nothing to review",
+          "body": "All WhatsApp inbound is being routed cleanly. New flagged items will appear here automatically."
+        },
+        "resolved": {
+          "title": "No resolved reviews",
+          "body": "Once review items are resolved, they'll show up here for the historical record."
+        }
+      }
+    },
     "whatsappTemplates": {
       "title": "WhatsApp templates",
       "subtitle": "Meta-approved templates the agent picker uses to start or re-open conversations.",
@@ -1080,8 +1196,9 @@
       }
     },
     "whatsapp": {
-      "title": "WhatsApp",
-      "subtitle": "Conversations across every connected account.",
+      "title": "WhatsApp Inbox",
+      "subtitle": "Assigned conversations across every connected account.",
+      "refresh": "Refresh",
       "noLead": "No linked lead",
       "linkLeadCta": "Link to a lead",
       "linkLeadTitle": "Link conversation to a lead",
@@ -1114,7 +1231,217 @@
       "handoverSummaryPlaceholder": "Outline what the new agent should know…",
       "handoverNotify": "Notify the new agent (records intent in the audit log).",
       "handoverConfirm": "Hand over",
-      "handoverDone": "Conversation handed over."
+      "handoverDone": "Conversation handed over.",
+      "filter": {
+        "label": "Inbox filter",
+        "mine": "Mine",
+        "all": "All in scope",
+        "statusLabel": "Status"
+      },
+      "status": {
+        "open": "Open",
+        "closed": "Closed"
+      },
+      "list": {
+        "count": "{n} conversations",
+        "emptyMineTitle": "No conversations assigned to you",
+        "emptyMineBody": "New inbound messages routed to you will appear here automatically.",
+        "emptyAllTitle": "No conversations in your scope",
+        "emptyAllBody": "Once your tenant starts receiving WhatsApp messages, they'll show up here.",
+        "switchToAll": "Switch to All in scope",
+        "time": {
+          "now": "now",
+          "m": "{n}m",
+          "h": "{n}h",
+          "d": "{n}d"
+        }
+      },
+      "thread": {
+        "selectTitle": "Select a conversation",
+        "selectBody": "Pick a conversation from the list to read and reply.",
+        "notFoundTitle": "Conversation not found in your scope",
+        "notFoundBody": "The link you followed points to a conversation your role can't read. It may have been reassigned to another team.",
+        "notFoundCta": "Back to inbox",
+        "loading": "Loading messages…",
+        "empty": "No messages yet — start the conversation with an approved template.",
+        "templateBadge": "Template · {name}",
+        "mediaImage": "Image",
+        "mediaDocument": "Document",
+        "detailsToggle": "Details",
+        "closeDetails": "Close details",
+        "sendFailed": "Couldn't send the message",
+        "status": {
+          "queued": "queued",
+          "sent": "sent",
+          "delivered": "delivered",
+          "read": "read",
+          "failed": "failed",
+          "received": "received"
+        }
+      },
+      "compose": {
+        "placeholder": "Write a reply…",
+        "placeholderClosed": "This conversation is closed",
+        "placeholderWindowClosed": "The 24-hour window is closed — send a template to re-open",
+        "send": "Send",
+        "template": "Template",
+        "templateHint": "Send an approved template",
+        "media": "Media",
+        "mediaHint": "Send an image or document",
+        "windowClosedBanner": "The 24-hour customer-service window is closed. Send an approved template to re-open the conversation.",
+        "windowClosingSoonBanner": "The 24-hour window is closing soon — wrap up your reply or send a template.",
+        "closedBanner": "This conversation is closed. Reopen it before sending.",
+        "noPermission": "You don't have permission to send WhatsApp messages.",
+        "noTextPermission": "Text replies aren't permitted on your role.",
+        "templateComingSoon": "Template picker — coming in the next chunk.",
+        "mediaComingSoon": "Media picker — coming in the next chunk."
+      },
+      "window": {
+        "open": "Window open",
+        "closing_soon": "Window closing soon",
+        "closed": "Window closed — template only",
+        "openWithTime": "Open · {time} left",
+        "closingSoonWithTime": "Closing in {time}"
+      },
+      "assignmentSource": {
+        "inbound_route": "Inbound routed",
+        "manual_handover": "Manual handover",
+        "outbound_self": "Self-claimed",
+        "migrated": "Migrated",
+        "lead_propagation": "From lead assignment"
+      },
+      "owner": {
+        "unassigned": "Unassigned",
+        "unknownOwner": "Unknown owner"
+      },
+      "contact": {
+        "isCaptain": "Active captain",
+        "hasOpenLead": "Linked lead"
+      },
+      "sidePanel": {
+        "title": "Conversation details",
+        "contact": {
+          "title": "Contact",
+          "language": "Language: {language}",
+          "languageMissing": "Language not set yet.",
+          "languageLabel": "Language",
+          "languageHint": "What language does the customer prefer to write in?",
+          "languageNone": "— Not set —",
+          "displayNameLabel": "Display name",
+          "editAria": "Edit contact",
+          "saveCta": "Save changes",
+          "saved": "Contact updated",
+          "nameRequired": "Display name can't be empty.",
+          "firstSeen": "First seen",
+          "lastSeen": "Last seen",
+          "readOnlyHint": "Read-only — your role doesn't allow editing this contact.",
+          "languages": {
+            "ar": "Arabic",
+            "en": "English",
+            "fr": "French"
+          }
+        },
+        "lead": {
+          "title": "Linked lead",
+          "openCta": "Open lead",
+          "notLinked": "No lead linked yet.",
+          "linkCta": "Link a lead",
+          "linkLockedHint": "Linking a lead requires WhatsApp link permission.",
+          "outOfScope": "The linked lead isn't available in your scope.",
+          "addNoteCta": "Add note",
+          "nextActionDue": "Next action due {time}",
+          "ownedBy": "Owned by {name}",
+          "unknownOwner": "an agent outside your scope",
+          "unassigned": "Lead is unassigned",
+          "ownerMismatch": "Conversation owner differs from linked lead owner.",
+          "ownerMismatchNamed": "Conversation is with {convoOwner} but the lead is owned by {leadOwner}.",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          },
+          "sla": {
+            "breached": "SLA breached",
+            "paused": "SLA paused"
+          }
+        },
+        "ownership": {
+          "title": "Conversation ownership",
+          "owner": "Owner",
+          "source": "Source",
+          "status": "Status",
+          "assignedAt": "Assigned at"
+        }
+      },
+      "addNote": {
+        "title": "Add note to linked lead",
+        "helper": "The note is saved to the lead timeline and tagged as coming from WhatsApp.",
+        "bodyLabel": "Note",
+        "bodyHint": "Up to 4,000 characters. Visible to anyone with access to this lead.",
+        "bodyPlaceholder": "Outline what the customer said or what needs to happen next…",
+        "mustEnterBody": "Write a short note before saving.",
+        "confirmCta": "Save note",
+        "success": "Note added to the lead"
+      },
+      "actions": {
+        "menuLabel": "Actions",
+        "menuAria": "More actions on this conversation",
+        "assignLabel": "Reassign conversation",
+        "handoverLabel": "Handover conversation",
+        "closeLabel": "Close conversation",
+        "reopenLabel": "Reopen conversation",
+        "linkLabel": "Link lead",
+        "unlinkLabel": "Unlink lead"
+      },
+      "assign": {
+        "title": "Reassign conversation",
+        "helper": "This assigns the conversation to the selected user. Messages and the linked lead are not changed.",
+        "currentOwnerLabel": "Current owner",
+        "newOwnerLabel": "New owner",
+        "unassigned": "Unassigned",
+        "unknownOwner": "Unknown owner",
+        "searchPlaceholder": "Search users by name or email…",
+        "searching": "Searching…",
+        "noUsersFound": "No users found",
+        "clearSelection": "Clear selection",
+        "mustSelect": "Pick a user before confirming.",
+        "confirmCta": "Reassign",
+        "success": "Conversation reassigned"
+      },
+      "handover": {
+        "summaryRequired": "Add a handover summary or pick a different transfer mode.",
+        "summaryHint": "Up to 2,000 characters. Saved as a note on the linked lead."
+      },
+      "close": {
+        "title": "Close conversation",
+        "body": "Closing stops normal follow-up on this thread. Messages and the linked lead are not deleted, and the conversation can be reopened later if your role allows it.",
+        "confirmCta": "Close conversation",
+        "success": "Conversation closed"
+      },
+      "reopen": {
+        "title": "Reopen conversation",
+        "body": "Reopening makes the conversation active again. The linked lead's stage is not changed.",
+        "confirmCta": "Reopen conversation",
+        "success": "Conversation reopened"
+      },
+      "unlinkLead": {
+        "title": "Unlink lead",
+        "body": "This removes the link between this conversation and the lead. Neither record is deleted, and ownership of the conversation stays the same.",
+        "confirmCta": "Unlink lead",
+        "success": "Lead unlinked"
+      },
+      "linkLead": {
+        "title": "Link conversation to a lead",
+        "helper": "Paste the Lead ID for the matching lead. A search picker is on the way; for now, open the lead file in another tab and copy the ID from its URL.",
+        "idLabel": "Lead ID",
+        "idHint": "Open the lead file and copy the Lead ID from its URL.",
+        "mustEnterId": "Enter a Lead ID first.",
+        "invalidId": "That doesn't look like a valid Lead ID.",
+        "notFound": "Lead not found in your scope.",
+        "confirmCta": "Link lead",
+        "success": "Lead linked"
+      }
     },
     "roles": {
       "title": "Roles & permissions",
@@ -1304,86 +1631,6 @@
       "errors": {
         "invalid": "Pick a valid date and time.",
         "inPast": "Pick a time in the future."
-      }
-    },
-    "inbox": {
-      "title": "WhatsApp inbox",
-      "subtitle": "Live conversations with leads and captains.",
-      "open": "Open inbox",
-      "phoneFilter": "Filter by phone",
-      "phoneFilterPlaceholder": "+201001112222",
-      "accountFilter": "WhatsApp account",
-      "allAccounts": "All accounts",
-      "accountInactive": "(inactive)",
-      "status": {
-        "open": "Open",
-        "closed": "Closed",
-        "all": "All"
-      },
-      "empty": "No conversations yet",
-      "emptyHint": "Inbound WhatsApp messages will appear here.",
-      "emptyFiltered": "No conversations match the filters",
-      "emptyFilteredHint": "Try clearing the account, phone, or status filters.",
-      "noMessages": "No messages yet",
-      "noMessagesHint": "Once the lead replies on WhatsApp the thread will appear here.",
-      "selectAConversation": "Select a conversation",
-      "selectAConversationHint": "Pick one from the list to read and reply.",
-      "composerPlaceholder": "Type a reply…",
-      "composerPlaceholderClosed": "Window closed — pick a template to reach out.",
-      "composerClosed": "Conversation is closed — replies are disabled.",
-      "send": "Send",
-      "sending": "Sending…",
-      "back": "Back to list",
-      "today": "Today",
-      "yesterday": "Yesterday",
-      "windowOpen": "Window open (24h)",
-      "windowClosed": "Window closed — last reply {hours}h ago",
-      "windowNever": "No reply yet — use a template",
-      "windowSendDisabled": "Customer hasn't replied within 24h. Use a template.",
-      "useTemplate": "Template",
-      "attachMedia": "Media",
-      "mediaWindowDisabled": "Media uses the freeform window. Use a template first.",
-      "noTemplates": "No approved templates for this account.",
-      "templatePickerTitle": "Send a template",
-      "templateLabel": "Template",
-      "templateVariableLabel": "{{n}}",
-      "templateVarsRequired": "Fill every variable.",
-      "mediaModalTitle": "Send media",
-      "mediaKind": "Kind",
-      "mediaKindImage": "Image",
-      "mediaKindDocument": "Document",
-      "mediaUrl": "Media URL",
-      "mediaMimeType": "MIME type (optional)",
-      "mediaCaption": "Caption (optional)",
-      "mediaUrlRequired": "Media URL is required.",
-      "cancel": "Cancel",
-      "handover": {
-        "cta": "Transfer",
-        "disabledClosed": "Conversation is closed — handover is disabled.",
-        "title": "Transfer this conversation",
-        "hint": "Reassigns the linked lead and writes an audit-trail entry.",
-        "newAssignee": "New assignee",
-        "pickAssignee": "Pick an agent…",
-        "modeLabel": "Transfer mode",
-        "modes": {
-          "full": {
-            "title": "Full transfer",
-            "body": "Keeps the chat open; lead reassigns to the new agent."
-          },
-          "clean": {
-            "title": "Clean handoff",
-            "body": "Closes the current conversation; the new agent starts fresh."
-          },
-          "summary": {
-            "title": "Summary",
-            "body": "Posts a handover note onto the lead so the new agent has context."
-          }
-        },
-        "summary": "Handover summary",
-        "summaryPlaceholder": "Outline what the new agent should know…",
-        "notify": "Notify the new agent (records intent in the audit log).",
-        "confirm": "Transfer",
-        "done": "Conversation transferred."
       }
     }
   },
