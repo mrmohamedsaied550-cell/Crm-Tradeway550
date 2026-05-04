@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { Plus } from 'lucide-react';
+import { Plus, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -11,8 +11,10 @@ import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
+import { UserScopeModal } from '@/components/admin/user-scope-modal';
 import { ApiError, rolesApi, teamsApi, usersApi } from '@/lib/api';
 import type { AdminUser, RoleSummary, Team, UserStatus } from '@/lib/api-types';
+import { hasCapability } from '@/lib/auth';
 
 interface CreateForm {
   email: string;
@@ -79,6 +81,10 @@ export default function UsersPage(): JSX.Element {
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // C9 — per-row scope assignment modal target.
+  const [scopeUser, setScopeUser] = useState<AdminUser | null>(null);
+  const canWriteUsers = hasCapability('users.write');
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -356,6 +362,12 @@ export default function UsersPage(): JSX.Element {
               <Button variant="secondary" size="sm" onClick={() => openEdit(row)}>
                 {tCommon('edit')}
               </Button>
+              {canWriteUsers ? (
+                <Button variant="ghost" size="sm" onClick={() => setScopeUser(row)}>
+                  <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('scope')}
+                </Button>
+              ) : null}
               {row.status === 'disabled' ? (
                 <Button variant="ghost" size="sm" onClick={() => void onEnable(row)}>
                   {t('enable')}
@@ -570,6 +582,15 @@ export default function UsersPage(): JSX.Element {
           </form>
         ) : null}
       </Modal>
+
+      {/* C9 — Scope assignment modal */}
+      {scopeUser ? (
+        <UserScopeModal
+          user={scopeUser}
+          open={scopeUser !== null}
+          onClose={() => setScopeUser(null)}
+        />
+      ) : null}
     </div>
   );
 }

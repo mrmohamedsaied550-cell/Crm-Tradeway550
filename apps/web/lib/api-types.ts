@@ -115,6 +115,29 @@ export interface FieldCatalogueEntry {
   labelEn: string;
 }
 
+/**
+ * Phase C — C9: shape returned by /users/:id/scope-assignments.
+ *
+ * Joined to the company / country tables so the UI can render
+ * names without a follow-up round-trip. The PUT body sends only
+ * the id arrays — names are derived server-side.
+ */
+export interface UserScopeCompanyRef {
+  id: string;
+  code: string;
+  name: string;
+}
+export interface UserScopeCountryRef {
+  id: string;
+  code: string;
+  name: string;
+  companyId: string;
+}
+export interface UserScopeAssignments {
+  companies: readonly UserScopeCompanyRef[];
+  countries: readonly UserScopeCountryRef[];
+}
+
 export interface PipelineStage {
   id: string;
   code: string;

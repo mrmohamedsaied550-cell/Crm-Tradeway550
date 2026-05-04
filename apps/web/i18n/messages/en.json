@@ -178,12 +178,57 @@
       "noTeam": "No team",
       "disable": "Disable",
       "enable": "Enable",
+      "scope": "Scope",
       "disableConfirm": "Disable this user? They will no longer be able to sign in.",
       "rolePickerHint": "Pick a role discovered from existing users.",
       "empty": "No users yet",
       "emptyHint": "Invite the first operator to start working in this tenant.",
       "emptyFiltered": "No users match the filters",
       "emptyFilteredHint": "Try widening the team / role / status filters."
+    },
+    "userScope": {
+      "title": "Manage data access — {name}",
+      "saved": "Data access updated.",
+      "notNeeded": "The role \"{role}\" already covers everything this user can see. No company or country selections are needed.",
+      "roleHeader": "Role: {name}",
+      "scopeNames": {
+        "global": "All tenants",
+        "country": "Country",
+        "company": "Company",
+        "team": "Team",
+        "own": "Own only"
+      },
+      "scopeExplanations": {
+        "global": "Sees everything across the tenant.",
+        "country": "Sees records in the countries you select below.",
+        "company": "Sees records in the companies you select below.",
+        "team": "Sees records belonging to anyone in their team.",
+        "own": "Sees only records assigned to them."
+      },
+      "companies": {
+        "label": "Companies this user can see",
+        "help": "Pick one or more companies. The user will see leads, captains, and conversations linked to these companies.",
+        "placeholder": "Search companies…",
+        "empty": "No companies match.",
+        "count": "{n} selected",
+        "required": "Pick at least one company — without it the user will see nothing."
+      },
+      "countries": {
+        "label": "Countries this user can see",
+        "help": "Pick one or more countries. The user will see records linked to these countries.",
+        "placeholder": "Search countries…",
+        "empty": "No countries match.",
+        "count": "{n} selected",
+        "required": "Pick at least one country — without it the user will see nothing."
+      },
+      "preview": {
+        "title": "What this user will see",
+        "companies": "{n} companies",
+        "countries": "{n} countries",
+        "empty": "Nothing yet — pick at least one item above.",
+        "blockedTitle": "This user will see no data",
+        "blockedBody": "Their role requires at least one selection above. Pick one to continue."
+      }
     },
     "leads": {
       "title": "Leads",

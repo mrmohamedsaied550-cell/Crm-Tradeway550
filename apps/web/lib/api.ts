@@ -69,6 +69,7 @@ import type {
   PipelineStageRow,
   SendConversationMessageResult,
   TenantSettingsRow,
+  UserScopeAssignments,
   WhatsAppAccount,
   WhatsAppTemplateRow,
   Team,
@@ -415,6 +416,18 @@ export const usersApi = {
   setStatus: (id: string, status: UserStatus): Promise<AdminUser> =>
     apiFetch<AdminUser>(`/users/${id}/status`, { method: 'PATCH', body: { status } }),
   remove: (id: string): Promise<void> => apiFetch<void>(`/users/${id}`, { method: 'DELETE' }),
+  /** Phase C — C9: read the user's company / country bindings. */
+  listScopeAssignments: (id: string): Promise<UserScopeAssignments> =>
+    apiFetch<UserScopeAssignments>(`/users/${id}/scope-assignments`),
+  /** Phase C — C9: replace the full set of company / country bindings. */
+  putScopeAssignments: (
+    id: string,
+    body: { companyIds: string[]; countryIds: string[] },
+  ): Promise<UserScopeAssignments> =>
+    apiFetch<UserScopeAssignments>(`/users/${id}/scope-assignments`, {
+      method: 'PUT',
+      body,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
