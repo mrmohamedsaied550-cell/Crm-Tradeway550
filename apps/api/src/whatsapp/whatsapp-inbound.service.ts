@@ -312,13 +312,40 @@ export class WhatsAppInboundService {
     } catch (err) {
       const isDuplicate =
         err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
-      const isShapedDuplicate =
+      const errCode =
         err !== null &&
         typeof err === 'object' &&
         'getResponse' in err &&
-        typeof (err as { getResponse: unknown }).getResponse === 'function' &&
-        ((err as { getResponse: () => unknown }).getResponse() as Record<string, unknown>)?.code ===
-          'lead.duplicate_phone';
+        typeof (err as { getResponse: unknown }).getResponse === 'function'
+          ? (((err as { getResponse: () => unknown }).getResponse() as Record<string, unknown>)
+              ?.code as string | undefined)
+          : undefined;
+      const isShapedDuplicate = errCode === 'lead.duplicate_phone';
+      // Phase D2 — D2.3: createFromWhatsApp now also throws
+      // `lead.requires_review` when the duplicate-decision engine
+      // (LEAD_ATTEMPTS_V2=true) decides the inbound matches a
+      // captain / won / cooldown case. We surface it as a review
+      // row with reason='duplicate_lead' (the closest existing
+      // enum value; D2.4 may extend the WhatsApp review reason set
+      // to surface cooldown / won distinctly).
+      const isRequiresReview = errCode === 'lead.requires_review';
+      if (isRequiresReview) {
+        await this.linkConversationToContact(tx, persisted.conversationId, contact.id);
+        await this.queueReview(tx, account.tenantId, {
+          conversationId: persisted.conversationId,
+          contactId: contact.id,
+          reason: 'duplicate_lead',
+          candidateLeadIds: [],
+          candidateCaptainId: null,
+          msg,
+        });
+        return {
+          messageId: persisted.messageId,
+          conversationId: persisted.conversationId,
+          assignedToId: null,
+          reviewReason: 'duplicate_lead',
+        };
+      }
       if (!isDuplicate && !isShapedDuplicate) throw err;
       // Race: another inbound created the lead first. Re-fetch and
       // treat as "1 match found" branch.

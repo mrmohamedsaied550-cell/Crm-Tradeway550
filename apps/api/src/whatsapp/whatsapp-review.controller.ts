@@ -35,7 +35,16 @@ class ListReviewsQueryDto extends createZodDto(ListReviewsQuerySchema) {}
 
 const ResolveReviewSchema = z
   .object({
-    resolution: z.enum(['linked_to_lead', 'linked_to_captain', 'new_lead', 'dismissed']),
+    // Phase D2 — D2.3: `'new_attempt'` added so the operator can
+    // explicitly create a fresh attempt chained to the contact's
+    // previous lead history instead of a brand-new first attempt.
+    resolution: z.enum([
+      'linked_to_lead',
+      'linked_to_captain',
+      'new_lead',
+      'new_attempt',
+      'dismissed',
+    ]),
     leadId: z.string().uuid().optional(),
   })
   .strict();

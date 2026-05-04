@@ -11,6 +11,8 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
 import { AuditService } from '../audit/audit.service';
+import { DuplicateDecisionService } from '../duplicates/duplicate-decision.service';
+import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
@@ -97,6 +99,17 @@ export class LeadsService {
      * the audit log itself can't leak the data the role was denied.
      */
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D2 — D2.3: duplicate / reactivation decision engine.
+     * Consulted on every create path BEFORE the insert when
+     * LEAD_ATTEMPTS_V2 resolves true. When the flag resolves false
+     * (production default), the gate is bypassed and create paths
+     * behave bit-for-bit identical to D2.2. @Optional so existing
+     * test fixtures that build LeadsService without the new module
+     * continue to compile; production wiring (CrmModule via the
+     * @Global DuplicatesModule) always provides it.
+     */
+    @Optional() private readonly duplicateDecision?: DuplicateDecisionService,
   ) {}
 
   /**
@@ -249,6 +262,67 @@ export class LeadsService {
       await this.assertUserInTenant(dto.assignedToId);
     }
 
+    // Phase D2 — D2.3: duplicate / reactivation gate.
+    //
+    // Under LEAD_ATTEMPTS_V2=false (production default), this whole
+    // block is skipped and the existing create path runs unchanged
+    // — including the legacy `lead.duplicate_phone` ConflictException
+    // raised at the bottom of this method on P2002.
+    //
+    // Under LEAD_ATTEMPTS_V2=true (dev/test default), we evaluate
+    // the duplicate-decision engine BEFORE attempting the insert
+    // and translate its decision into one of:
+    //   - throw lead.duplicate_phone        (decision = reject_existing_open
+    //                                        OR link_to_existing — manual
+    //                                        create can't link)
+    //   - throw lead.requires_review        (decision = queue_review)
+    //   - proceed with the insert + populate D2 attempt fields
+    //     (decision = create_first_attempt OR create_new_attempt)
+    //
+    // The `duplicateGate` carries the engine's decision out so the
+    // post-insert audit row can chain the new lead id back through
+    // `writeDecisionLogInTx`.
+    let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
+      null;
+    if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
+      duplicateGate = await this.duplicateDecision.evaluate({
+        phone,
+        contactId: null, // manual create doesn't carry a contactId; engine looks up by phone
+        context: {
+          trigger: 'manual',
+          companyId: dto.companyId ?? null,
+          countryId: dto.countryId ?? null,
+          pipelineId: null,
+          actorUserId,
+        },
+      });
+      if (
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing'
+      ) {
+        // Manual create can never link — the operator is explicitly
+        // asking to create a new row. Map both reject and link to
+        // the same legacy 409 so the API contract is preserved.
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${phone} already exists in this tenant`,
+        });
+      }
+      if (duplicateGate.decision === 'queue_review') {
+        // Manual create has no review-queue surface today. Surface
+        // a clear, distinct error code so the UI can branch (D2.4
+        // Lead-create form will offer "send to review queue" CTA).
+        throw new ConflictException({
+          code: 'lead.requires_review',
+          message:
+            'This phone matches an existing lead or captain that needs manual review. Use the review queue to resolve before creating a new attempt.',
+        });
+      }
+      // Otherwise: create_first_attempt or create_new_attempt — fall
+      // through to the existing insert. We pass the chain fields via
+      // the closure so the prisma.withTenant block can apply them.
+    }
+
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
         // Phase 1B — resolve the pipeline first, then resolve / validate
@@ -358,6 +432,42 @@ export class LeadsService {
         // non-null payload going forward.
         const attribution = buildAttribution(dto.source, dto.attribution ?? null);
 
+        // Phase D2 — D2.3: when the duplicate gate decided
+        // `create_new_attempt`, populate the chain + reactivation
+        // audit columns on the new row. The previous lead's
+        // attemptIndex + 1 becomes the new attemptIndex; the engine
+        // returned `previousLeadId` directly so we don't re-query.
+        // For first-attempt rows attemptIndex defaults to 1 (column
+        // default) and the chain columns stay null.
+        let attemptFields: {
+          attemptIndex: number;
+          previousLeadId: string | null;
+          reactivatedAt: Date | null;
+          reactivatedById: string | null;
+          reactivationRule: string | null;
+        } = {
+          attemptIndex: 1,
+          previousLeadId: null,
+          reactivatedAt: null,
+          reactivatedById: null,
+          reactivationRule: null,
+        };
+        if (duplicateGate && duplicateGate.decision === 'create_new_attempt') {
+          const previous = duplicateGate.previousLeadId
+            ? await tx.lead.findUnique({
+                where: { id: duplicateGate.previousLeadId },
+                select: { attemptIndex: true },
+              })
+            : null;
+          attemptFields = {
+            attemptIndex: (previous?.attemptIndex ?? 0) + 1,
+            previousLeadId: duplicateGate.previousLeadId,
+            reactivatedAt: new Date(),
+            reactivatedById: actorUserId,
+            reactivationRule: duplicateGate.ruleApplied,
+          };
+        }
+
         const lead = await tx.lead.create({
           data: {
             tenantId,
@@ -375,6 +485,7 @@ export class LeadsService {
             createdById: actorUserId,
             slaDueAt,
             slaStatus,
+            ...attemptFields,
           },
           include: { stage: true, captain: true },
         });
@@ -403,6 +514,51 @@ export class LeadsService {
             data: { hasOpenLead: true },
           });
         }
+
+        // Phase D2 — D2.3: post-insert audit. When the duplicate
+        // gate ran (LEAD_ATTEMPTS_V2=true), record the decision
+        // against the new lead id + add a reactivation activity row
+        // for chained attempts so the timeline starts with a clear
+        // "reactivated from #N" marker. Skipped under flag=false
+        // (no decision was computed).
+        if (duplicateGate && this.duplicateDecision) {
+          await this.duplicateDecision.writeDecisionLogInTx(
+            tx,
+            tenantId,
+            duplicateGate,
+            {
+              phone,
+              contactId: lead.contactId,
+              context: {
+                trigger: 'manual',
+                companyId: dto.companyId ?? null,
+                countryId: dto.countryId ?? null,
+                pipelineId: null,
+                actorUserId,
+              },
+            },
+            lead.id,
+            null,
+          );
+          if (duplicateGate.decision === 'create_new_attempt' && duplicateGate.previousLeadId) {
+            await this.appendActivity(tx, {
+              tenantId,
+              leadId: lead.id,
+              type: 'system',
+              actionSource: 'system',
+              body: `Reactivated as attempt #${lead.attemptIndex} from previous attempt.`,
+              payload: {
+                event: 'reactivation',
+                previousLeadId: duplicateGate.previousLeadId,
+                ruleApplied: duplicateGate.ruleApplied,
+                attemptIndex: lead.attemptIndex,
+                trigger: 'manual',
+              },
+              createdById: actorUserId,
+            });
+          }
+        }
+
         return lead;
       });
     } catch (err) {
@@ -1552,7 +1708,96 @@ export class LeadsService {
       ...(input.waId && { ad: { id: input.waId } }),
     });
 
+    // Phase D2 — D2.3: WhatsApp inbound's "create" branch is one of
+    // the create paths gated by LEAD_ATTEMPTS_V2. The inbound
+    // orchestrator (whatsapp-inbound.service.ts) reaches this method
+    // ONLY after it has decided "no open lead matches; route + create"
+    // — meaning the engine, if consulted here, will see no open lead
+    // either. The interesting cases the engine adds are:
+    //   - active captain → queue_review (caller's orchestrator
+    //     already enqueues a review row in the captain_active branch
+    //     before reaching here, so this is a defensive belt-and-
+    //     braces; if a race interleaves, the engine catches it)
+    //   - lost lead aged out → create_new_attempt
+    // When the gate fires `queue_review` (e.g. a returning lost-but-
+    // within-cooldown case), we throw a typed error the inbound
+    // orchestrator can catch and translate into a review row.
+    // Under flag=false the gate is skipped entirely.
+    let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
+      null;
+    if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
+      duplicateGate = await this.duplicateDecision.evaluate(
+        {
+          phone: input.phone,
+          contactId: input.contactId,
+          context: {
+            trigger: 'whatsapp_inbound',
+            companyId: input.companyId,
+            countryId: input.countryId,
+            pipelineId: pipeline.id,
+            actorUserId: null,
+          },
+        },
+        { tx },
+      );
+      if (
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing'
+      ) {
+        // Race: an open lead appeared while we were resolving stage.
+        // The legacy P2002 catch below would also handle this, but
+        // raising the engine's decision keeps the audit trail in
+        // sync.
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+      if (duplicateGate.decision === 'queue_review') {
+        // Bubble up so the inbound orchestrator can materialise a
+        // review row. The orchestrator already handles the explicit
+        // captain_active / duplicate_lead branches; the engine's
+        // queue_review here covers cooldown / won / cross-pipeline
+        // edge cases that the orchestrator wasn't checking before.
+        throw new ConflictException({
+          code: 'lead.requires_review',
+          message: 'Inbound matches an existing lead/captain; review required.',
+        });
+      }
+    }
+
     try {
+      // Same chain-fields shape as `create()` — applied when the
+      // gate decided `create_new_attempt`.
+      let attemptFields: {
+        attemptIndex: number;
+        previousLeadId: string | null;
+        reactivatedAt: Date | null;
+        reactivatedById: string | null;
+        reactivationRule: string | null;
+      } = {
+        attemptIndex: 1,
+        previousLeadId: null,
+        reactivatedAt: null,
+        reactivatedById: null,
+        reactivationRule: null,
+      };
+      if (duplicateGate && duplicateGate.decision === 'create_new_attempt') {
+        const previous = duplicateGate.previousLeadId
+          ? await tx.lead.findUnique({
+              where: { id: duplicateGate.previousLeadId },
+              select: { attemptIndex: true },
+            })
+          : null;
+        attemptFields = {
+          attemptIndex: (previous?.attemptIndex ?? 0) + 1,
+          previousLeadId: duplicateGate.previousLeadId,
+          reactivatedAt: now,
+          reactivatedById: null, // automated inbound — no actor user
+          reactivationRule: duplicateGate.ruleApplied,
+        };
+      }
+
       const lead = await tx.lead.create({
         data: {
           tenantId: input.tenantId,
@@ -1571,8 +1816,9 @@ export class LeadsService {
           slaStatus: 'active',
           contactId: input.contactId,
           primaryConversationId: input.primaryConversationId,
+          ...attemptFields,
         },
-        select: { id: true },
+        select: { id: true, attemptIndex: true },
       });
 
       await this.appendActivity(tx, {
@@ -1592,6 +1838,46 @@ export class LeadsService {
         createdById: null,
         actionSource: 'whatsapp',
       });
+
+      // Phase D2 — D2.3: post-insert audit + reactivation activity
+      // (mirrors the manual `create()` path).
+      if (duplicateGate && this.duplicateDecision) {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone: input.phone,
+            contactId: input.contactId,
+            context: {
+              trigger: 'whatsapp_inbound',
+              companyId: input.companyId,
+              countryId: input.countryId,
+              pipelineId: pipeline.id,
+              actorUserId: null,
+            },
+          },
+          lead.id,
+          null,
+        );
+        if (duplicateGate.decision === 'create_new_attempt' && duplicateGate.previousLeadId) {
+          await this.appendActivity(tx, {
+            tenantId: input.tenantId,
+            leadId: lead.id,
+            type: 'system',
+            actionSource: 'system',
+            body: `Reactivated as attempt #${lead.attemptIndex} from previous attempt.`,
+            payload: {
+              event: 'reactivation',
+              previousLeadId: duplicateGate.previousLeadId,
+              ruleApplied: duplicateGate.ruleApplied,
+              attemptIndex: lead.attemptIndex,
+              trigger: 'whatsapp_inbound',
+            },
+            createdById: null,
+          });
+        }
+      }
 
       // C10B-3: keep Contact.hasOpenLead in sync — this freshly-created
       // lead is by definition open. Backfill is the safety net (C10B-2)

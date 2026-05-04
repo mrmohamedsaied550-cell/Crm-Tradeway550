@@ -824,6 +824,14 @@ export const leadsApi = {
   }): Promise<{
     total: number;
     created: number;
+    /** Phase D2 — D2.3: returned only when LEAD_ATTEMPTS_V2 is on
+     *  for the tenant; falls back to 0 on flag-off API responses
+     *  (the field is optional at the wire level for compat). */
+    reactivated?: number;
+    /** Phase D2 — D2.3: ambiguous matches the import sent to the
+     *  WhatsApp review queue. Optional for the same flag-off
+     *  compatibility reason as `reactivated`. */
+    reviewQueued?: number;
     duplicates: number;
     errors: { row: number; reason: string }[];
   }> =>

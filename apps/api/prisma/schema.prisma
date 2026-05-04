@@ -627,7 +627,16 @@ model Lead {
   /// Read-only side; the writer is DuplicateDecisionLog itself.
   duplicateDecisions    DuplicateDecisionLog[] @relation("DuplicateDecisionResultLead")
 
-  @@unique([tenantId, phone])
+  // Phase D2 — D2.3: the lifelong @@unique([tenantId, phone]) was
+  // dropped in favour of a PARTIAL UNIQUE INDEX scoped to OPEN
+  // leads only (`leads_open_phone_uniq` — see migration 0033).
+  // Prisma 5 doesn't model partial-unique indexes in the schema
+  // language; the index is created by raw SQL in the migration and
+  // exists in the database, but is not declared here. The runtime
+  // gate is DuplicateDecisionService (D2.2); the partial index is
+  // the concurrent-race safety net. Multiple historical / lost /
+  // won / archived leads with the same phone are expected and
+  // permitted.
   @@index([tenantId, stageId])
   @@index([tenantId, assignedToId])
   @@index([tenantId, createdAt])

@@ -243,6 +243,29 @@ export class DuplicateDecisionService {
     });
   }
 
+  // ─── public composition helpers (D2.3) ─────────────────────────────
+
+  /**
+   * D2.3 — public log-writer used by callers that own their own
+   * create flow (e.g. `LeadsService.create`, `createFromWhatsApp`,
+   * `LeadIngestionService.tryCreateLead`). The caller evaluates
+   * via `evaluate(...)`, performs its own insert, and then calls
+   * this to record the audit row + raise the standard audit verb.
+   *
+   * Idempotent: callers can safely call once per evaluated row.
+   */
+  async writeDecisionLogInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    decision: DuplicateDecision,
+    input: DecisionInput,
+    resultLeadId: string | null,
+    resultReviewId: string | null,
+    extra: { reviewIntent?: ReviewIntent } = {},
+  ): Promise<void> {
+    return this.writeLog(tx, tenantId, decision, input, resultLeadId, resultReviewId, extra);
+  }
+
   // ─── internals ─────────────────────────────────────────────────────
 
   /** Load and parse the tenant's duplicate-rules JSON; defaults

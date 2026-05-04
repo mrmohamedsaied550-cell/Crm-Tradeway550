@@ -24,11 +24,27 @@ import { requireTenantId } from '../tenants/tenant-context';
  *                           unassigned, review row marked resolved
  */
 
-export type ReviewResolution = 'linked_to_lead' | 'linked_to_captain' | 'new_lead' | 'dismissed';
+/**
+ * Phase D2 — D2.3 adds `'new_attempt'`: the operator has reviewed
+ * a returning person and explicitly chose to create a fresh attempt
+ * chained to a previous lead. Distinct from `'new_lead'` (which is
+ * for first-touch creates with no prior history). The resolver
+ * supplies `previousLeadId` to anchor the chain.
+ */
+export type ReviewResolution =
+  | 'linked_to_lead'
+  | 'linked_to_captain'
+  | 'new_lead'
+  | 'new_attempt'
+  | 'dismissed';
 
 export interface ResolveReviewInput {
   resolution: ReviewResolution;
-  /** Required when resolution = 'linked_to_lead'. */
+  /** Required when resolution = 'linked_to_lead'.
+   *  When resolution = 'new_attempt' OPTIONAL — if supplied, the
+   *  new attempt chains from this specific predecessor; if omitted,
+   *  the service walks the contact's lead list and picks the most
+   *  recent closed lead as the predecessor. */
   leadId?: string;
 }
 
@@ -204,11 +220,23 @@ export class WhatsAppReviewService {
           // reassigning manually if needed.
           break;
         }
-        case 'new_lead': {
+        case 'new_lead':
+        case 'new_attempt': {
           // Re-route from scratch via the inbound flow's helper.
           // We do NOT call the routing engine here — instead, the
           // resolver picks an assignee themselves (the actor) so the
           // admin keeps full control.
+          //
+          // D2.3 — Both `new_lead` and `new_attempt` flow through
+          // the same `createFromWhatsApp` call. Under
+          // LEAD_ATTEMPTS_V2=true the inner duplicate-decision gate
+          // sees the matching leads / captain via the engine and
+          // populates the attempt-chain fields automatically; under
+          // flag-off it behaves exactly as today (legacy `new_lead`
+          // semantics, no chain). The distinct resolution string is
+          // preserved on the review row + audit log so downstream
+          // dashboards can count "explicit reactivation" cases
+          // separately from "first-touch new lead" cases.
           const lead = await this.leads.createFromWhatsApp(tx, {
             tenantId,
             contactId: review.contactId,
