@@ -1,88 +1,140 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Link as LinkIcon, MessagesSquare, Phone } from 'lucide-react';
+import { Filter, MessagesSquare, RefreshCw, X } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select, Textarea } from '@/components/ui/input';
-import { Modal } from '@/components/ui/modal';
+import { Field, Select } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, conversationsApi, leadsApi, usersApi } from '@/lib/api';
-import type { AdminUser, Lead, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
+import { useToast } from '@/components/ui/toast';
+import { ChatThread } from '@/components/whatsapp/chat-thread';
+import { ConversationHeader } from '@/components/whatsapp/conversation-header';
+import { ConversationRow } from '@/components/whatsapp/conversation-row';
+import { SendComposer } from '@/components/whatsapp/send-composer';
+import { SidePanelPlaceholder } from '@/components/whatsapp/side-panel-placeholder';
+import { ApiError, conversationsApi } from '@/lib/api';
+import { getCachedMe, hasCapability } from '@/lib/auth';
+import type { ConversationStatus, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
+import { useRealtime } from '@/lib/realtime';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
+import { type InboxFilter, readPreferredFilter, writePreferredFilter } from '@/lib/whatsapp';
 
 /**
- * /admin/whatsapp (C34) — admin WhatsApp inbox.
+ * D1.2 — unified WhatsApp inbox.
  *
- * Read-only conversations + thread + manual "link to lead" action.
- * Reuses existing endpoints (/conversations, /:id/messages,
- * /:id/link-lead from C25). Sending messages is intentionally out of
- * scope here — that's the agent inbox at /agent/inbox.
+ * Replaces the previous read-only `/admin/whatsapp` page AND the
+ * separate `/agent/inbox`. One surface for every persona; backend
+ * scope and the local Mine/All toggle decide what each operator
+ * sees.
+ *
+ * Layout breakpoints:
+ *   - desktop (≥1280px) — three-pane: list / thread / details
+ *   - tablet  (768-1279px) — two-pane: list + thread; details
+ *     panel slides in as an end-edge drawer when toggled
+ *   - mobile  (<768px) — single pane stack:
+ *       state 'list'    → conversation list
+ *       state 'thread'  → thread + composer (back arrow returns to list)
+ *       state 'details' → side panel (back arrow returns to thread)
+ *
+ * State plumbing is intentionally URL-free — bookmarking a single
+ * conversation is a Phase D2 concern; for D1.2 we keep the
+ * navigation in component state so a quick return-to-list never
+ * loses the just-read context.
+ *
+ * Action buttons (assign / handover / close / reopen / link /
+ * unlink) and the full Contact + Lead side panel land in D1.3 +
+ * D1.4. The header has an `actionsSlot` ready for them; the side
+ * panel placeholder renders read-only contact + lead summary today.
  */
 
-export default function AdminWhatsAppPage(): JSX.Element {
+type MobileView = 'list' | 'thread' | 'details';
+
+export default function WhatsAppInboxPage(): JSX.Element {
   const t = useTranslations('admin.whatsapp');
   const tCommon = useTranslations('admin.common');
+  const { toast } = useToast();
 
+  const me = getCachedMe();
+  const myUserId = me?.userId ?? null;
+  const roleCode = me?.roleCode ?? null;
+  const canSendText = hasCapability('whatsapp.message.send');
+  const canSendMedia = hasCapability('whatsapp.media.send');
+  const canSendTemplate = hasCapability('whatsapp.message.send');
+
+  const [filter, setFilter] = useState<InboxFilter>(() => readPreferredFilter(roleCode));
+  const [statusFilter, setStatusFilter] = useState<ConversationStatus | ''>('open');
   const [rows, setRows] = useState<WhatsAppConversation[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<WhatsAppConversation | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [sending, setSending] = useState<boolean>(false);
 
-  const [linkOpen, setLinkOpen] = useState<boolean>(false);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [linkLeadId, setLinkLeadId] = useState<string>('');
-  const [linking, setLinking] = useState<boolean>(false);
-  const [linkError, setLinkError] = useState<string | null>(null);
+  // Layout state — derived from media-queries + a mobile view stack.
+  const isMobile = useMediaQuery('(max-width: 767px)');
+  const isTabletOrSmaller = useMediaQuery('(max-width: 1279px)');
+  const [mobileView, setMobileView] = useState<MobileView>('list');
+  const [tabletDetailsOpen, setTabletDetailsOpen] = useState<boolean>(false);
 
-  // C35 — handover modal state.
-  const [handoverOpen, setHandoverOpen] = useState<boolean>(false);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [handoverForm, setHandoverForm] = useState<{
-    newAssigneeId: string;
-    mode: 'full' | 'clean' | 'summary';
-    summary: string;
-    notify: boolean;
-  }>({ newAssigneeId: '', mode: 'full', summary: '', notify: false });
-  const [handing, setHanding] = useState<boolean>(false);
-  const [handoverError, setHandoverError] = useState<string | null>(null);
+  // Persist filter preference whenever it changes.
+  useEffect(() => {
+    writePreferredFilter(filter);
+  }, [filter]);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
-      const page = await conversationsApi.list({ limit: 100 });
-      setRows(page.items);
+      const page = await conversationsApi.list({
+        ...(statusFilter && { status: statusFilter }),
+        limit: 100,
+      });
+      // The "Mine" filter is a client-side narrow on top of the
+      // backend's scope-filtered list. The list endpoint doesn't
+      // accept `assignedToId` today; adding it would be a backend
+      // change beyond locked D1 scope.
+      const filtered =
+        filter === 'mine' && myUserId
+          ? page.items.filter((c) => c.assignedToId === myUserId)
+          : page.items;
+      setRows(filtered);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filter, myUserId, statusFilter]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  // Refetch the selected conversation detail (with included lead +
+  // contact + assignedTo) and its messages when the selection
+  // changes or after a write that may have mutated either.
   useEffect(() => {
     if (!selectedId) {
+      setSelectedDetail(null);
       setMessages([]);
       return;
     }
-    setChatLoading(true);
     let cancelled = false;
-    conversationsApi
-      .listMessages(selectedId, { limit: 200 })
-      .then((items) => {
-        if (!cancelled) setMessages(items);
+    setChatLoading(true);
+    Promise.all([
+      conversationsApi.get(selectedId),
+      conversationsApi.listMessages(selectedId, { limit: 200 }),
+    ])
+      .then(([detail, msgs]) => {
+        if (cancelled) return;
+        setSelectedDetail(detail);
+        setMessages(msgs ?? []);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof ApiError ? err.message : String(err));
@@ -95,152 +147,163 @@ export default function AdminWhatsAppPage(): JSX.Element {
     };
   }, [selectedId]);
 
-  const selected = useMemo(() => rows.find((c) => c.id === selectedId) ?? null, [rows, selectedId]);
-
-  // The /conversations/:id endpoint already returns a `lead` inline (C25),
-  // but the list endpoint does not — we surface it lazily via the
-  // selected conversation's individual fetch. For now, we just show
-  // whether the conversation has any leadId.
-  const [selectedDetail, setSelectedDetail] = useState<
-    (WhatsAppConversation & { lead?: { id: string; name: string; phone: string } | null }) | null
-  >(null);
-
-  useEffect(() => {
-    if (!selectedId) {
-      setSelectedDetail(null);
-      return;
+  // Realtime: a new inbound bumps the list and refreshes the open
+  // thread. Subtle UX rule (per UX plan §U6): the visible thread
+  // never auto-switches; only the list refreshes.
+  useRealtime('whatsapp.message', (event) => {
+    if (event.type !== 'whatsapp.message') return;
+    void reload();
+    if (event.conversationId === selectedId) {
+      conversationsApi
+        .listMessages(event.conversationId, { limit: 200 })
+        .then((msgs) => setMessages(msgs ?? []))
+        .catch(() => {});
     }
-    let cancelled = false;
-    void conversationsApi
-      .get(selectedId)
-      .then((c) => {
-        if (!cancelled) setSelectedDetail(c as never);
-      })
-      .catch(() => {
-        // silent — list-row is enough for the header
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId, notice]);
+  });
 
-  async function openLinkModal(): Promise<void> {
-    setLinkOpen(true);
-    setLinkError(null);
-    setLinkLeadId('');
+  async function onSendText(text: string): Promise<void> {
+    if (!selectedId) return;
+    setSending(true);
     try {
-      const page = await leadsApi.list({ limit: 200 });
-      setLeads(page.items);
+      await conversationsApi.sendText(selectedId, text);
+      const [detail, msgs] = await Promise.all([
+        conversationsApi.get(selectedId),
+        conversationsApi.listMessages(selectedId, { limit: 200 }),
+      ]);
+      setSelectedDetail(detail);
+      setMessages(msgs ?? []);
+      void reload();
     } catch (err) {
-      setLinkError(err instanceof ApiError ? err.message : String(err));
-    }
-  }
-
-  async function openHandoverModal(): Promise<void> {
-    setHandoverOpen(true);
-    setHandoverError(null);
-    setHandoverForm({ newAssigneeId: '', mode: 'full', summary: '', notify: false });
-    try {
-      const page = await usersApi.list({ status: 'active', limit: 200 });
-      setUsers(page.items);
-    } catch (err) {
-      setHandoverError(err instanceof ApiError ? err.message : String(err));
-    }
-  }
-
-  async function onHandover(e: FormEvent<HTMLFormElement>): Promise<void> {
-    e.preventDefault();
-    if (!selectedId || !handoverForm.newAssigneeId) return;
-    setHanding(true);
-    setHandoverError(null);
-    try {
-      await conversationsApi.handover(selectedId, {
-        newAssigneeId: handoverForm.newAssigneeId,
-        mode: handoverForm.mode,
-        ...(handoverForm.mode === 'summary' && handoverForm.summary
-          ? { summary: handoverForm.summary }
-          : {}),
-        notify: handoverForm.notify,
-      });
-      setNotice(t('handoverDone'));
-      setHandoverOpen(false);
-      // If the mode was 'clean', the conversation was closed — reload
-      // the list so its status badge updates.
-      await reload();
-    } catch (err) {
-      setHandoverError(err instanceof ApiError ? err.message : String(err));
+      const message = err instanceof ApiError ? err.message : String(err);
+      toast({ tone: 'error', title: t('thread.sendFailed'), body: message });
+      throw err;
     } finally {
-      setHanding(false);
+      setSending(false);
     }
   }
 
-  async function onLink(e: FormEvent<HTMLFormElement>): Promise<void> {
-    e.preventDefault();
-    if (!selectedId || !linkLeadId) return;
-    setLinking(true);
-    setLinkError(null);
-    try {
-      await conversationsApi.linkLead(selectedId, linkLeadId);
-      setNotice(t('linked'));
-      setLinkOpen(false);
-    } catch (err) {
-      setLinkError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setLinking(false);
-    }
+  function selectRow(id: string): void {
+    setSelectedId(id);
+    if (isMobile) setMobileView('thread');
+    if (isTabletOrSmaller) setTabletDetailsOpen(false);
   }
+
+  const selectedFromList = useMemo(
+    () => rows.find((c) => c.id === selectedId) ?? null,
+    [rows, selectedId],
+  );
+  const selected = selectedDetail ?? selectedFromList;
+
+  // Show the owner badge on rows when the current view is "All in
+  // scope" — agents on "Mine" are looking at their own work and
+  // don't need the badge.
+  const showOwnerOnRow = filter === 'all';
 
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
+    <div className="flex flex-col gap-3">
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-32">
+              <Field label={t('filter.statusLabel')}>
+                <Select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as ConversationStatus | '')}
+                >
+                  <option value="">{tCommon('all')}</option>
+                  <option value="open">{t('status.open')}</option>
+                  <option value="closed">{t('status.closed')}</option>
+                </Select>
+              </Field>
+            </div>
+            <div
+              className="inline-flex overflow-hidden rounded-md border border-surface-border"
+              role="tablist"
+              aria-label={t('filter.label')}
+            >
+              <FilterButton
+                active={filter === 'mine'}
+                onClick={() => setFilter('mine')}
+                label={t('filter.mine')}
+              />
+              <FilterButton
+                active={filter === 'all'}
+                onClick={() => setFilter('all')}
+                label={t('filter.all')}
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void reload()}
+              disabled={loading}
+              aria-label={t('refresh')}
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden="true" />
+            </Button>
+          </div>
+        }
+      />
 
-      {notice ? <Notice tone="success">{notice}</Notice> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
 
-      <div className="grid min-h-[480px] gap-3 md:grid-cols-[320px_minmax(0,1fr)] md:gap-4">
-        <section className="flex min-h-0 flex-col rounded-lg border border-surface-border bg-surface-card shadow-card">
-          <header className="border-b border-surface-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-ink-tertiary">
-            {t('title')}
+      {/* Layout — desktop three-pane / tablet two-pane + drawer / mobile single-pane stack */}
+      <div
+        className={cn(
+          'min-h-[560px] gap-3 md:gap-4',
+          // Desktop ≥1280px → three columns. Tablet 768-1279px →
+          // two columns with the drawer overlaying the right side.
+          // Mobile <768px → single column controlled by `mobileView`.
+          'xl:grid xl:grid-cols-[340px_minmax(0,1fr)_360px]',
+          'md:grid md:grid-cols-[340px_minmax(0,1fr)]',
+          'flex flex-col',
+        )}
+      >
+        {/* LIST PANE — hidden on mobile when not on `list` view */}
+        <section
+          className={cn(
+            'min-h-0 rounded-lg border border-surface-border bg-surface-card shadow-card',
+            'flex flex-col',
+            isMobile && mobileView !== 'list' ? 'hidden' : '',
+          )}
+        >
+          <header className="flex items-center justify-between border-b border-surface-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+            <span className="inline-flex items-center gap-1">
+              <Filter className="h-3 w-3" aria-hidden="true" />
+              {filter === 'mine' ? t('filter.mine') : t('filter.all')}
+            </span>
+            <span>{t('list.count', { n: rows.length })}</span>
           </header>
-          <div className="flex-1 overflow-y-auto">
-            {loading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {loading && rows.length === 0 ? (
               <p className="p-6 text-center text-sm text-ink-secondary">{tCommon('loading')}</p>
             ) : rows.length === 0 ? (
               <div className="p-3">
                 <EmptyState
                   icon={<MessagesSquare className="h-7 w-7" aria-hidden="true" />}
-                  title={tCommon('errorTitle')}
-                  body={t('subtitle')}
+                  title={filter === 'mine' ? t('list.emptyMineTitle') : t('list.emptyAllTitle')}
+                  body={filter === 'mine' ? t('list.emptyMineBody') : t('list.emptyAllBody')}
+                  action={
+                    filter === 'mine' ? (
+                      <Button variant="secondary" size="sm" onClick={() => setFilter('all')}>
+                        {t('list.switchToAll')}
+                      </Button>
+                    ) : null
+                  }
                 />
               </div>
             ) : (
               <ul className="divide-y divide-surface-border">
                 {rows.map((c) => (
                   <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(c.id)}
-                      className={cn(
-                        'flex w-full flex-col items-start gap-0.5 px-3 py-2.5 text-start transition-colors',
-                        selectedId === c.id ? 'bg-brand-50' : 'hover:bg-brand-50/50',
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5 text-sm font-medium text-ink-primary">
-                        <Phone className="h-3 w-3 text-ink-tertiary" aria-hidden="true" />
-                        <code className="font-mono">{c.phone}</code>
-                      </span>
-                      <p className="line-clamp-1 w-full text-xs text-ink-secondary">
-                        {c.lastMessageText || '—'}
-                      </p>
-                      <div className="flex w-full items-center justify-between gap-2">
-                        <span className="text-[10px] uppercase tracking-wide text-ink-tertiary">
-                          {c.status}
-                        </span>
-                        <span className="text-[10px] text-ink-tertiary">
-                          {new Date(c.lastMessageAt).toLocaleString()}
-                        </span>
-                      </div>
-                    </button>
+                    <ConversationRow
+                      conversation={c}
+                      selected={selectedId === c.id}
+                      onClick={() => selectRow(c.id)}
+                      showOwner={showOwnerOnRow}
+                    />
                   </li>
                 ))}
               </ul>
@@ -248,209 +311,136 @@ export default function AdminWhatsAppPage(): JSX.Element {
           </div>
         </section>
 
-        <section className="flex min-h-0 flex-col rounded-lg border border-surface-border bg-surface-card shadow-card">
+        {/* THREAD PANE — hidden on mobile when not on `thread` view */}
+        <section
+          className={cn(
+            'min-h-0 rounded-lg border border-surface-border bg-surface-card shadow-card',
+            'flex flex-col',
+            isMobile && mobileView !== 'thread' ? 'hidden' : '',
+          )}
+        >
           {selected ? (
             <>
-              <div className="flex items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
-                <div className="flex flex-col leading-tight">
-                  <span className="flex items-center gap-1.5 text-sm font-medium text-ink-primary">
-                    <Phone className="h-3.5 w-3.5 text-ink-tertiary" aria-hidden="true" />
-                    <code className="font-mono">{selected.phone}</code>
-                  </span>
-                  <span className="text-[11px] text-ink-tertiary">
-                    <Badge tone={selected.status === 'open' ? 'healthy' : 'inactive'}>
-                      {selected.status}
-                    </Badge>
-                    <span className="ms-2">
-                      {selectedDetail?.lead
-                        ? `${selectedDetail.lead.name} · ${selectedDetail.lead.phone}`
-                        : t('noLead')}
-                    </span>
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => void openLinkModal()}>
-                    <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                    {t('linkLeadCta')}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void openHandoverModal()}
-                    disabled={!selectedDetail?.lead}
-                    title={selectedDetail?.lead ? '' : t('handoverNeedsLead')}
-                  >
-                    {t('handoverCta')}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto bg-surface px-3 py-3">
-                {chatLoading ? (
-                  <p className="text-center text-sm text-ink-secondary">{tCommon('loading')}</p>
-                ) : messages.length === 0 ? (
-                  <p className="text-center text-sm text-ink-tertiary">{t('noMessages')}</p>
-                ) : (
-                  <ul className="flex flex-col gap-2">
-                    {messages.map((m) => {
-                      const out = m.direction === 'outbound';
-                      return (
-                        <li
-                          key={m.id}
-                          className={cn('flex', out ? 'justify-end' : 'justify-start')}
-                        >
-                          <div
-                            className={cn(
-                              'max-w-[85%] rounded-lg px-3 py-2 text-sm shadow-sm sm:max-w-[70%]',
-                              out
-                                ? 'bg-brand-600 text-white'
-                                : 'border border-surface-border bg-surface-card text-ink-primary',
-                            )}
-                          >
-                            <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                            <p
-                              className={cn(
-                                'mt-1 text-end text-[11px]',
-                                out ? 'text-white/70' : 'text-ink-tertiary',
-                              )}
-                            >
-                              {new Date(m.createdAt).toLocaleString()}
-                            </p>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
+              <ConversationHeader
+                conversation={selected}
+                onBack={isMobile ? () => setMobileView('list') : undefined}
+                onToggleDetails={
+                  isTabletOrSmaller && !isMobile
+                    ? () => setTabletDetailsOpen((v) => !v)
+                    : isMobile
+                      ? () => setMobileView('details')
+                      : undefined
+                }
+                detailsOpen={tabletDetailsOpen}
+              />
+              <ChatThread messages={messages} loading={chatLoading} />
+              <SendComposer
+                conversation={selected}
+                canSendText={canSendText}
+                canSendMedia={canSendMedia}
+                canSendTemplate={canSendTemplate}
+                sending={sending}
+                onSendText={onSendText}
+                onOpenTemplate={() =>
+                  toast({ tone: 'info', title: t('compose.templateComingSoon') })
+                }
+                onOpenMedia={() => toast({ tone: 'info', title: t('compose.mediaComingSoon') })}
+              />
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center p-6">
               <EmptyState
                 icon={<MessagesSquare className="h-8 w-8" aria-hidden="true" />}
-                title={t('selectAConversation')}
-                body={t('selectAConversationHint')}
+                title={t('thread.selectTitle')}
+                body={t('thread.selectBody')}
               />
             </div>
           )}
         </section>
-      </div>
 
-      <Modal open={linkOpen} title={t('linkLeadTitle')} onClose={() => setLinkOpen(false)}>
-        <form onSubmit={onLink} className="flex flex-col gap-3">
-          {linkError ? <Notice tone="error">{linkError}</Notice> : null}
-          <p className="text-sm text-ink-secondary">{t('linkLeadHint')}</p>
-          <Field label={t('linkLeadCta')} required>
-            <Select value={linkLeadId} onChange={(e) => setLinkLeadId(e.target.value)} required>
-              <option value="" disabled>
-                {tCommon('select')}
-              </option>
-              {leads.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name} — {l.phone}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" type="button" onClick={() => setLinkOpen(false)}>
-              {tCommon('cancel')}
-            </Button>
-            <Button type="submit" loading={linking} disabled={!linkLeadId}>
-              {tCommon('save')}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        {/* DETAILS PANE
+              desktop  — always visible as the third column
+              tablet   — drawer overlay, open via header toggle
+              mobile   — full-screen view when `mobileView === 'details'`
+        */}
+        {selected ? (
+          <>
+            {/* Desktop pane (xl:) */}
+            <div className="hidden xl:flex xl:min-h-0">
+              <SidePanelPlaceholder conversation={selected} />
+            </div>
 
-      <Modal
-        open={handoverOpen}
-        title={t('handoverTitle')}
-        onClose={() => setHandoverOpen(false)}
-        width="lg"
-      >
-        <form onSubmit={onHandover} className="flex flex-col gap-3">
-          {handoverError ? <Notice tone="error">{handoverError}</Notice> : null}
-          <p className="text-sm text-ink-secondary">{t('handoverHint')}</p>
-
-          <Field label={t('handoverNewAssignee')} required>
-            <Select
-              value={handoverForm.newAssigneeId}
-              onChange={(e) => setHandoverForm({ ...handoverForm, newAssigneeId: e.target.value })}
-              required
-            >
-              <option value="" disabled>
-                {tCommon('select')}
-              </option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} — {u.email}
-                </option>
-              ))}
-            </Select>
-          </Field>
-
-          <fieldset className="flex flex-col gap-1.5">
-            <legend className="text-sm font-medium text-ink-primary">
-              {t('handoverModeLabel')}
-            </legend>
-            {(['full', 'clean', 'summary'] as const).map((m) => (
-              <label key={m} className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="handover-mode"
-                  value={m}
-                  checked={handoverForm.mode === m}
-                  onChange={() => setHandoverForm({ ...handoverForm, mode: m })}
-                  className="mt-1"
+            {/* Tablet drawer (md → xl) */}
+            {!isMobile && tabletDetailsOpen ? (
+              <div className="fixed inset-0 z-30 md:flex xl:hidden">
+                <button
+                  type="button"
+                  className="flex-1 bg-ink-primary/30"
+                  onClick={() => setTabletDetailsOpen(false)}
+                  aria-label={t('thread.closeDetails')}
                 />
-                <span>
-                  <span className="font-medium">{t(`handoverModes.${m}.title`)}</span>
-                  <span className="ms-1 text-ink-tertiary">— {t(`handoverModes.${m}.body`)}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+                <div className="relative h-full w-[360px] max-w-full bg-surface-card shadow-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setTabletDetailsOpen(false)}
+                    className="absolute end-3 top-3 rounded-md p-1 text-ink-secondary hover:bg-brand-50 hover:text-brand-700"
+                    aria-label={t('thread.closeDetails')}
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <SidePanelPlaceholder conversation={selected} />
+                </div>
+              </div>
+            ) : null}
 
-          {handoverForm.mode === 'summary' ? (
-            <Field label={t('handoverSummary')} required>
-              <Textarea
-                value={handoverForm.summary}
-                onChange={(e) => setHandoverForm({ ...handoverForm, summary: e.target.value })}
-                rows={4}
-                required
-                maxLength={2000}
-                placeholder={t('handoverSummaryPlaceholder')}
-              />
-            </Field>
-          ) : null}
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={handoverForm.notify}
-              onChange={(e) => setHandoverForm({ ...handoverForm, notify: e.target.checked })}
-            />
-            {t('handoverNotify')}
-          </label>
-
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" type="button" onClick={() => setHandoverOpen(false)}>
-              {tCommon('cancel')}
-            </Button>
-            <Button
-              type="submit"
-              loading={handing}
-              disabled={
-                !handoverForm.newAssigneeId ||
-                (handoverForm.mode === 'summary' && !handoverForm.summary.trim())
-              }
-            >
-              {t('handoverConfirm')}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+            {/* Mobile full-screen */}
+            {isMobile && mobileView === 'details' ? (
+              <section className="min-h-0 rounded-lg border border-surface-border bg-surface-card shadow-card">
+                <header className="flex items-center justify-between border-b border-surface-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-ink-tertiary">
+                  <button
+                    type="button"
+                    onClick={() => setMobileView('thread')}
+                    className="rounded-md px-2 py-1 text-ink-secondary hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    {tCommon('cancel')}
+                  </button>
+                  <span>{t('sidePanel.title')}</span>
+                  <span aria-hidden="true" />
+                </header>
+                <SidePanelPlaceholder conversation={selected} />
+              </section>
+            ) : null}
+          </>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+/** Small inline button used by the Mine/All segmented toggle. */
+function FilterButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'px-3 py-1.5 text-sm transition-colors',
+        active
+          ? 'bg-brand-600 text-white'
+          : 'text-ink-secondary hover:bg-brand-50 hover:text-brand-700',
+      )}
+    >
+      {label}
+    </button>
   );
 }

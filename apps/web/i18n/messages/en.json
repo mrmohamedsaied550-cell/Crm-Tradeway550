@@ -1080,8 +1080,9 @@
       }
     },
     "whatsapp": {
-      "title": "WhatsApp",
-      "subtitle": "Conversations across every connected account.",
+      "title": "WhatsApp Inbox",
+      "subtitle": "Assigned conversations across every connected account.",
+      "refresh": "Refresh",
       "noLead": "No linked lead",
       "linkLeadCta": "Link to a lead",
       "linkLeadTitle": "Link conversation to a lead",
@@ -1114,7 +1115,109 @@
       "handoverSummaryPlaceholder": "Outline what the new agent should know…",
       "handoverNotify": "Notify the new agent (records intent in the audit log).",
       "handoverConfirm": "Hand over",
-      "handoverDone": "Conversation handed over."
+      "handoverDone": "Conversation handed over.",
+      "filter": {
+        "label": "Inbox filter",
+        "mine": "Mine",
+        "all": "All in scope",
+        "statusLabel": "Status"
+      },
+      "status": {
+        "open": "Open",
+        "closed": "Closed"
+      },
+      "list": {
+        "count": "{n} conversations",
+        "emptyMineTitle": "No conversations assigned to you",
+        "emptyMineBody": "New inbound messages routed to you will appear here automatically.",
+        "emptyAllTitle": "No conversations in your scope",
+        "emptyAllBody": "Once your tenant starts receiving WhatsApp messages, they'll show up here.",
+        "switchToAll": "Switch to All in scope",
+        "time": {
+          "now": "now",
+          "m": "{n}m",
+          "h": "{n}h",
+          "d": "{n}d"
+        }
+      },
+      "thread": {
+        "selectTitle": "Select a conversation",
+        "selectBody": "Pick a conversation from the list to read and reply.",
+        "loading": "Loading messages…",
+        "empty": "No messages yet — start the conversation with an approved template.",
+        "templateBadge": "Template · {name}",
+        "mediaImage": "Image",
+        "mediaDocument": "Document",
+        "detailsToggle": "Details",
+        "closeDetails": "Close details",
+        "sendFailed": "Couldn't send the message",
+        "status": {
+          "queued": "queued",
+          "sent": "sent",
+          "delivered": "delivered",
+          "read": "read",
+          "failed": "failed",
+          "received": "received"
+        }
+      },
+      "compose": {
+        "placeholder": "Write a reply…",
+        "placeholderClosed": "This conversation is closed",
+        "placeholderWindowClosed": "The 24-hour window is closed — send a template to re-open",
+        "send": "Send",
+        "template": "Template",
+        "templateHint": "Send an approved template",
+        "media": "Media",
+        "mediaHint": "Send an image or document",
+        "windowClosedBanner": "The 24-hour customer-service window is closed. Send an approved template to re-open the conversation.",
+        "windowClosingSoonBanner": "The 24-hour window is closing soon — wrap up your reply or send a template.",
+        "closedBanner": "This conversation is closed. Reopen it before sending.",
+        "noPermission": "You don't have permission to send WhatsApp messages.",
+        "noTextPermission": "Text replies aren't permitted on your role.",
+        "templateComingSoon": "Template picker — coming in the next chunk.",
+        "mediaComingSoon": "Media picker — coming in the next chunk."
+      },
+      "window": {
+        "open": "Window open",
+        "closing_soon": "Window closing soon",
+        "closed": "Window closed — template only",
+        "openWithTime": "Open · {time} left",
+        "closingSoonWithTime": "Closing in {time}"
+      },
+      "assignmentSource": {
+        "inbound_route": "Inbound routed",
+        "manual_handover": "Manual handover",
+        "outbound_self": "Self-claimed",
+        "migrated": "Migrated",
+        "lead_propagation": "From lead assignment"
+      },
+      "owner": {
+        "unassigned": "Unassigned",
+        "unknownOwner": "Unknown owner"
+      },
+      "contact": {
+        "isCaptain": "Active captain",
+        "hasOpenLead": "Linked lead"
+      },
+      "sidePanel": {
+        "title": "Conversation details",
+        "comingSoon": "Inline contact editing and quick lead actions land in the next chunk.",
+        "contact": {
+          "title": "Contact",
+          "language": "Language: {language}"
+        },
+        "lead": {
+          "title": "Linked lead",
+          "openCta": "Open lead",
+          "notLinked": "No lead linked yet.",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          }
+        }
+      }
     },
     "roles": {
       "title": "Roles & permissions",

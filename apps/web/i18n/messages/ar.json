@@ -1080,9 +1080,10 @@
       }
     },
     "whatsapp": {
-      "title": "واتساب",
-      "subtitle": "كل المحادثات عبر الحسابات المتصلة.",
-      "noLead": "لا يوجد عميل مرتبط",
+      "title": "صندوق محادثات واتساب",
+      "subtitle": "محادثاتي المُسنَدة عبر كل الحسابات المتصلة.",
+      "refresh": "تحديث",
+      "noLead": "لا يوجد ليد مرتبط",
       "linkLeadCta": "ربط بعميل",
       "linkLeadTitle": "ربط المحادثة بعميل",
       "linkLeadHint": "اختر عميلاً لربط هذه المحادثة به.",
@@ -1114,7 +1115,109 @@
       "handoverSummaryPlaceholder": "اكتب ما ينبغي أن يعرفه الوكيل الجديد…",
       "handoverNotify": "إشعار الوكيل الجديد (يُسجَّل في سجلّ التدقيق).",
       "handoverConfirm": "تحويل",
-      "handoverDone": "تم تحويل المحادثة."
+      "handoverDone": "تم تحويل المحادثة.",
+      "filter": {
+        "label": "تصفية الصندوق",
+        "mine": "محادثاتي",
+        "all": "كل المحادثات في نطاقي",
+        "statusLabel": "الحالة"
+      },
+      "status": {
+        "open": "مفتوحة",
+        "closed": "مغلقة"
+      },
+      "list": {
+        "count": "{n} محادثة",
+        "emptyMineTitle": "لا توجد محادثات مُسنَدة إليك",
+        "emptyMineBody": "ستظهر هنا تلقائياً أي محادثات جديدة تُوجَّه إليك.",
+        "emptyAllTitle": "لا توجد محادثات في نطاقك",
+        "emptyAllBody": "ستظهر هنا فور بدء استقبال رسائل واتساب لهذا المستأجر.",
+        "switchToAll": "عرض كل المحادثات في نطاقي",
+        "time": {
+          "now": "الآن",
+          "m": "{n} د",
+          "h": "{n} س",
+          "d": "{n} ي"
+        }
+      },
+      "thread": {
+        "selectTitle": "اختر محادثة",
+        "selectBody": "اختر محادثة من القائمة للقراءة والرد.",
+        "loading": "جارٍ تحميل الرسائل…",
+        "empty": "لا توجد رسائل بعد — ابدأ المحادثة بقالب معتمد.",
+        "templateBadge": "قالب · {name}",
+        "mediaImage": "صورة",
+        "mediaDocument": "مستند",
+        "detailsToggle": "التفاصيل",
+        "closeDetails": "إغلاق التفاصيل",
+        "sendFailed": "تعذّر إرسال الرسالة",
+        "status": {
+          "queued": "في الانتظار",
+          "sent": "مُرسَلة",
+          "delivered": "تم التسليم",
+          "read": "تمت القراءة",
+          "failed": "فشل",
+          "received": "تم الاستلام"
+        }
+      },
+      "compose": {
+        "placeholder": "اكتب ردّاً…",
+        "placeholderClosed": "هذه المحادثة مغلقة",
+        "placeholderWindowClosed": "نافذة الـ 24 ساعة مغلقة — أرسل قالباً لإعادة فتحها",
+        "send": "إرسال",
+        "template": "قالب",
+        "templateHint": "إرسال قالب معتمد",
+        "media": "وسائط",
+        "mediaHint": "إرسال صورة أو مستند",
+        "windowClosedBanner": "نافذة الردّ خلال 24 ساعة مغلقة. أرسل قالباً معتمداً لإعادة فتح المحادثة.",
+        "windowClosingSoonBanner": "نافذة الـ 24 ساعة شارفت على الانتهاء — أنهِ ردّك أو أرسل قالباً.",
+        "closedBanner": "هذه المحادثة مغلقة. أعد فتحها قبل الإرسال.",
+        "noPermission": "ليس لديك صلاحية لإرسال رسائل واتساب.",
+        "noTextPermission": "إرسال الرسائل النصّية غير متاح لدورك.",
+        "templateComingSoon": "منتقي القوالب — قادم في تحديث لاحق.",
+        "mediaComingSoon": "منتقي الوسائط — قادم في تحديث لاحق."
+      },
+      "window": {
+        "open": "النافذة مفتوحة",
+        "closing_soon": "النافذة على وشك الإغلاق",
+        "closed": "النافذة مغلقة — قوالب فقط",
+        "openWithTime": "مفتوحة · متبقّي {time}",
+        "closingSoonWithTime": "تُغلق خلال {time}"
+      },
+      "assignmentSource": {
+        "inbound_route": "تم التوجيه تلقائياً",
+        "manual_handover": "تسليم يدوي",
+        "outbound_self": "تم الاستلام ذاتياً",
+        "migrated": "بيانات مرحَّلة",
+        "lead_propagation": "من تعيين الليد"
+      },
+      "owner": {
+        "unassigned": "غير مُسنَدة",
+        "unknownOwner": "مالك غير معروف"
+      },
+      "contact": {
+        "isCaptain": "كابتن نشط",
+        "hasOpenLead": "ليد مرتبط"
+      },
+      "sidePanel": {
+        "title": "تفاصيل المحادثة",
+        "comingSoon": "تعديل بيانات جهة الاتصال والإجراءات السريعة على الليد ستتوفّر في تحديث لاحق.",
+        "contact": {
+          "title": "جهة الاتصال",
+          "language": "اللغة: {language}"
+        },
+        "lead": {
+          "title": "الليد المرتبط",
+          "openCta": "فتح ملف الليد",
+          "notLinked": "لا يوجد ليد مرتبط بعد.",
+          "lifecycle": {
+            "open": "مفتوح",
+            "won": "محقَّق",
+            "lost": "خاسر",
+            "archived": "مؤرشف"
+          }
+        }
+      }
     },
     "roles": {
       "title": "الأدوار والصلاحيات",
