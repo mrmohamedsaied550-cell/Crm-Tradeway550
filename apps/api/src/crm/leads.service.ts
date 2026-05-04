@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
+import { FieldFilterService } from '../rbac/field-filter.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
@@ -77,7 +78,43 @@ export class LeadsService {
      * read paths run scope-free (today's behaviour).
      */
     @Optional() private readonly scopeContext?: ScopeContextService,
+    /**
+     * Phase C — C4: per-(role × resource × field) read-side filter.
+     * Strips denied fields from response payloads at the service
+     * boundary. @Optional for the same reason as scopeContext: legacy
+     * fixtures don't wire it; production wiring (CrmModule via the
+     * @Global RbacModule) always provides it.
+     */
+    @Optional() private readonly fieldFilter?: FieldFilterService,
   ) {}
+
+  /**
+   * Phase C — C4: convenience wrapper that resolves the calling
+   * user's denied-fields list once and applies it to a single
+   * payload. Returns `payload` unchanged when the dep / claims are
+   * absent (legacy fixtures) OR when the role has no denied fields
+   * for the resource (super_admin + most roles today).
+   */
+  private async applyLeadFieldFilter<T>(
+    userClaims: ScopeUserClaims | undefined,
+    payload: T,
+  ): Promise<T> {
+    if (!userClaims || !this.fieldFilter) return payload;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return payload;
+    return this.fieldFilter.filterRead(payload, paths);
+  }
+
+  /** List variant — same single round-trip for the role's deny list. */
+  private async applyLeadFieldFilterMany<T>(
+    userClaims: ScopeUserClaims | undefined,
+    rows: T[],
+  ): Promise<T[]> {
+    if (!userClaims || !this.fieldFilter) return rows;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return rows;
+    return this.fieldFilter.filterReadMany(rows, paths);
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // create
@@ -313,9 +350,9 @@ export class LeadsService {
   async findByIdInScopeOrThrow(id: string, userClaims: ScopeUserClaims) {
     const tenantId = requireTenantId();
     const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const lead = await this.prisma.withTenant(tenantId, async (tx) => {
       const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [{ id }, scopeWhere] } : { id };
-      const lead = await tx.lead.findFirst({
+      return tx.lead.findFirst({
         where,
         include: {
           assignedTo: { select: { id: true, name: true, email: true } },
@@ -333,11 +370,12 @@ export class LeadsService {
           captain: true,
         },
       });
-      if (!lead) {
-        throw new NotFoundException({ code: 'lead.not_found', message: `Lead not found: ${id}` });
-      }
-      return lead;
     });
+    if (!lead) {
+      throw new NotFoundException({ code: 'lead.not_found', message: `Lead not found: ${id}` });
+    }
+    // Phase C — C4: strip denied fields before returning.
+    return this.applyLeadFieldFilter(userClaims, lead);
   }
 
   /**
@@ -418,8 +456,8 @@ export class LeadsService {
     };
     const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
 
-    return this.prisma.withTenant(tenantId, async (tx) => {
-      const [items, total] = await Promise.all([
+    const { items: rawItems, total } = await this.prisma.withTenant(tenantId, async (tx) => {
+      const [items, count] = await Promise.all([
         tx.lead.findMany({
           where,
           orderBy: { createdAt: 'desc' },
@@ -432,8 +470,11 @@ export class LeadsService {
         }),
         tx.lead.count({ where }),
       ]);
-      return { items, total, limit: query.limit, offset: query.offset };
+      return { items, total: count };
     });
+    // Phase C — C4: strip denied fields from every row.
+    const items = await this.applyLeadFieldFilterMany(userClaims, rawItems);
+    return { items, total, limit: query.limit, offset: query.offset };
   }
 
   /**
@@ -526,11 +567,12 @@ export class LeadsService {
       // `perStage` cards each, ordered by createdAt desc so the
       // newest leads sit at the top of every column.
       const perStage = query.perStage;
+      type LeadCard = Awaited<ReturnType<typeof tx.lead.findMany>>[number];
       const buckets = await Promise.all(
         stages.map(async (s) => {
           const total = countByStageId.get(s.id) ?? 0;
           if (total === 0) {
-            return { stage: s, totalCount: 0, leads: [] };
+            return { stage: s, totalCount: 0, leads: [] as LeadCard[] };
           }
           const leads = await tx.lead.findMany({
             where: { ...baseWhere, stageId: s.id },
@@ -545,10 +587,18 @@ export class LeadsService {
         }),
       );
 
+      // Phase C — C4: filter every bucket's leads through the deny
+      // list. Resolved once per request inside applyLeadFieldFilterMany.
+      const filteredBuckets = await Promise.all(
+        buckets.map(async (b) => ({
+          ...b,
+          leads: await this.applyLeadFieldFilterMany<LeadCard>(userClaims, b.leads),
+        })),
+      );
       return {
         pipelineId: query.pipelineId,
         perStage,
-        stages: buckets,
+        stages: filteredBuckets,
       };
     });
   }
@@ -570,7 +620,7 @@ export class LeadsService {
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
     const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const rows = await this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
         orderBy: { nextActionDueAt: 'asc' },
@@ -581,6 +631,8 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: strip denied fields from every overdue row.
+    return this.applyLeadFieldFilterMany(userClaims, rows);
   }
 
   /**
@@ -605,7 +657,7 @@ export class LeadsService {
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
     const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const rows = await this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
         orderBy: { nextActionDueAt: 'asc' },
@@ -616,10 +668,12 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: strip denied fields from every due-today row.
+    return this.applyLeadFieldFilterMany(userClaims, rows);
   }
 
-  listActivities(leadId: string) {
-    return this.prisma.withTenant(requireTenantId(), (tx) =>
+  async listActivities(leadId: string, userClaims?: ScopeUserClaims) {
+    const rows = await this.prisma.withTenant(requireTenantId(), (tx) =>
       tx.leadActivity.findMany({
         where: { leadId },
         orderBy: { createdAt: 'desc' },
@@ -633,6 +687,24 @@ export class LeadsService {
         },
       }),
     );
+    // Phase C — C4: an activity's `payload` JSON may mirror lead-
+    // shape fields (e.g. attribution.campaign was lifted into a
+    // payload by a future emitter). Apply the SAME lead-resource
+    // deny paths to each `payload` so the timeline can't leak a
+    // value the role isn't allowed to see directly. Today's
+    // emitters don't include any of the seeded sales_agent denies,
+    // so this is a defensive pass — but it ships now so future
+    // payload writers stay safe by default.
+    if (!userClaims || !this.fieldFilter) return rows;
+    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+    if (paths.length === 0) return rows;
+    return rows.map((row) => ({
+      ...row,
+      payload:
+        row.payload == null
+          ? row.payload
+          : (this.fieldFilter!.filterRead(row.payload, paths) as typeof row.payload),
+    }));
   }
 
   // ───────────────────────────────────────────────────────────────────────

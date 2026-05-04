@@ -221,8 +221,8 @@ export class LeadsController {
   @Get('leads/:id/activities')
   @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
-  activities(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.leads.listActivities(id);
+  activities(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.listActivities(id, claimsToScope(user));
   }
 
   @Post('leads/:id/activities')
