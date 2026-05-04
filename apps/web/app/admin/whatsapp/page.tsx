@@ -10,9 +10,20 @@ import { Field, Select } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
+import { AssignConversationModal } from '@/components/whatsapp/assign-conversation-modal';
 import { ChatThread } from '@/components/whatsapp/chat-thread';
+import {
+  ConversationActionMenu,
+  type ConversationAction,
+} from '@/components/whatsapp/conversation-action-menu';
 import { ConversationHeader } from '@/components/whatsapp/conversation-header';
 import { ConversationRow } from '@/components/whatsapp/conversation-row';
+import {
+  ConfirmConversationActionModal,
+  type ConfirmableAction,
+} from '@/components/whatsapp/confirm-conversation-action-modal';
+import { HandoverConversationModal } from '@/components/whatsapp/handover-conversation-modal';
+import { LinkLeadModal } from '@/components/whatsapp/link-lead-modal';
 import { SendComposer } from '@/components/whatsapp/send-composer';
 import { SidePanelPlaceholder } from '@/components/whatsapp/side-panel-placeholder';
 import { ApiError, conversationsApi } from '@/lib/api';
@@ -82,6 +93,14 @@ export default function WhatsAppInboxPage(): JSX.Element {
   const isTabletOrSmaller = useMediaQuery('(max-width: 1279px)');
   const [mobileView, setMobileView] = useState<MobileView>('list');
   const [tabletDetailsOpen, setTabletDetailsOpen] = useState<boolean>(false);
+
+  // D1.3 — modal state for the More Actions menu. Only one is open
+  // at a time; opening any closes the dropdown via the action menu's
+  // own outside-click handler.
+  const [assignOpen, setAssignOpen] = useState<boolean>(false);
+  const [handoverOpen, setHandoverOpen] = useState<boolean>(false);
+  const [linkLeadOpen, setLinkLeadOpen] = useState<boolean>(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmableAction | null>(null);
 
   // Persist filter preference whenever it changes.
   useEffect(() => {
@@ -187,6 +206,40 @@ export default function WhatsAppInboxPage(): JSX.Element {
     if (isMobile) setMobileView('thread');
     if (isTabletOrSmaller) setTabletDetailsOpen(false);
   }
+
+  function openAction(action: ConversationAction): void {
+    if (action === 'assign') setAssignOpen(true);
+    else if (action === 'handover') setHandoverOpen(true);
+    else if (action === 'linkLead') setLinkLeadOpen(true);
+    else setConfirmAction(action);
+  }
+
+  // After a successful conversation action, refetch the selected
+  // detail (owner, status, leadId, contact may have changed) and
+  // refresh the list so the row mirrors the new state.
+  const refreshAfterAction = useCallback(async (): Promise<void> => {
+    setAssignOpen(false);
+    setHandoverOpen(false);
+    setLinkLeadOpen(false);
+    setConfirmAction(null);
+    if (!selectedId) {
+      void reload();
+      return;
+    }
+    try {
+      const [detail, msgs] = await Promise.all([
+        conversationsApi.get(selectedId),
+        conversationsApi.listMessages(selectedId, { limit: 200 }),
+      ]);
+      setSelectedDetail(detail);
+      setMessages(msgs ?? []);
+    } catch {
+      // Ignore — the next reload will reconcile if the conversation
+      // is now out of scope for the operator (e.g. handover to
+      // another team member with no shared scope).
+    }
+    void reload();
+  }, [reload, selectedId]);
 
   const selectedFromList = useMemo(
     () => rows.find((c) => c.id === selectedId) ?? null,
@@ -332,6 +385,9 @@ export default function WhatsAppInboxPage(): JSX.Element {
                       : undefined
                 }
                 detailsOpen={tabletDetailsOpen}
+                actionsSlot={
+                  <ConversationActionMenu conversation={selected} onAction={openAction} />
+                }
               />
               <ChatThread messages={messages} loading={chatLoading} />
               <SendComposer
@@ -413,6 +469,38 @@ export default function WhatsAppInboxPage(): JSX.Element {
           </>
         ) : null}
       </div>
+
+      {/* D1.3 — action modals. Only one is open at a time; the
+          ConversationActionMenu owns the trigger surface. */}
+      {selected ? (
+        <>
+          <AssignConversationModal
+            open={assignOpen}
+            conversation={selected}
+            onClose={() => setAssignOpen(false)}
+            onSuccess={() => void refreshAfterAction()}
+          />
+          <HandoverConversationModal
+            open={handoverOpen}
+            conversation={selected}
+            onClose={() => setHandoverOpen(false)}
+            onSuccess={() => void refreshAfterAction()}
+          />
+          <LinkLeadModal
+            open={linkLeadOpen}
+            conversationId={selected.id}
+            onClose={() => setLinkLeadOpen(false)}
+            onSuccess={() => void refreshAfterAction()}
+          />
+          <ConfirmConversationActionModal
+            open={confirmAction !== null}
+            action={confirmAction ?? 'close'}
+            conversationId={selected.id}
+            onClose={() => setConfirmAction(null)}
+            onSuccess={() => void refreshAfterAction()}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

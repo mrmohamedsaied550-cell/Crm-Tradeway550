@@ -1217,6 +1217,64 @@
             "archived": "Archived"
           }
         }
+      },
+      "actions": {
+        "menuLabel": "Actions",
+        "menuAria": "More actions on this conversation",
+        "assignLabel": "Reassign conversation",
+        "handoverLabel": "Handover conversation",
+        "closeLabel": "Close conversation",
+        "reopenLabel": "Reopen conversation",
+        "linkLabel": "Link lead",
+        "unlinkLabel": "Unlink lead"
+      },
+      "assign": {
+        "title": "Reassign conversation",
+        "helper": "This assigns the conversation to the selected user. Messages and the linked lead are not changed.",
+        "currentOwnerLabel": "Current owner",
+        "newOwnerLabel": "New owner",
+        "unassigned": "Unassigned",
+        "unknownOwner": "Unknown owner",
+        "searchPlaceholder": "Search users by name or email…",
+        "searching": "Searching…",
+        "noUsersFound": "No users found",
+        "clearSelection": "Clear selection",
+        "mustSelect": "Pick a user before confirming.",
+        "confirmCta": "Reassign",
+        "success": "Conversation reassigned"
+      },
+      "handover": {
+        "summaryRequired": "Add a handover summary or pick a different transfer mode.",
+        "summaryHint": "Up to 2,000 characters. Saved as a note on the linked lead."
+      },
+      "close": {
+        "title": "Close conversation",
+        "body": "Closing stops normal follow-up on this thread. Messages and the linked lead are not deleted, and the conversation can be reopened later if your role allows it.",
+        "confirmCta": "Close conversation",
+        "success": "Conversation closed"
+      },
+      "reopen": {
+        "title": "Reopen conversation",
+        "body": "Reopening makes the conversation active again. The linked lead's stage is not changed.",
+        "confirmCta": "Reopen conversation",
+        "success": "Conversation reopened"
+      },
+      "unlinkLead": {
+        "title": "Unlink lead",
+        "body": "This removes the link between this conversation and the lead. Neither record is deleted, and ownership of the conversation stays the same.",
+        "confirmCta": "Unlink lead",
+        "success": "Lead unlinked"
+      },
+      "linkLead": {
+        "title": "Link conversation to a lead",
+        "helper": "Paste the Lead ID. Only leads inside your scope can be linked.",
+        "idLabel": "Lead ID",
+        "idHint": "Copy the ID from the lead detail URL.",
+        "mustEnterId": "Enter a Lead ID first.",
+        "invalidId": "That doesn't look like a valid Lead ID.",
+        "notFound": "Lead not found in your scope.",
+        "confirmCta": "Link lead",
+        "success": "Lead linked"
       }
     },
     "roles": {
