@@ -8,6 +8,7 @@ import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-rea
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
+import { FieldGated } from '@/components/ui/field-gated';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
@@ -721,26 +722,38 @@ export default function LeadsPage(): JSX.Element {
   const isOverdueRow = (r: Lead): boolean =>
     Boolean(r.nextActionDueAt && new Date(r.nextActionDueAt).getTime() < tableNow.getTime());
 
+  // Phase C — C7: cell-level FieldGated wrappers so the table layout
+  // stays stable when a column's value is denied. The placeholder
+  // span keeps each cell vertically aligned even when the value
+  // disappears. Header labels are intentionally not gated — they're
+  // generic schema strings ("Phone", "Source"), not values.
+  const placeholder = <span className="text-ink-tertiary">—</span>;
   const columns: ReadonlyArray<Column<Lead>> = [
     {
       key: 'name',
       header: t('name'),
       render: (r) => (
-        <span className="inline-flex items-center gap-1.5">
-          {isOverdueRow(r) ? (
-            <AlertTriangle
-              className="h-3.5 w-3.5 shrink-0 text-status-breach"
-              aria-label={t('overdueIndicator')}
-            />
-          ) : null}
-          <span className="font-medium">{r.name}</span>
-        </span>
+        <FieldGated resource="lead" field="name" fallback={placeholder}>
+          <span className="inline-flex items-center gap-1.5">
+            {isOverdueRow(r) ? (
+              <AlertTriangle
+                className="h-3.5 w-3.5 shrink-0 text-status-breach"
+                aria-label={t('overdueIndicator')}
+              />
+            ) : null}
+            <span className="font-medium">{r.name}</span>
+          </span>
+        </FieldGated>
       ),
     },
     {
       key: 'phone',
       header: t('phone'),
-      render: (r) => <code className="font-mono text-xs">{r.phone}</code>,
+      render: (r) => (
+        <FieldGated resource="lead" field="phone" fallback={placeholder}>
+          <code className="font-mono text-xs">{r.phone}</code>
+        </FieldGated>
+      ),
     },
     {
       key: 'stage',
@@ -750,29 +763,44 @@ export default function LeadsPage(): JSX.Element {
     {
       key: 'assignee',
       header: t('assignee'),
-      render: (r) =>
-        r.assignedToId ? (
-          <span className="text-ink-secondary">
-            {userById.get(r.assignedToId)?.name ?? r.assignedToId.slice(0, 8)}
-          </span>
-        ) : (
-          <span className="text-ink-tertiary">{t('unassigned')}</span>
-        ),
+      render: (r) => (
+        <FieldGated resource="lead" field="assignedToId" fallback={placeholder}>
+          {r.assignedToId ? (
+            <span className="text-ink-secondary">
+              {userById.get(r.assignedToId)?.name ?? r.assignedToId.slice(0, 8)}
+            </span>
+          ) : (
+            <span className="text-ink-tertiary">{t('unassigned')}</span>
+          )}
+        </FieldGated>
+      ),
     },
     {
       key: 'nextAction',
       header: t('nextAction'),
-      render: (r) => <NextActionCell dueAt={r.nextActionDueAt} now={tableNow} />,
+      render: (r) => (
+        <FieldGated resource="lead" field="nextActionDueAt" fallback={placeholder}>
+          <NextActionCell dueAt={r.nextActionDueAt} now={tableNow} />
+        </FieldGated>
+      ),
     },
     {
       key: 'sla',
       header: t('sla'),
-      render: (r) => <Badge tone={slaTone(r.slaStatus)}>{r.slaStatus}</Badge>,
+      render: (r) => (
+        <FieldGated resource="lead" field="slaStatus" fallback={placeholder}>
+          <Badge tone={slaTone(r.slaStatus)}>{r.slaStatus}</Badge>
+        </FieldGated>
+      ),
     },
     {
       key: 'source',
       header: t('source'),
-      render: (r) => <span className="text-xs text-ink-secondary">{r.source}</span>,
+      render: (r) => (
+        <FieldGated resource="lead" field="source" fallback={placeholder}>
+          <span className="text-xs text-ink-secondary">{r.source}</span>
+        </FieldGated>
+      ),
     },
     {
       key: 'actions',
@@ -962,19 +990,25 @@ export default function LeadsPage(): JSX.Element {
 
       {advancedOpen ? (
         <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
-          <Field label={t('advanced.source')}>
-            <Select
-              value={filterSource}
-              onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              <option value="manual">{t('advanced.sources.manual')}</option>
-              <option value="meta">{t('advanced.sources.meta')}</option>
-              <option value="tiktok">{t('advanced.sources.tiktok')}</option>
-              <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
-              <option value="import">{t('advanced.sources.import')}</option>
-            </Select>
-          </Field>
+          {/* Phase C — C7: don't expose the field name through a
+              filter dropdown when the role can't see the field's
+              values. The source column itself is gated via
+              FieldGated; the filter UI follows the same rule. */}
+          <FieldGated resource="lead" field="source">
+            <Field label={t('advanced.source')}>
+              <Select
+                value={filterSource}
+                onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
+              >
+                <option value="">{tCommon('all')}</option>
+                <option value="manual">{t('advanced.sources.manual')}</option>
+                <option value="meta">{t('advanced.sources.meta')}</option>
+                <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+                <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+                <option value="import">{t('advanced.sources.import')}</option>
+              </Select>
+            </Field>
+          </FieldGated>
           <Field label={t('advanced.sla')}>
             <Select
               value={filterSla}
@@ -1118,7 +1152,11 @@ export default function LeadsPage(): JSX.Element {
               <DataTable
                 columns={columns}
                 rows={rows}
-                keyOf={(r) => r.id}
+                /* Phase C — C7: keyOf falls back to phone when the
+                   role denies `lead.id` (server strips the field on
+                   read; the row arrives without an `id`). Phone is
+                   tenant-unique, so it works as a stable key. */
+                keyOf={(r) => r.id ?? r.phone ?? ''}
                 loading={loading}
                 skeletonRows={6}
                 selection={{
@@ -1126,18 +1164,26 @@ export default function LeadsPage(): JSX.Element {
                   onChange: setSelectedIds,
                   ariaLabel: t('bulk.selectRow'),
                 }}
-                onRowClick={(row) => setPreviewLeadId(row.id)}
-                onRowDoubleClick={(row) => router.push(`/admin/leads/${row.id}`)}
+                /* C7: only wire row click → drawer when we actually
+                   have an id to open. When `id` is denied the row
+                   stays visible but interaction is suppressed. */
+                onRowClick={(row) => row.id && setPreviewLeadId(row.id)}
+                onRowDoubleClick={(row) => row.id && router.push(`/admin/leads/${row.id}`)}
                 selectedRowId={previewLeadId}
                 rowClassName={(r) => (isOverdueRow(r) ? 'bg-status-breach/5' : null)}
                 rowActions={(row) => (
                   <>
-                    <Link
-                      href={`/admin/leads/${row.id}`}
-                      className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-                    >
-                      {t('openDetail')}
-                    </Link>
+                    {/* C7: hide the Open link entirely when id is
+                        denied — the link would navigate to
+                        /admin/leads/undefined otherwise. */}
+                    <FieldGated resource="lead" field="id">
+                      <Link
+                        href={`/admin/leads/${row.id}`}
+                        className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                      >
+                        {t('openDetail')}
+                      </Link>
+                    </FieldGated>
                     <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
                       {tCommon('delete')}
                     </Button>
@@ -1350,43 +1396,65 @@ export default function LeadsPage(): JSX.Element {
       >
         <form id="leadCreateForm" className="flex flex-col gap-3" onSubmit={onCreate}>
           {formError ? <Notice tone="error">{formError}</Notice> : null}
-          <Field label={t('name')} required>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              required
-              maxLength={120}
-            />
-          </Field>
-          <Field label={t('phone')} required hint="E.164 format (e.g. +201001112222)">
-            <Input
-              value={form.phone}
-              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-              required
-              minLength={6}
-              maxLength={32}
-            />
-          </Field>
-          <Field label={t('email')}>
-            <Input
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-              maxLength={254}
-            />
-          </Field>
-          <Field label={t('source')}>
-            <Select
-              value={form.source}
-              onChange={(e) => setForm((f) => ({ ...f, source: e.target.value as LeadSource }))}
-            >
-              {SOURCES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          {/* Phase C — C7: each catalogued input is wrapped in
+              edit-mode FieldGated. When the role can't write the
+              field, the input is rendered disabled / readOnly so
+              the operator can still see its current value (in
+              edit-mode the label + placeholder remain visible). The
+              C5 server-side filter strips the same keys from the
+              POST payload regardless of the UI state. */}
+          <FieldGated resource="lead" field="name" mode="edit">
+            <Field label={t('name')} required>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                required
+                maxLength={120}
+              />
+            </Field>
+          </FieldGated>
+          <FieldGated resource="lead" field="phone" mode="edit">
+            <Field label={t('phone')} required hint="E.164 format (e.g. +201001112222)">
+              <Input
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                required
+                minLength={6}
+                maxLength={32}
+              />
+            </Field>
+          </FieldGated>
+          <FieldGated resource="lead" field="email" mode="edit">
+            <Field label={t('email')}>
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                maxLength={254}
+              />
+            </Field>
+          </FieldGated>
+          {/* Source: edit-mode hides the choice when canWrite=false
+              AND read-mode hides the whole field when canRead=false
+              (e.g. sales_agent). Wrap the field in a read-mode gate
+              so denied roles don't even see "Source: meta/manual"
+              in the form. */}
+          <FieldGated resource="lead" field="source">
+            <FieldGated resource="lead" field="source" mode="edit">
+              <Field label={t('source')}>
+                <Select
+                  value={form.source}
+                  onChange={(e) => setForm((f) => ({ ...f, source: e.target.value as LeadSource }))}
+                >
+                  {SOURCES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </FieldGated>
+          </FieldGated>
           {/* Phase 1B — explicit (company × country). Both optional;
               empty values let the server fall back to the tenant default
               pipeline. The country dropdown is filtered by the chosen
@@ -1445,19 +1513,21 @@ export default function LeadsPage(): JSX.Element {
               ))}
             </Select>
           </Field>
-          <Field label={t('assignee')}>
-            <Select
-              value={form.assignedToId}
-              onChange={(e) => setForm((f) => ({ ...f, assignedToId: e.target.value }))}
-            >
-              <option value="">{t('unassigned')}</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} ({u.email})
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <FieldGated resource="lead" field="assignedToId" mode="edit">
+            <Field label={t('assignee')}>
+              <Select
+                value={form.assignedToId}
+                onChange={(e) => setForm((f) => ({ ...f, assignedToId: e.target.value }))}
+              >
+                <option value="">{t('unassigned')}</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.email})
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </FieldGated>
         </form>
       </Modal>
 
