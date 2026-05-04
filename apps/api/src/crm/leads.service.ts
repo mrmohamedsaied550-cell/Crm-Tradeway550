@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
+import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { buildAttribution } from './attribution.util';
@@ -67,6 +68,15 @@ export class LeadsService {
      * throws a clear error if a lost move is attempted without it.
      */
     @Optional() private readonly lostReasons?: LostReasonsService,
+    /**
+     * Phase C — C3: per-(role × resource) scope filter applied to
+     * read paths. @Optional so existing test fixtures that build
+     * LeadsService without scope context (and exercise reads with
+     * no userClaims arg) keep working as before. When neither this
+     * dependency nor a userClaims arg is supplied at the call site,
+     * read paths run scope-free (today's behaviour).
+     */
+    @Optional() private readonly scopeContext?: ScopeContextService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -289,7 +299,63 @@ export class LeadsService {
     return lead;
   }
 
-  async list(query: ListLeadsQueryDto) {
+  /**
+   * Phase C — C3: scope-aware findById. Used by the GET endpoint so
+   * a user with role-scope='own' (or team / company / country) only
+   * resolves leads inside their scope. Out-of-scope rows raise the
+   * same 404 as a missing row — we deliberately don't differentiate
+   * to avoid leaking lead existence across scope boundaries.
+   *
+   * Internal write paths (moveStage, convert, addActivity, etc.)
+   * keep using `findByIdOrThrow` — write enforcement lands in a
+   * later chunk per the C-plan.
+   */
+  async findByIdInScopeOrThrow(id: string, userClaims: ScopeUserClaims) {
+    const tenantId = requireTenantId();
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [{ id }, scopeWhere] } : { id };
+      const lead = await tx.lead.findFirst({
+        where,
+        include: {
+          assignedTo: { select: { id: true, name: true, email: true } },
+          stage: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              order: true,
+              isTerminal: true,
+              terminalKind: true,
+              pipelineId: true,
+            },
+          },
+          captain: true,
+        },
+      });
+      if (!lead) {
+        throw new NotFoundException({ code: 'lead.not_found', message: `Lead not found: ${id}` });
+      }
+      return lead;
+    });
+  }
+
+  /**
+   * Phase C — C3: resolve the scope `where` once per call. Returns
+   * `null` when scope is `'global'` OR when the scope context dep
+   * isn't wired (legacy fixtures that don't pass userClaims) OR
+   * when the caller passed no claims. Either way, no extra filter
+   * is applied.
+   */
+  private async resolveLeadScopeWhere(
+    userClaims: ScopeUserClaims | undefined,
+  ): Promise<Prisma.LeadWhereInput | null> {
+    if (!userClaims || !this.scopeContext) return null;
+    const { where } = await this.scopeContext.resolveLeadScope(userClaims);
+    return where;
+  }
+
+  async list(query: ListLeadsQueryDto, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
 
     // Phase 1B — three stage-filter inputs (mutually exclusive in
@@ -327,7 +393,12 @@ export class LeadsService {
           }
         : undefined;
 
-    const where: Prisma.LeadWhereInput = {
+    // Phase C — C3: AND the user's role-scope `where` clause on top
+    // of the explicit filter. `null` means 'global' (or no claims) →
+    // no extra filter. AND-array form keeps any existing OR (e.g. the
+    // search clause) intact.
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       ...(stageIdFilter && { stageId: stageIdFilter }),
       ...(query.pipelineId && { pipelineId: query.pipelineId }),
       ...(query.companyId && { companyId: query.companyId }),
@@ -345,6 +416,7 @@ export class LeadsService {
         ],
       }),
     };
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const [items, total] = await Promise.all([
@@ -382,7 +454,7 @@ export class LeadsService {
    * than `perStage` cards in one column page in via the legacy
    * paginated `list()` with `pipelineStageId` set.
    */
-  async listByStage(query: ListLeadsByStageQueryDto) {
+  async listByStage(query: ListLeadsByStageQueryDto, userClaims?: ScopeUserClaims) {
     const tenantId = requireTenantId();
 
     const assigneeFilter: Prisma.LeadWhereInput = query.assignedToId
@@ -401,7 +473,8 @@ export class LeadsService {
 
     // The pipelineId clause is the only invariant filter — every other
     // condition is optional.
-    const baseWhere: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const userWhere: Prisma.LeadWhereInput = {
       pipelineId: query.pipelineId,
       ...(query.companyId && { companyId: query.companyId }),
       ...(query.countryId && { countryId: query.countryId }),
@@ -418,6 +491,9 @@ export class LeadsService {
         ],
       }),
     };
+    const baseWhere: Prisma.LeadWhereInput = scopeWhere
+      ? { AND: [userWhere, scopeWhere] }
+      : userWhere;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       // Resolve the stage list first — it drives the response shape
@@ -482,13 +558,18 @@ export class LeadsService {
    * non-null, i.e. there is a pending follow-up). Optionally filtered
    * to a specific assignee — the agent workspace passes `me`.
    */
-  async listOverdue(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+  async listOverdue(
+    opts: { assignedToId?: string; limit?: number; now?: Date } = {},
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const now = opts.now ?? new Date();
-    const where: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       nextActionDueAt: { lt: now },
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
     return this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
@@ -507,7 +588,10 @@ export class LeadsService {
    * window (server local time). Optionally filtered to a specific
    * assignee.
    */
-  async listDueToday(opts: { assignedToId?: string; limit?: number; now?: Date } = {}) {
+  async listDueToday(
+    opts: { assignedToId?: string; limit?: number; now?: Date } = {},
+    userClaims?: ScopeUserClaims,
+  ) {
     const tenantId = requireTenantId();
     const now = opts.now ?? new Date();
     // P2-08 — compute the day boundary in the TENANT's timezone, not
@@ -515,10 +599,12 @@ export class LeadsService {
     // running off the same server should each see "their" today.
     const settings = await this.tenantSettings.getCurrent();
     const { start, end } = dayBoundsInTimezone(now, settings.timezone);
-    const where: Prisma.LeadWhereInput = {
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    const baseWhere: Prisma.LeadWhereInput = {
       nextActionDueAt: { gte: start, lte: end },
       ...(opts.assignedToId && { assignedToId: opts.assignedToId }),
     };
+    const where: Prisma.LeadWhereInput = scopeWhere ? { AND: [baseWhere, scopeWhere] } : baseWhere;
     return this.prisma.withTenant(tenantId, (tx) =>
       tx.lead.findMany({
         where,
