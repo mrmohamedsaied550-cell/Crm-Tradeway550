@@ -170,16 +170,20 @@ export function AdminSideNav() {
   // we filter to those the user can read. This avoids both an SSR
   // mismatch and a flash-of-empty-nav while localStorage loads.
   const [caps, setCaps] = useState<readonly string[] | null>(null);
-  // D1.5 — best-effort count badge for the review queue. Fetched
-  // once on mount when the actor has whatsapp.review.read; a
-  // failed call is silently dropped so a transient backend issue
-  // never blanks the nav.
+  // D1.5/D1.6 — best-effort count badge for the review queue.
+  // Initially fetched once on mount when the actor has
+  // whatsapp.review.read; D1.6 also re-fetches whenever the
+  // review queue page dispatches `whatsapp.review.count.invalidate`
+  // so a resolve action drops the badge live. A failed call is
+  // silently dropped so a transient backend issue never blanks
+  // the nav.
   const [reviewCount, setReviewCount] = useState<number>(0);
   useEffect(() => {
     const me = getCachedMe();
     const c = me?.capabilities ?? [];
     setCaps(c);
-    if (c.includes('whatsapp.review.read')) {
+    if (!c.includes('whatsapp.review.read')) return undefined;
+    function refreshCount(): void {
       reviewsApi
         .count()
         .then((r) => setReviewCount(r.unresolved))
@@ -187,6 +191,14 @@ export function AdminSideNav() {
           /* silent — nav must never break on count fetch */
         });
     }
+    refreshCount();
+    function onInvalidate(): void {
+      refreshCount();
+    }
+    window.addEventListener('whatsapp.review.count.invalidate', onInvalidate);
+    return () => {
+      window.removeEventListener('whatsapp.review.count.invalidate', onInvalidate);
+    };
   }, []);
 
   const visible = ITEMS.filter((item) => {

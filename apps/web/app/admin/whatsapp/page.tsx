@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Filter, MessagesSquare, RefreshCw, X } from 'lucide-react';
 
@@ -68,6 +69,10 @@ export default function WhatsAppInboxPage(): JSX.Element {
   const t = useTranslations('admin.whatsapp');
   const tCommon = useTranslations('admin.common');
   const { toast } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryParamSelected = searchParams?.get('selected') ?? null;
 
   const me = getCachedMe();
   const myUserId = me?.userId ?? null;
@@ -82,11 +87,25 @@ export default function WhatsAppInboxPage(): JSX.Element {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // D1.6 — `selectedId` is initialised from the `?selected=` query
+  // param so deep-links from the Review Queue ("Open thread") jump
+  // straight to the conversation. Subsequent navigation keeps the
+  // URL in sync via `replace` so the back-button doesn't pile up
+  // intermediate selections.
+  const [selectedId, setSelectedId] = useState<string | null>(queryParamSelected);
   const [selectedDetail, setSelectedDetail] = useState<WhatsAppConversation | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const [chatLoading, setChatLoading] = useState<boolean>(false);
   const [sending, setSending] = useState<boolean>(false);
+  // D1.6 — when the selected conversation isn't visible to the
+  // actor (RLS hides it), we surface an inline "not in your scope"
+  // notice in the thread pane instead of the empty-state.
+  const [selectedNotFound, setSelectedNotFound] = useState<boolean>(false);
+  // D1.6 — bumped every 60 s to force a re-render when a thread
+  // sits open across the 24h window's "open → closing_soon →
+  // closed" transitions. Used as a child prop so React can
+  // memoise the rest of the page.
+  const [windowTick, setWindowTick] = useState<number>(0);
 
   // Layout state — derived from media-queries + a mobile view stack.
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -138,14 +157,22 @@ export default function WhatsAppInboxPage(): JSX.Element {
   // Refetch the selected conversation detail (with included lead +
   // contact + assignedTo) and its messages when the selection
   // changes or after a write that may have mutated either.
+  //
+  // D1.6 — a 404 here means the conversation is out of the actor's
+  // scope (e.g. deep-linked from a Review Queue item the actor
+  // can see but a thread their role can't). We render a clean
+  // "not in your scope" notice in the thread pane instead of the
+  // empty-state.
   useEffect(() => {
     if (!selectedId) {
       setSelectedDetail(null);
       setMessages([]);
+      setSelectedNotFound(false);
       return;
     }
     let cancelled = false;
     setChatLoading(true);
+    setSelectedNotFound(false);
     Promise.all([
       conversationsApi.get(selectedId),
       conversationsApi.listMessages(selectedId, { limit: 200 }),
@@ -156,7 +183,14 @@ export default function WhatsAppInboxPage(): JSX.Element {
         setMessages(msgs ?? []);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : String(err));
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 404) {
+          setSelectedNotFound(true);
+          setSelectedDetail(null);
+          setMessages([]);
+        } else {
+          setError(err instanceof ApiError ? err.message : String(err));
+        }
       })
       .finally(() => {
         if (!cancelled) setChatLoading(false);
@@ -166,17 +200,83 @@ export default function WhatsAppInboxPage(): JSX.Element {
     };
   }, [selectedId]);
 
+  // D1.6 — keep the URL `?selected=` in sync with the in-state
+  // `selectedId`. Uses `replace` so back-navigation pops out of
+  // the inbox rather than walking through every clicked thread.
+  useEffect(() => {
+    if (!pathname) return;
+    const current = searchParams?.get('selected') ?? null;
+    if (current === selectedId) return;
+    const next = new URLSearchParams(searchParams?.toString() ?? '');
+    if (selectedId) next.set('selected', selectedId);
+    else next.delete('selected');
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- searchParams identity changes per render; we only react to selectedId
+  }, [selectedId, pathname]);
+
+  // D1.6 — pick up external query-param changes (e.g. the user
+  // edits the URL or a deep-link arrives from the Review Queue's
+  // "Open thread" action) so the thread pane always tracks
+  // `?selected=`. On mobile we also flip `mobileView` to 'thread'
+  // so the deep-link lands directly on the conversation rather
+  // than on the list with a hidden selection underneath.
+  useEffect(() => {
+    if (queryParamSelected && queryParamSelected !== selectedId) {
+      setSelectedId(queryParamSelected);
+      if (isMobile) setMobileView('thread');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional one-way sync
+  }, [queryParamSelected]);
+
+  // D1.6 — 24h-window ticker. While a conversation is selected,
+  // bump `windowTick` every 60 seconds so `WindowPip` /
+  // `SendComposer` re-evaluate `windowState(...)` and roll the
+  // thread from `open → closing_soon → closed` while the operator
+  // sits on the page. Cleared on unmount and when no conversation
+  // is open. The interval doesn't touch the network — it only
+  // forces a render of the bits that read `Date.now()`.
+  const tickerActiveRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!selectedId) {
+      tickerActiveRef.current = false;
+      return;
+    }
+    tickerActiveRef.current = true;
+    const id = setInterval(() => {
+      if (!tickerActiveRef.current) return;
+      setWindowTick((n) => n + 1);
+    }, 60 * 1000);
+    return () => {
+      tickerActiveRef.current = false;
+      clearInterval(id);
+    };
+  }, [selectedId]);
+
   // Realtime: a new inbound bumps the list and refreshes the open
   // thread. Subtle UX rule (per UX plan §U6): the visible thread
   // never auto-switches; only the list refreshes.
+  //
+  // D1.6 — also re-fetch the selected conversation detail when the
+  // event matches it, so `lastInboundAt`, `lastMessageText` and
+  // any newly-attached lead/contact roll into the side panel
+  // without a manual refresh.
   useRealtime('whatsapp.message', (event) => {
     if (event.type !== 'whatsapp.message') return;
     void reload();
     if (event.conversationId === selectedId) {
-      conversationsApi
-        .listMessages(event.conversationId, { limit: 200 })
-        .then((msgs) => setMessages(msgs ?? []))
-        .catch(() => {});
+      Promise.all([
+        conversationsApi.get(event.conversationId),
+        conversationsApi.listMessages(event.conversationId, { limit: 200 }),
+      ])
+        .then(([detail, msgs]) => {
+          setSelectedDetail(detail);
+          setMessages(msgs ?? []);
+        })
+        .catch(() => {
+          // Silent — a transient failure here just means the next
+          // user-initiated refresh will reconcile.
+        });
     }
   });
 
@@ -247,6 +347,16 @@ export default function WhatsAppInboxPage(): JSX.Element {
   );
   const selected = selectedDetail ?? selectedFromList;
 
+  // D1.6 — single page-level "now" reference. Re-evaluated each
+  // time `windowTick` increments (every 60 s while a conversation
+  // is open); threaded into <WindowPip>, <SendComposer> and the
+  // side panel so all three roll together. The eslint-disable is
+  // intentional: the *change* of `windowTick` IS the dependency
+  // that drives the new timestamp; we don't want `Date.now()` to
+  // be called inside the memo's deps array.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const now = useMemo(() => Date.now(), [windowTick]);
+
   // Show the owner badge on rows when the current view is "All in
   // scope" — agents on "Mine" are looking at their own work and
   // don't need the badge.
@@ -302,10 +412,18 @@ export default function WhatsAppInboxPage(): JSX.Element {
 
       {error ? <Notice tone="error">{error}</Notice> : null}
 
-      {/* Layout — desktop three-pane / tablet two-pane + drawer / mobile single-pane stack */}
+      {/* Layout — desktop three-pane / tablet two-pane + drawer / mobile single-pane stack
+          D1.6 — bind the grid height to the viewport on md+ so the
+          ChatThread's `overflow-y-auto` actually fires and the side
+          panel stays in view as the thread scrolls. The
+          `calc(100vh-13rem)` budgets ~208 px for the page header,
+          filter bar, and outer admin shell padding. Mobile keeps
+          its natural flex-col growth so the bottom-sheet flow
+          behaves as before. */}
       <div
         className={cn(
           'min-h-[560px] gap-3 md:gap-4',
+          'md:h-[calc(100vh-13rem)] md:min-h-[560px]',
           // Desktop ≥1280px → three columns. Tablet 768-1279px →
           // two columns with the drawer overlaying the right side.
           // Mobile <768px → single column controlled by `mobileView`.
@@ -388,6 +506,7 @@ export default function WhatsAppInboxPage(): JSX.Element {
                 actionsSlot={
                   <ConversationActionMenu conversation={selected} onAction={openAction} />
                 }
+                now={now}
               />
               <ChatThread messages={messages} loading={chatLoading} />
               <SendComposer
@@ -401,8 +520,30 @@ export default function WhatsAppInboxPage(): JSX.Element {
                   toast({ tone: 'info', title: t('compose.templateComingSoon') })
                 }
                 onOpenMedia={() => toast({ tone: 'info', title: t('compose.mediaComingSoon') })}
+                now={now}
               />
             </>
+          ) : selectedNotFound ? (
+            <div className="flex flex-1 items-center justify-center p-6">
+              <EmptyState
+                icon={<MessagesSquare className="h-8 w-8" aria-hidden="true" />}
+                title={t('thread.notFoundTitle')}
+                body={t('thread.notFoundBody')}
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedId(null);
+                      setSelectedNotFound(false);
+                      if (isMobile) setMobileView('list');
+                    }}
+                  >
+                    {t('thread.notFoundCta')}
+                  </Button>
+                }
+              />
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center p-6">
               <EmptyState

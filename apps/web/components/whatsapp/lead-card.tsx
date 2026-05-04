@@ -1,12 +1,14 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { AlertTriangle, Clock, ExternalLink, Link2, Phone } from 'lucide-react';
+import { AlertTriangle, Clock, ExternalLink, Link2, Phone, User } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
+import { ApiError, usersApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { WhatsAppConversation } from '@/lib/api-types';
 
@@ -58,6 +60,50 @@ export function LeadCard({
     Boolean(lead?.assignedToId) &&
     conversation.assignedToId !== lead?.assignedToId;
 
+  // D1.6 — show the lead owner's name when it's available. The
+  // conversation include doesn't carry it (the embedded
+  // `ConversationLeadSummary` has only `assignedToId`), but a
+  // single small `usersApi.get(id)` lookup gives us the cleaned
+  // name. Optimisation: skip the call when the lead has no
+  // assignee, OR when the lead owner is the same as the
+  // conversation owner (in which case we already know the name
+  // from `conversation.assignedTo`).
+  const leadAssignedToId = lead?.assignedToId ?? null;
+  const sameOwner = leadAssignedToId !== null && leadAssignedToId === conversation.assignedToId;
+  const knownConvoName = conversation.assignedTo?.name ?? null;
+  const [leadOwnerName, setLeadOwnerName] = useState<string | null>(
+    sameOwner ? knownConvoName : null,
+  );
+
+  useEffect(() => {
+    if (!leadAssignedToId) {
+      setLeadOwnerName(null);
+      return;
+    }
+    if (sameOwner && knownConvoName) {
+      setLeadOwnerName(knownConvoName);
+      return;
+    }
+    let cancelled = false;
+    usersApi
+      .get(leadAssignedToId)
+      .then((u) => {
+        if (cancelled) return;
+        setLeadOwnerName(u.name);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Out-of-scope user surfaces as 404 — leave the name null
+        // and fall back to the generic mismatch copy.
+        if (!(err instanceof ApiError && err.status === 404)) {
+          // network / other errors are also non-fatal here.
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadAssignedToId, sameOwner, knownConvoName]);
+
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-sm">
       <header className="flex items-center justify-between gap-2">
@@ -92,7 +138,10 @@ export function LeadCard({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            {lead.stage ? <Badge tone="info">{lead.stage.name}</Badge> : null}
+            {/* D1.6 — stage uses the quiet `neutral` tone so the
+                colored lifecycle / SLA chips next to it stand out
+                instead of competing with another blue pill. */}
+            {lead.stage ? <Badge tone="neutral">{lead.stage.name}</Badge> : null}
             <Badge tone={lifecycleTone(lead.lifecycleState)}>
               {t(`lifecycle.${lead.lifecycleState}` as 'lifecycle.open')}
             </Badge>
@@ -115,13 +164,32 @@ export function LeadCard({
             </p>
           ) : null}
 
+          {leadAssignedToId ? (
+            <p className="inline-flex items-center gap-1 text-xs text-ink-secondary">
+              <User className="h-3 w-3" aria-hidden="true" />
+              {t('ownedBy', { name: leadOwnerName ?? t('unknownOwner') })}
+            </p>
+          ) : (
+            <p className="inline-flex items-center gap-1 text-xs italic text-ink-tertiary">
+              <User className="h-3 w-3" aria-hidden="true" />
+              {t('unassigned')}
+            </p>
+          )}
+
           {ownerMismatch ? (
             <div
               role="status"
               className="flex items-start gap-2 rounded-md border border-status-warning/40 bg-status-warning/10 px-2.5 py-2 text-xs text-status-warning"
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span>{t('ownerMismatch')}</span>
+              <span>
+                {leadOwnerName
+                  ? t('ownerMismatchNamed', {
+                      leadOwner: leadOwnerName,
+                      convoOwner: knownConvoName ?? t('unknownOwner'),
+                    })
+                  : t('ownerMismatch')}
+              </span>
             </div>
           ) : null}
 

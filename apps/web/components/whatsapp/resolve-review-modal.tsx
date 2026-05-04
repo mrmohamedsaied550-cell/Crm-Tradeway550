@@ -104,6 +104,13 @@ export function ResolveReviewModal({
         ...(needsLeadId && { leadId: leadId.trim() }),
       });
       toast({ tone: 'success', title: t(`success.${resolution}` as 'success.dismissed') });
+      // D1.6 — tell the side-nav badge to re-count. The listener
+      // is wired in admin/side-nav.tsx; if the actor has no
+      // whatsapp.review.read the listener was never registered,
+      // so dispatching is a safe no-op.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('whatsapp.review.count.invalidate'));
+      }
       onSuccess();
     } catch (err) {
       if (err instanceof ApiError) {

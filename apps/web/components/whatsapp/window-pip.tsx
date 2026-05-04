@@ -33,15 +33,20 @@ const STATE_ICON: Record<WindowState, typeof Clock> = {
 export function WindowPip({
   conversation,
   compact = false,
+  now,
 }: {
   conversation: WhatsAppConversation;
   /** Compact = no copy, just the icon + tone. Used in the list row. */
   compact?: boolean;
+  /** D1.6 — caller-supplied "now" so the parent can pin a single
+   *  evaluation timestamp for the pip + composer + side panel and
+   *  re-tick them in sync via a 60 s interval. */
+  now?: number;
 }): JSX.Element {
   const t = useTranslations('admin.whatsapp.window');
-  const state = windowState(conversation);
+  const state = windowState(conversation, now);
   const Icon = STATE_ICON[state];
-  const remaining = windowRemainingMs(conversation);
+  const remaining = windowRemainingMs(conversation, now);
 
   if (compact) {
     return (

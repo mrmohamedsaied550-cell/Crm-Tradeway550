@@ -43,6 +43,7 @@ export function SendComposer({
   onSendText,
   onOpenTemplate,
   onOpenMedia,
+  now,
 }: {
   conversation: WhatsAppConversation;
   canSendText: boolean;
@@ -52,13 +53,16 @@ export function SendComposer({
   onSendText: (text: string) => Promise<void> | void;
   onOpenTemplate: () => void;
   onOpenMedia: () => void;
+  /** D1.6 — caller-supplied "now" so the composer's window state
+   *  rolls in sync with the page-level 60 s ticker. */
+  now?: number;
 }): JSX.Element | null {
   const t = useTranslations('admin.whatsapp.compose');
   const [draft, setDraft] = useState('');
   const lastDraftRef = useRef<string>('');
 
   const closed = conversation.status === 'closed';
-  const state = windowState(conversation);
+  const state = windowState(conversation, now);
   const freeformDisabled = closed || state === 'closed' || !canSendText;
   const noPermissionAtAll = !canSendText && !canSendMedia && !canSendTemplate;
 

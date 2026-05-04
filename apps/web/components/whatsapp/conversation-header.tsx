@@ -29,6 +29,7 @@ export function ConversationHeader({
   onToggleDetails,
   detailsOpen,
   actionsSlot,
+  now,
 }: {
   conversation: WhatsAppConversation;
   /** Mobile: back to list. Hidden on desktop. */
@@ -37,6 +38,9 @@ export function ConversationHeader({
   onToggleDetails?: () => void;
   detailsOpen?: boolean;
   actionsSlot?: React.ReactNode;
+  /** D1.6 — page-level "now" forwarded to the WindowPip so the
+   *  thread header reflects the 60 s ticker. */
+  now?: number;
 }): JSX.Element {
   const t = useTranslations('admin.whatsapp.thread');
   const tCommon = useTranslations('admin.common');
@@ -87,7 +91,7 @@ export function ConversationHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        <WindowPip conversation={conversation} />
+        <WindowPip conversation={conversation} now={now} />
         {actionsSlot}
         {onToggleDetails ? (
           <Button
