@@ -495,7 +495,13 @@ export class AuthService {
     // tenant scope explicitly via withTenant so login (pre-context) can work.
     const roles = await this.prisma.withTenant(tenantId, (tx) =>
       tx.role.findMany({
-        include: { capabilities: { include: { capability: { select: { code: true } } } } },
+        include: {
+          capabilities: { include: { capability: { select: { code: true } } } },
+          scopes: { select: { resource: true, scope: true } },
+          fieldPermissions: {
+            select: { resource: true, field: true, canRead: true, canWrite: true },
+          },
+        },
       }),
     );
     const r = roles.find((row) => row.id === roleId);
@@ -507,7 +513,19 @@ export class AuthService {
       nameEn: r.nameEn,
       level: r.level,
       isActive: r.isActive,
+      isSystem: r.isSystem,
+      description: r.description,
       capabilities: r.capabilities.map((rc) => rc.capability.code as string),
+      scopes: r.scopes.map((s) => ({
+        resource: s.resource as RoleWithCapabilities['scopes'][number]['resource'],
+        scope: s.scope as RoleWithCapabilities['scopes'][number]['scope'],
+      })),
+      fieldPermissions: r.fieldPermissions.map((p) => ({
+        resource: p.resource,
+        field: p.field,
+        canRead: p.canRead,
+        canWrite: p.canWrite,
+      })),
     } as RoleWithCapabilities;
   }
 

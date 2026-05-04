@@ -91,6 +91,16 @@ export const CAPABILITY_DEFINITIONS = [
   // System / catalogue
   { code: 'audit.read', description: 'View the audit log' },
   { code: 'roles.read', description: 'View roles' },
+  /**
+   * Phase C — C2: gate role/permission writes (CRUD on roles, scope
+   * + field-permission updates, role duplication). Granted to
+   * super_admin (auto via ALL_CAPABILITY_CODES), ops_manager, and
+   * account_manager.
+   */
+  {
+    code: 'roles.write',
+    description: 'Create / update / delete roles + manage scopes and field permissions',
+  },
   { code: 'capabilities.read', description: 'View capabilities' },
 
   // Tenant settings (P2-08)
