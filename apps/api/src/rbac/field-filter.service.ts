@@ -113,6 +113,46 @@ export class FieldFilterService {
   }
 
   /**
+   * Phase C — C5.5: structured strip that ALSO reports which paths
+   * were actually present in the input. Callers (LeadsService)
+   * use the `denied` list to emit `field_write_denied` audit events
+   * naming only the fields involved (no values, per C5.5 rule 3).
+   *
+   * The returned `dto` is a deep clone of `payload` with every
+   * `paths` entry removed; siblings are preserved. `denied` lists
+   * each path that existed in `payload` BEFORE stripping — i.e. the
+   * subset of `paths` whose deletion was a real change, not a
+   * no-op. An empty `denied` array means the operation didn't
+   * actually drop anything (no audit needed).
+   */
+  stripWithReport<T>(payload: T, paths: readonly string[]): { dto: T; denied: string[] } {
+    if (paths.length === 0 || payload == null || typeof payload !== 'object') {
+      return { dto: payload, denied: [] };
+    }
+    const denied = paths.filter((p) => this.hasPath(payload, p));
+    const dto = this.filterRead(payload, paths);
+    return { dto, denied };
+  }
+
+  /**
+   * Phase C — C5.5: returns true iff `payload` carries a value at
+   * the given dot-path. Mirrors `deleteAtPath`'s walk semantics so
+   * `stripWithReport` can detect actual presence (vs. always-empty
+   * defaults at deeper levels).
+   */
+  hasPath(payload: unknown, path: string): boolean {
+    if (payload == null || typeof payload !== 'object') return false;
+    const parts = path.split('.');
+    let cursor = payload as Record<string, unknown>;
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      const next = cursor[parts[i]!];
+      if (next == null || typeof next !== 'object' || Array.isArray(next)) return false;
+      cursor = next as Record<string, unknown>;
+    }
+    return Object.prototype.hasOwnProperty.call(cursor, parts[parts.length - 1]!);
+  }
+
+  /**
    * Strip every `paths` entry from `payload`. Returns a new object
    * — the caller's reference is untouched, so concurrent code paths
    * can safely re-use the source row (e.g. a list call enumerating

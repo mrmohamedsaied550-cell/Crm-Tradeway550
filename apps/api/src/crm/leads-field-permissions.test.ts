@@ -103,6 +103,7 @@ describe('crm — field-permission read filter (C4)', () => {
       lostReasons,
       scope,
       fieldFilter,
+      audit,
     );
 
     const tenant = await prisma.tenant.upsert({
@@ -762,6 +763,402 @@ describe('crm — field-permission read filter (C4)', () => {
         after.assignedToId,
         userGlobalId,
         'assign was a silent no-op — assignedToId unchanged',
+      );
+    });
+  });
+
+  // ─── C5.5: write safety + completeness ───────────────────────────
+
+  describe('C5.5 — write safety + completeness', () => {
+    /**
+     * Helper: scan audit_events for the latest field_write_denied
+     * row matching the given operation + entity. Returns null when
+     * none found.
+     */
+    async function latestDeniedAudit(
+      operation: 'create' | 'update' | 'assign' | 'moveStage',
+      entityId: string | null,
+    ) {
+      return withTenantRaw(tenantId, (tx) =>
+        tx.auditEvent.findFirst({
+          where: {
+            action: 'field_write_denied',
+            entityType: 'lead',
+            ...(entityId ? { entityId } : { entityId: null }),
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ).then((row) => {
+        if (!row) return null;
+        const p = row.payload as { operation?: string };
+        return p?.operation === operation ? row : null;
+      });
+    }
+
+    it('audit — create with denied input emits field_write_denied (names only, no values)', async () => {
+      await inTenant(() =>
+        leads.create(
+          {
+            name: 'Audit Create',
+            phone: '+201000000301',
+            source: 'meta',
+            attribution: { campaign: { id: 'cmp_audit' } },
+          },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      );
+      const row = await latestDeniedAudit('create', null);
+      assert.ok(row, 'field_write_denied audit row written for create');
+      const p = row.payload as {
+        resource: string;
+        operation: string;
+        deniedFields: string[];
+        roleId: string;
+      };
+      assert.equal(p.resource, 'lead');
+      assert.equal(p.operation, 'create');
+      assert.deepEqual(new Set(p.deniedFields), new Set(['source', 'attribution.campaign']));
+      assert.equal(p.roleId, roleSalesId);
+      // Defence: payload must NOT carry values.
+      const serialized = JSON.stringify(p);
+      assert.equal(serialized.includes('cmp_audit'), false, 'audit must not leak the value');
+      assert.equal(/\b"meta"\b/.test(serialized), false, 'audit must not leak the source value');
+    });
+
+    it('audit — update with denied input emits field_write_denied', async () => {
+      // Seed a fresh lead via global so source='meta' baseline is set.
+      const fresh = (await inTenant(() =>
+        leads.create(
+          { name: 'Audit Update Base', phone: '+201000000302', source: 'meta' },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string };
+
+      await inTenant(() =>
+        leads.update(
+          fresh.id,
+          { source: 'tiktok' },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      );
+      const row = await latestDeniedAudit('update', fresh.id);
+      assert.ok(row, 'field_write_denied audit row written for update');
+      const p = row.payload as { deniedFields: string[]; operation: string };
+      assert.deepEqual(p.deniedFields, ['source']);
+      assert.equal(p.operation, 'update');
+    });
+
+    it('audit — no field_write_denied emitted when nothing was actually denied', async () => {
+      const fresh = (await inTenant(() =>
+        leads.create(
+          { name: 'Audit Allowed', phone: '+201000000303', source: 'manual' },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string };
+      await inTenant(() =>
+        leads.update(
+          fresh.id,
+          { name: 'Allowed Rename' },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      );
+      const row = await latestDeniedAudit('update', fresh.id);
+      assert.equal(row, null, 'allowed-only update emits no denied audit');
+    });
+
+    it('audit — super_admin bypass: nothing stripped, no audit row', async () => {
+      const fresh = (await inTenant(() =>
+        leads.create(
+          { name: 'Audit Super', phone: '+201000000304', source: 'meta' },
+          userGlobalId,
+          claimsFor(userGlobalId, roleGlobalId),
+        ),
+      )) as { id: string };
+      await inTenant(() =>
+        leads.update(
+          fresh.id,
+          { source: 'tiktok' },
+          userSuperId,
+          claimsFor(userSuperId, roleSuperId),
+        ),
+      );
+      const row = await latestDeniedAudit('update', fresh.id);
+      assert.equal(row, null, 'super_admin bypass emits no audit');
+    });
+
+    it('addActivity — body is FREEFORM and not censored even if it mentions denied values', async () => {
+      // The note body literally contains "source: meta cmp_42" — the
+      // C5.5 policy is that body text is never censored (UX guidance
+      // lives in the client). The persisted activity row should have
+      // the body intact.
+      const note = 'discussed source: meta and attribution.campaign id cmp_42 with the lead';
+      await inTenant(() => leads.addActivity(leadId, { type: 'note', body: note }, userSalesId));
+      const rows = await withTenantRaw(tenantId, (tx) =>
+        tx.leadActivity.findMany({
+          where: { leadId, type: 'note' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+      assert.ok(
+        rows.some((r) => r.body === note),
+        'body persisted verbatim — policy: never censor freeform text',
+      );
+    });
+
+    it('addActivity — defensive guard: unknown structured keys are dropped from the dto', async () => {
+      // Simulate a client / future schema sneaking in an extra
+      // structured field. The defensive guard must drop it before
+      // the row hits the DB so no unfiltered structured payload can
+      // sneak through the activity channel.
+      const sneaky = {
+        type: 'note',
+        body: 'normal note',
+        // Unknown to current schema — should be stripped:
+        attribution: { campaign: { id: 'cmp_should_not_persist' } },
+      } as unknown as Parameters<typeof leads.addActivity>[1];
+      await inTenant(() => leads.addActivity(leadId, sneaky, userSalesId));
+      // Inspect every recent activity row's payload (which is null
+      // for plain notes) — none should contain 'cmp_should_not_persist'.
+      const rows = await withTenantRaw(tenantId, (tx) =>
+        tx.leadActivity.findMany({ where: { leadId } }),
+      );
+      for (const row of rows) {
+        const ser = JSON.stringify(row.payload ?? {});
+        assert.equal(
+          ser.includes('cmp_should_not_persist'),
+          false,
+          `unknown key leaked into activity row: ${ser}`,
+        );
+      }
+    });
+
+    it('moveStage — silent no-op + audit when role denies a controlled side-effect field', async () => {
+      // Seed a custom role that denies write on `lifecycleState` —
+      // a moveStage side-effect. The role still has `lead.read` and
+      // `lead.stage.move` capabilities (though we test at the
+      // service layer here, not via the controller capability gate).
+      let roleNoLifecycleId = '';
+      let userNoLifecycleId = '';
+      let leadForMoveId = '';
+      let lostStageId = '';
+      await withTenantRaw(tenantId, async (tx) => {
+        const role = await tx.role.create({
+          data: {
+            tenantId,
+            code: 'c55_no_lifecycle',
+            nameAr: 'لا تغيير دورة',
+            nameEn: 'No Lifecycle (C5.5)',
+            level: 30,
+            isSystem: false,
+          },
+        });
+        roleNoLifecycleId = role.id;
+        for (const resource of ['lead', 'captain', 'followup', 'whatsapp.conversation']) {
+          await tx.roleScope.create({
+            data: { tenantId, roleId: roleNoLifecycleId, resource, scope: 'global' },
+          });
+        }
+        await tx.fieldPermission.create({
+          data: {
+            tenantId,
+            roleId: roleNoLifecycleId,
+            resource: 'lead',
+            field: 'lifecycleState',
+            canRead: true,
+            canWrite: false,
+          },
+        });
+        const u = await tx.user.create({
+          data: {
+            tenantId,
+            email: 'c55-no-lifecycle@test',
+            name: 'no_lifecycle',
+            passwordHash: 'x',
+            status: 'active',
+            roleId: roleNoLifecycleId,
+          },
+        });
+        userNoLifecycleId = u.id;
+        const fresh = await tx.lead.create({
+          data: {
+            tenantId,
+            stageId: newStageId,
+            pipelineId,
+            name: 'MoveStage Target',
+            phone: '+201000000305',
+          },
+        });
+        leadForMoveId = fresh.id;
+        // Add a 'lost' stage so we have a target with a lifecycle change.
+        const lost = await tx.pipelineStage.create({
+          data: {
+            tenantId,
+            pipelineId,
+            code: 'lost',
+            name: 'Lost',
+            order: 99,
+            isTerminal: true,
+            terminalKind: 'lost',
+          },
+        });
+        lostStageId = lost.id;
+        // Seed a lost reason so the move's required-reason guard
+        // doesn't pre-empt the deny check.
+        await tx.lostReason.create({
+          data: {
+            tenantId,
+            code: 'no_vehicle',
+            labelEn: 'No vehicle',
+            labelAr: 'لا توجد مركبة',
+          },
+        });
+      });
+      void lostStageId; // referenced in case the test grows.
+
+      const before = (await inTenant(() =>
+        leads.findByIdInScopeOrThrow(
+          leadForMoveId,
+          claimsFor(userNoLifecycleId, roleNoLifecycleId),
+        ),
+      )) as { stage: { code: string }; lifecycleState: string };
+
+      // Attempt a stage move — should silent no-op because the move
+      // would change `lifecycleState`, which the role denies write on.
+      const after = (await inTenant(() =>
+        leads.moveStage(
+          leadForMoveId,
+          { stageCode: 'lost', lostReasonId: undefined },
+          userNoLifecycleId,
+          claimsFor(userNoLifecycleId, roleNoLifecycleId),
+        ),
+      )) as { stage?: { code: string }; lifecycleState: string };
+      // The function returns `before` (unchanged lead). lifecycleState
+      // stays 'open'; stage code stays 'new'.
+      assert.equal(after.lifecycleState, before.lifecycleState);
+      assert.equal((after.stage ?? before.stage).code, before.stage.code);
+
+      // Audit row written for moveStage.
+      const auditRow = await latestDeniedAudit('moveStage', leadForMoveId);
+      assert.ok(auditRow, 'field_write_denied audit row written for moveStage');
+      const p = auditRow.payload as { deniedFields: string[]; operation: string };
+      assert.ok(p.deniedFields.includes('lifecycleState'));
+    });
+
+    it('nested write consistency — denying parent strips entire subtree; sibling preserved', async () => {
+      // Seed a custom role that denies the WHOLE attribution payload,
+      // not just a leaf — this exercises the recursive path delete.
+      let roleNoAttrId = '';
+      let userNoAttrId = '';
+      await withTenantRaw(tenantId, async (tx) => {
+        const role = await tx.role.create({
+          data: {
+            tenantId,
+            code: 'c55_no_attr',
+            nameAr: 'لا إسناد',
+            nameEn: 'No Attribution (C5.5)',
+            level: 30,
+            isSystem: false,
+          },
+        });
+        roleNoAttrId = role.id;
+        for (const resource of ['lead', 'captain', 'followup', 'whatsapp.conversation']) {
+          await tx.roleScope.create({
+            data: { tenantId, roleId: roleNoAttrId, resource, scope: 'global' },
+          });
+        }
+        await tx.fieldPermission.create({
+          data: {
+            tenantId,
+            roleId: roleNoAttrId,
+            resource: 'lead',
+            field: 'attribution',
+            canRead: true,
+            canWrite: false,
+          },
+        });
+        const u = await tx.user.create({
+          data: {
+            tenantId,
+            email: 'c55-no-attr@test',
+            name: 'no_attr',
+            passwordHash: 'x',
+            status: 'active',
+            roleId: roleNoAttrId,
+          },
+        });
+        userNoAttrId = u.id;
+      });
+
+      const created = (await inTenant(() =>
+        leads.create(
+          {
+            name: 'Nested Strip',
+            phone: '+201000000306',
+            source: 'manual',
+            attribution: {
+              campaign: { id: 'cmp_x' },
+              adSet: { id: 'as_x' },
+              utm: { source: 'utm_x' },
+            },
+          },
+          userNoAttrId,
+          claimsFor(userNoAttrId, roleNoAttrId),
+        ),
+      )) as { id: string };
+
+      // Read back as super_admin to inspect the persisted attribution
+      // (the C4 read filter would mask it for the same role).
+      const persisted = (await inTenant(() =>
+        leads.findByIdInScopeOrThrow(created.id, claimsFor(userSuperId, roleSuperId)),
+      )) as { attribution: unknown; name: string };
+      // After strip: the entire `attribution` subtree was dropped from
+      // the input; create() builds a default attribution carrying just
+      // `{ source }` via buildAttribution — no campaign / adSet / utm.
+      const attribution = persisted.attribution as Record<string, unknown> | null;
+      assert.ok(attribution, 'attribution column populated by buildAttribution default');
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(attribution, 'campaign'),
+        false,
+        'campaign not persisted',
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(attribution, 'adSet'),
+        false,
+        'adSet not persisted',
+      );
+      assert.equal(persisted.name, 'Nested Strip', 'sibling fields untouched');
+    });
+
+    it('consistency — create / update / assign all silent no-op on denied input (no errors thrown)', async () => {
+      // Sanity check: every write path returns a non-error result
+      // when the role's input is fully denied. (assign was already
+      // covered for assignedToId; this re-verifies the pattern
+      // shorthand for the other two paths.)
+      const created = await inTenant(() =>
+        leads.create(
+          { name: 'Consistency', phone: '+201000000307', source: 'meta' },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      );
+      assert.ok((created as { id: string }).id, 'create returned a lead even with denied input');
+
+      const updated = await inTenant(() =>
+        leads.update(
+          (created as { id: string }).id,
+          { source: 'tiktok' },
+          userSalesId,
+          claimsFor(userSalesId, roleSalesId),
+        ),
+      );
+      assert.ok(
+        (updated as { id: string }).id,
+        'update returned a lead even with fully-denied input',
       );
     });
   });

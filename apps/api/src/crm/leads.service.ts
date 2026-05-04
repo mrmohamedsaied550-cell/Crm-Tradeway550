@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
+import { AuditService } from '../audit/audit.service';
 import { FieldFilterService } from '../rbac/field-filter.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
@@ -86,6 +87,16 @@ export class LeadsService {
      * @Global RbacModule) always provides it.
      */
     @Optional() private readonly fieldFilter?: FieldFilterService,
+    /**
+     * Phase C — C5.5: emits `field_write_denied` audit events when a
+     * write call drops forbidden fields. @Optional so legacy
+     * fixtures keep compiling; production (CrmModule via the
+     * @Global AuditModule) always provides it.
+     *
+     * The audit row carries field NAMES only — never values — so
+     * the audit log itself can't leak the data the role was denied.
+     */
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -117,26 +128,39 @@ export class LeadsService {
   }
 
   /**
-   * Phase C — C5: write-side companion to applyLeadFieldFilter.
+   * Phase C — C5 + C5.5: write-side companion to applyLeadFieldFilter.
    * Strips any keys the calling user's role isn't allowed to WRITE
-   * from an incoming DTO before persistence. Returns the DTO
-   * unchanged when no claims / no fieldFilter / no denies — so
-   * legacy fixtures that don't pass userClaims keep current
-   * behaviour byte-identically.
+   * from an incoming DTO before persistence AND reports which paths
+   * were actually present in the input so the caller can emit a
+   * `field_write_denied` audit row naming only the affected fields
+   * (no values).
    *
-   * Behaviour rule (per C5 spec): silent strip, no error. Callers
-   * therefore see the operation succeed with the forbidden fields
-   * simply not applied — matching how the read side hides those
-   * same fields from the response.
+   * Returns `{ dto: input, denied: [] }` when no claims / no
+   * fieldFilter / no denies — so legacy fixtures that don't pass
+   * userClaims keep current behaviour byte-identically.
+   *
+   * SILENT STRIP POLICY (C5 rule 7):
+   *   Forbidden fields are dropped from the input and the operation
+   *   continues as if those keys were never sent. Callers MUST NOT
+   *   throw on a non-empty `denied` set; the API contract is "the
+   *   request succeeds with the forbidden change not applied".
+   *
+   * AUDIT POLICY (C5.5 rule 3):
+   *   When `denied` is non-empty, the caller emits a single audit
+   *   row of action `field_write_denied` carrying the field names
+   *   (never values). This is BEFORE the main write so the audit is
+   *   recorded even if the subsequent write fails for unrelated
+   *   reasons (validation error, RLS, etc.) — matching the existing
+   *   AuditService.writeForTenant best-effort semantics.
    */
-  private async stripLeadWriteDenies<T>(
+  private async stripLeadWriteDeniesWithReport<T>(
     userClaims: ScopeUserClaims | undefined,
     dto: T,
-  ): Promise<T> {
-    if (!userClaims || !this.fieldFilter) return dto;
+  ): Promise<{ dto: T; denied: string[] }> {
+    if (!userClaims || !this.fieldFilter) return { dto, denied: [] };
     const { paths } = await this.fieldFilter.listDeniedWriteFields(userClaims, 'lead');
-    if (paths.length === 0) return dto;
-    return this.fieldFilter.stripForbiddenWrites(dto, paths);
+    if (paths.length === 0) return { dto, denied: [] };
+    return this.fieldFilter.stripWithReport(dto, paths);
   }
 
   /**
@@ -154,6 +178,35 @@ export class LeadsService {
     return paths;
   }
 
+  /**
+   * Phase C — C5.5: emit a `field_write_denied` audit row.
+   *
+   * Best-effort via AuditService.writeForTenant — the audit failure
+   * never breaks the parent operation. Field NAMES are recorded;
+   * values are not. The `entityId` is the lead being written, or
+   * null on create (the lead doesn't exist yet at strip time).
+   */
+  private async auditFieldWriteDenied(
+    userClaims: ScopeUserClaims | undefined,
+    operation: 'create' | 'update' | 'assign' | 'moveStage',
+    entityId: string | null,
+    deniedFields: readonly string[],
+  ): Promise<void> {
+    if (!userClaims || !this.audit || deniedFields.length === 0) return;
+    await this.audit.writeForTenant(userClaims.tenantId, {
+      action: 'field_write_denied',
+      entityType: 'lead',
+      entityId,
+      actorUserId: userClaims.userId,
+      payload: {
+        resource: 'lead',
+        operation,
+        deniedFields: [...deniedFields],
+        roleId: userClaims.roleId,
+      },
+    });
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // create
   // ───────────────────────────────────────────────────────────────────────
@@ -162,14 +215,20 @@ export class LeadsService {
     const tenantId = requireTenantId();
     const settings = await this.tenantSettings.getCurrent();
 
-    // Phase C — C5: silently drop any fields the calling role isn't
-    // allowed to write. The remainder of the create flow proceeds
-    // normally — denied keys default through their schema-level
-    // defaults (e.g. `source` falls back to the column default
-    // 'manual' when the role can't write it). Activity / audit
-    // emissions further down read from the stripped dto, so the
-    // change log can't leak forbidden values either.
-    dto = await this.stripLeadWriteDenies(userClaims, dto);
+    // Phase C — C5 + C5.5: silently drop any fields the calling role
+    // isn't allowed to write, and emit `field_write_denied` audit
+    // when something was actually stripped. The remainder of the
+    // create flow proceeds normally — denied keys default through
+    // their schema-level defaults (e.g. `source` falls back to the
+    // column default 'manual' when the role can't write it).
+    // Activity / audit emissions further down read from the
+    // stripped dto, so the change log can't leak forbidden values
+    // either. entityId is null because the lead has no id yet.
+    {
+      const { dto: stripped, denied } = await this.stripLeadWriteDeniesWithReport(userClaims, dto);
+      dto = stripped;
+      await this.auditFieldWriteDenied(userClaims, 'create', null, denied);
+    }
 
     // P2-08 — the DTO only sanity-checks the shape; full E.164
     // normalisation happens here, with the tenant's defaultDialCode
@@ -762,12 +821,18 @@ export class LeadsService {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
 
-    // Phase C — C5: silently drop any keys the calling role can't
-    // write before we touch the row. After the strip, an empty dto
-    // simply produces a no-op update + activity row that records
-    // nothing meaningful. The activity emission below reads from the
-    // stripped dto so the change log doesn't leak forbidden values.
-    dto = await this.stripLeadWriteDenies(userClaims, dto);
+    // Phase C — C5 + C5.5: silently drop any keys the calling role
+    // can't write before we touch the row, and emit
+    // `field_write_denied` audit when something was actually
+    // stripped. After the strip, an empty dto simply produces a
+    // no-op update + activity row that records nothing meaningful.
+    // The activity emission below reads from the stripped dto so
+    // the change log doesn't leak forbidden values.
+    {
+      const { dto: stripped, denied } = await this.stripLeadWriteDeniesWithReport(userClaims, dto);
+      dto = stripped;
+      await this.auditFieldWriteDenied(userClaims, 'update', id, denied);
+    }
 
     const settings = await this.tenantSettings.getCurrent();
     let normalizedPhone: string | undefined;
@@ -834,12 +899,15 @@ export class LeadsService {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
 
-    // Phase C — C5: assignedToId is the only field this method
-    // touches. If the calling role can't write it, silently no-op
-    // and return the unchanged lead — same shape as a successful
-    // assign so the controller doesn't have to branch.
+    // Phase C — C5 + C5.5: assignedToId is the only field this
+    // method touches. If the calling role can't write it, silently
+    // no-op (return the unchanged lead, same shape as a successful
+    // assign so the controller doesn't branch) AND emit a
+    // `field_write_denied` audit row naming the field. Consistent
+    // with create/update: silent strip, audit emission.
     const denyPaths = await this.leadWriteDenyPaths(userClaims);
     if (denyPaths.includes('assignedToId')) {
+      await this.auditFieldWriteDenied(userClaims, 'assign', id, ['assignedToId']);
       return before;
     }
 
@@ -1075,6 +1143,7 @@ export class LeadsService {
       lostNote?: string;
     },
     actorUserId: string,
+    userClaims?: ScopeUserClaims,
   ) {
     if (Boolean(target.stageCode) === Boolean(target.pipelineStageId)) {
       throw new BadRequestException({
@@ -1084,6 +1153,39 @@ export class LeadsService {
     }
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
+
+    // Phase C — C5.5: moveStage modifies several catalogued fields
+    // as side-effects (lifecycleState, lostReasonId, lostNote,
+    // slaStatus, slaDueAt, lastResponseAt, nextActionDueAt). If the
+    // calling role denies write on any of them, the natural flow
+    // would silently bypass that denial — so check the deny set
+    // up front and silent-no-op + audit when an overlap exists.
+    // Consistent with create/update/assign behaviour.
+    //
+    // Notes:
+    //   • `stageId` itself is NOT in the catalogue (it's a structural
+    //     pointer, not a value field) so `lead.stage.move`
+    //     capability is the primary gate. The catalogued fields
+    //     listed below are the *side-effects* of a stage move.
+    //   • TODO: when the catalogue gains `stageId` (or pipelineId
+    //     becomes write-controlled per role) the same overlap check
+    //     handles it without changes.
+    const denyPaths = await this.leadWriteDenyPaths(userClaims);
+    if (denyPaths.length > 0) {
+      const moveStageTouches = [
+        'lifecycleState',
+        'lostReasonId',
+        'lostNote',
+        'slaStatus',
+        'slaDueAt',
+        'nextActionDueAt',
+      ];
+      const overlap = moveStageTouches.filter((f) => denyPaths.includes(f));
+      if (overlap.length > 0) {
+        await this.auditFieldWriteDenied(userClaims, 'moveStage', id, overlap);
+        return before;
+      }
+    }
     // Lead's pipeline — denormalised column is the fast path; fall
     // back to the stage row for legacy leads still on NULL.
     const leadPipelineId = before.pipelineId ?? before.stage.pipelineId;
@@ -1246,10 +1348,52 @@ export class LeadsService {
   // activities (notes / calls)
   // ───────────────────────────────────────────────────────────────────────
 
+  /**
+   * addActivity (notes / calls).
+   *
+   * Phase C — C5.5: ACTIVITY CHANNEL POLICY
+   *
+   *   • `dto.body` is FREEFORM USER PROSE. The field-permission
+   *     system never censors body text — censoring user-typed
+   *     prose would be wrong (and ineffective: a user can also
+   *     type values into the email body or note title in any other
+   *     CRM field). UX guidance lives in the client.
+   *
+   *   • `dto` may NOT carry structured payload fields today —
+   *     AddActivityDto is `{ type, body }`. The internal
+   *     `payload` JSON column on `lead_activities` is set only by
+   *     other LeadsService methods (moveStage, assign, convert)
+   *     using payloads we author here, and those payloads never
+   *     contain catalogued lead values.
+   *
+   *   • TODO (when AddActivityDto grows a structured `payload`
+   *     field): pass it through `stripLeadWriteDenies` so a future
+   *     emitter that puts `{ source: '…' }` in there is filtered
+   *     against the calling role's lead-resource denies. The
+   *     defensive guard below already strips any keys outside the
+   *     known set so an unwired schema addition can't slip through.
+   *
+   *   • The C4 read filter mirrors lead-resource denies onto
+   *     activity-row payloads on read, so even if an internal
+   *     emitter accidentally writes a denied value, the role can't
+   *     SEE it. Defence in depth.
+   */
   async addActivity(id: string, dto: AddActivityDto, actorUserId: string) {
     const tenantId = requireTenantId();
     const before = await this.findByIdOrThrow(id);
     const settings = await this.tenantSettings.getCurrent();
+
+    // Phase C — C5.5: defensive guard. Today's AddActivityDto only
+    // carries `type` + `body`; if a future schema addition slips
+    // through without being explicitly threaded through the
+    // permission filter, drop any unknown structured keys here
+    // before the row hits the DB. Cheap belt-and-braces.
+    const knownKeys: ReadonlyArray<keyof AddActivityDto> = ['type', 'body'];
+    for (const k of Object.keys(dto) as Array<keyof AddActivityDto>) {
+      if (!knownKeys.includes(k)) {
+        delete (dto as Record<string, unknown>)[k as string];
+      }
+    }
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const created = await tx.leadActivity.create({
