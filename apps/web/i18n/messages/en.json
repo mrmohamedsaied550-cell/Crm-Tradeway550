@@ -1204,19 +1204,63 @@
         "comingSoon": "Inline contact editing and quick lead actions land in the next chunk.",
         "contact": {
           "title": "Contact",
-          "language": "Language: {language}"
+          "language": "Language: {language}",
+          "languageMissing": "Language not set yet.",
+          "languageLabel": "Language",
+          "languageHint": "What language does the customer prefer to write in?",
+          "languageNone": "— Not set —",
+          "displayNameLabel": "Display name",
+          "editAria": "Edit contact",
+          "saveCta": "Save changes",
+          "saved": "Contact updated",
+          "nameRequired": "Display name can't be empty.",
+          "firstSeen": "First seen",
+          "lastSeen": "Last seen",
+          "readOnlyHint": "Read-only — your role doesn't allow editing this contact.",
+          "languages": {
+            "ar": "Arabic",
+            "en": "English",
+            "fr": "French"
+          }
         },
         "lead": {
           "title": "Linked lead",
           "openCta": "Open lead",
           "notLinked": "No lead linked yet.",
+          "linkCta": "Link a lead",
+          "linkLockedHint": "Linking a lead requires WhatsApp link permission.",
+          "outOfScope": "The linked lead isn't available in your scope.",
+          "addNoteCta": "Add note",
+          "nextActionDue": "Next action due {time}",
+          "ownerMismatch": "Conversation owner differs from linked lead owner.",
           "lifecycle": {
             "open": "Open",
             "won": "Won",
             "lost": "Lost",
             "archived": "Archived"
+          },
+          "sla": {
+            "breached": "SLA breached",
+            "paused": "SLA paused"
           }
+        },
+        "ownership": {
+          "title": "Conversation ownership",
+          "owner": "Owner",
+          "source": "Source",
+          "status": "Status",
+          "assignedAt": "Assigned at"
         }
+      },
+      "addNote": {
+        "title": "Add note to linked lead",
+        "helper": "The note is saved to the lead timeline and tagged as coming from WhatsApp.",
+        "bodyLabel": "Note",
+        "bodyHint": "Up to 4,000 characters. Visible to anyone with access to this lead.",
+        "bodyPlaceholder": "Outline what the customer said or what needs to happen next…",
+        "mustEnterBody": "Write a short note before saving.",
+        "confirmCta": "Save note",
+        "success": "Note added to the lead"
       },
       "actions": {
         "menuLabel": "Actions",

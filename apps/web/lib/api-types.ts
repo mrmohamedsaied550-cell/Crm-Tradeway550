@@ -464,7 +464,14 @@ export interface WhatsAppConversation {
   updatedAt: string;
 }
 
-/** D1.1 — minimal lead embedded into the conversation detail response. */
+/** D1.1 — minimal lead embedded into the conversation detail response.
+ *
+ * D1.4 — extended with the SLA / next-action / activity fields that
+ * the existing `findConversationById` include already returns on the
+ * wire (Prisma `include: { lead: { include: { stage: true } } }`
+ * brings the full Lead row). The side panel renders them; declaring
+ * them here makes the typed surface honest.
+ */
 export interface ConversationLeadSummary {
   id: string;
   name: string;
@@ -482,6 +489,12 @@ export interface ConversationLeadSummary {
     isTerminal: boolean;
     terminalKind: string | null;
   };
+  /** D1.4 — denormalised SLA fields. Optional so older payloads parse. */
+  slaStatus?: SlaStatus;
+  slaDueAt?: string | null;
+  /** D1.4 — soonest pending follow-up's dueAt; null when none. */
+  nextActionDueAt?: string | null;
+  lastActivityAt?: string | null;
 }
 
 export interface WhatsAppMessage {

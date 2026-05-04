@@ -22,10 +22,10 @@ import {
   ConfirmConversationActionModal,
   type ConfirmableAction,
 } from '@/components/whatsapp/confirm-conversation-action-modal';
+import { ConversationSidePanel } from '@/components/whatsapp/conversation-side-panel';
 import { HandoverConversationModal } from '@/components/whatsapp/handover-conversation-modal';
 import { LinkLeadModal } from '@/components/whatsapp/link-lead-modal';
 import { SendComposer } from '@/components/whatsapp/send-composer';
-import { SidePanelPlaceholder } from '@/components/whatsapp/side-panel-placeholder';
 import { ApiError, conversationsApi } from '@/lib/api';
 import { getCachedMe, hasCapability } from '@/lib/auth';
 import type { ConversationStatus, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
@@ -423,7 +423,11 @@ export default function WhatsAppInboxPage(): JSX.Element {
           <>
             {/* Desktop pane (xl:) */}
             <div className="hidden xl:flex xl:min-h-0">
-              <SidePanelPlaceholder conversation={selected} />
+              <ConversationSidePanel
+                conversation={selected}
+                onOpenLink={() => setLinkLeadOpen(true)}
+                onActionSuccess={() => void refreshAfterAction()}
+              />
             </div>
 
             {/* Tablet drawer (md → xl) */}
@@ -444,7 +448,11 @@ export default function WhatsAppInboxPage(): JSX.Element {
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  <SidePanelPlaceholder conversation={selected} />
+                  <ConversationSidePanel
+                    conversation={selected}
+                    onOpenLink={() => setLinkLeadOpen(true)}
+                    onActionSuccess={() => void refreshAfterAction()}
+                  />
                 </div>
               </div>
             ) : null}
@@ -463,7 +471,11 @@ export default function WhatsAppInboxPage(): JSX.Element {
                   <span>{t('sidePanel.title')}</span>
                   <span aria-hidden="true" />
                 </header>
-                <SidePanelPlaceholder conversation={selected} />
+                <ConversationSidePanel
+                  conversation={selected}
+                  onOpenLink={() => setLinkLeadOpen(true)}
+                  onActionSuccess={() => void refreshAfterAction()}
+                />
               </section>
             ) : null}
           </>
