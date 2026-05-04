@@ -47,6 +47,7 @@
       "bonuses": "Bonuses",
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
+      "whatsappReviews": "WA Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
       "calendar": "Calendar",
@@ -55,7 +56,8 @@
       "lostReasons": "Lost reasons",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
-      "backup": "Backup"
+      "backup": "Backup",
+      "whatsappReviewsBadge": "{n} unresolved reviews"
     },
     "authBar": {
       "notSignedIn": "You're not signed in. Sign in to access the admin API.",
@@ -751,6 +753,120 @@
         "labelsRequired": "Both English and Arabic labels are required.",
         "orderInvalid": "Order must be a non-negative number.",
         "cannotDeactivateProtected": "The 'other' reason is protected and cannot be deactivated."
+      }
+    },
+    "whatsappReviews": {
+      "title": "WhatsApp Review Queue",
+      "subtitle": "Conversations that need manual triage before they can continue.",
+      "refresh": "Refresh",
+      "noAccess": "You don't have access to the WhatsApp review queue.",
+      "openThread": "Open thread",
+      "recentMessages": "Latest messages",
+      "candidateLeads": "{n} possible matches",
+      "showMoreCandidates": "Show {n} more",
+      "readOnlyHint": "Read-only access — your role can view review items but not resolve them.",
+      "count": "Showing {n} of {total}",
+      "filter": {
+        "tabsLabel": "Queue state",
+        "active": "Active",
+        "resolved": "Resolved",
+        "reasonLabel": "Reason"
+      },
+      "reason": {
+        "captain_active": "Active captain",
+        "duplicate_lead": "Possible duplicate",
+        "unmatched_after_routing": "No agent available"
+      },
+      "reasonExplain": {
+        "captain_active": "This phone appears to belong to an already active captain. Don't create a new sales lead automatically.",
+        "duplicate_lead": "This conversation may match an existing lead. Pick the right one — or create a new lead if none of the candidates fit.",
+        "unmatched_after_routing": "Routing couldn't find an eligible assignee for this conversation. Create a new lead and pick up triage manually."
+      },
+      "resolutionLabel": {
+        "linked_to_lead": "Linked to lead",
+        "linked_to_captain": "Linked to captain",
+        "new_lead": "New lead created",
+        "dismissed": "Dismissed"
+      },
+      "time": {
+        "now": "just now",
+        "m": "{n}m ago",
+        "h": "{n}h ago",
+        "d": "{n}d ago"
+      },
+      "candidate": {
+        "lead": {
+          "loading": "Loading lead…",
+          "outOfScope": "This lead isn't visible in your scope.",
+          "loadFailed": "Couldn't load lead.",
+          "openCta": "Open",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          }
+        },
+        "captain": {
+          "loading": "Loading captain…",
+          "outOfScope": "This captain isn't visible in your scope.",
+          "loadFailed": "Couldn't load captain.",
+          "openCta": "Open",
+          "tripCount": "{count} trips",
+          "status": {
+            "active": "Active",
+            "inactive": "Inactive",
+            "archived": "Archived"
+          }
+        }
+      },
+      "action": {
+        "linkToCaptain": "Confirm captain",
+        "createNewLead": "Create new lead",
+        "dismiss": "Dismiss"
+      },
+      "resolve": {
+        "title": {
+          "linked_to_lead": "Link conversation to this lead",
+          "linked_to_captain": "Confirm — this is an active captain",
+          "new_lead": "Create a new sales lead",
+          "dismissed": "Dismiss this review"
+        },
+        "body": {
+          "linked_to_lead": "The conversation will be attached to the chosen lead. The lead's owner, company, and country denormalise onto the conversation. Messages and the lead are not changed.",
+          "linked_to_captain": "The conversation will be tagged as belonging to the existing captain. No new sales lead is created. The conversation stays in the captain-support queue, not the sales pipeline.",
+          "new_lead": "A fresh sales lead will be created from this conversation, owned by you. The contact stays linked.",
+          "dismissed": "The review is marked resolved without changing the conversation. Use this when the alert is a false positive."
+        },
+        "confirm": {
+          "linked_to_lead": "Link lead",
+          "linked_to_captain": "Confirm captain",
+          "new_lead": "Create lead",
+          "dismissed": "Dismiss review"
+        },
+        "success": {
+          "linked_to_lead": "Conversation linked to the lead.",
+          "linked_to_captain": "Marked as captain.",
+          "new_lead": "New lead created.",
+          "dismissed": "Review dismissed."
+        },
+        "leadIdLabel": "Lead ID",
+        "leadIdHint": "Paste the Lead ID — only leads inside your scope can be linked.",
+        "leadIdHintPreset": "Picked from the candidate list above.",
+        "leadIdRequired": "Enter a Lead ID first.",
+        "invalidLeadId": "That doesn't look like a valid Lead ID.",
+        "leadNotFound": "Lead not found in your scope.",
+        "alreadyResolved": "This review was resolved by someone else. Refresh the queue."
+      },
+      "empty": {
+        "active": {
+          "title": "Nothing to review",
+          "body": "All WhatsApp inbound is being routed cleanly. New flagged items will appear here automatically."
+        },
+        "resolved": {
+          "title": "No resolved reviews",
+          "body": "Once review items are resolved, they'll show up here for the historical record."
+        }
       }
     },
     "whatsappTemplates": {
