@@ -292,6 +292,19 @@ export interface MeUser {
     level: number;
   };
   capabilities: readonly string[];
+  /**
+   * Phase C — C4/C6: per-(resource × field) read/write toggles for
+   * the user's role. Empty array on the super_admin bypass. The
+   * client-side `permissions.ts` lib + `<FieldGated>` UI consume
+   * this list to mirror the server-side filter — UX guidance only;
+   * the API is the source of truth.
+   */
+  fieldPermissions: ReadonlyArray<{
+    resource: string;
+    field: string;
+    canRead: boolean;
+    canWrite: boolean;
+  }>;
 }
 
 export interface LoginResponse {

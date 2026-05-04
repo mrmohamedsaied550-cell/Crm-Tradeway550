@@ -24,6 +24,21 @@ export interface MeCache {
   readonly roleNameAr: string;
   /** P2-01 — flat list of capability codes granted by the user's role. */
   readonly capabilities?: readonly string[];
+  /**
+   * Phase C — C6: per-(resource × field) read/write toggles for the
+   * calling user's role. Read by `lib/permissions.ts` and the
+   * `<FieldGated>` UI wrapper. Empty list on the super_admin bypass.
+   * Optional so the cache stays compatible with sessions written
+   * before the C6 deploy — `permissions.ts` treats an absent list
+   * as "no denies known", i.e. permissive by default. The server
+   * remains the source of truth.
+   */
+  readonly fieldPermissions?: ReadonlyArray<{
+    readonly resource: string;
+    readonly field: string;
+    readonly canRead: boolean;
+    readonly canWrite: boolean;
+  }>;
 }
 
 /**

@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { LifecycleBadge } from '@/components/ui/lifecycle-badge';
+import { FieldGated } from '@/components/ui/field-gated';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
@@ -565,21 +566,25 @@ export default function LeadDetailPage(): JSX.Element {
               {lead.name}
             </h1>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-secondary">
-              <a
-                href={`tel:${lead.phone}`}
-                className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
-              >
-                <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-                {lead.phone}
-              </a>
-              {lead.email ? (
+              <FieldGated resource="lead" field="phone">
                 <a
-                  href={`mailto:${lead.email}`}
-                  className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                  href={`tel:${lead.phone}`}
+                  className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
                 >
-                  <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                  {lead.email}
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                  {lead.phone}
                 </a>
+              </FieldGated>
+              {lead.email ? (
+                <FieldGated resource="lead" field="email">
+                  <a
+                    href={`mailto:${lead.email}`}
+                    className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                  >
+                    <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                    {lead.email}
+                  </a>
+                </FieldGated>
               ) : null}
               <span className="inline-flex items-center gap-1">
                 <UserCog className="h-3.5 w-3.5 text-ink-tertiary" aria-hidden="true" />
@@ -840,27 +845,36 @@ export default function LeadDetailPage(): JSX.Element {
 
             <div className="flex flex-col gap-2">
               <Field label={t('assignAction')}>
-                <Select
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
-                  disabled={isConverted}
-                >
-                  <option value="">{tDetail('unassigned')}</option>
-                  {activeUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} ({u.email})
-                    </option>
-                  ))}
-                </Select>
+                {/* Phase C — C6: edit-mode FieldGated. When the role
+                    can't write `assignedToId`, the Select is rendered
+                    disabled / readOnly so the agent sees the current
+                    value but can't change it. The server (C5) silently
+                    no-ops the write either way. */}
+                <FieldGated resource="lead" field="assignedToId" mode="edit">
+                  <Select
+                    value={assigneeId}
+                    onChange={(e) => setAssigneeId(e.target.value)}
+                    disabled={isConverted}
+                  >
+                    <option value="">{tDetail('unassigned')}</option>
+                    {activeUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.email})
+                      </option>
+                    ))}
+                  </Select>
+                </FieldGated>
               </Field>
-              <Button
-                onClick={() => void onAssign()}
-                loading={actionPending === 'assign'}
-                disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
-                size="sm"
-              >
-                {tDetail('saveAssignee')}
-              </Button>
+              <FieldGated resource="lead" field="assignedToId" mode="edit">
+                <Button
+                  onClick={() => void onAssign()}
+                  loading={actionPending === 'assign'}
+                  disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
+                  size="sm"
+                >
+                  {tDetail('saveAssignee')}
+                </Button>
+              </FieldGated>
             </div>
 
             <hr className="my-3 border-surface-border" />

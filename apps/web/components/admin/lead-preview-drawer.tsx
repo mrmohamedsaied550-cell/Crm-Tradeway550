@@ -17,6 +17,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FieldGated } from '@/components/ui/field-gated';
 import { LifecycleBadge } from '@/components/ui/lifecycle-badge';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
@@ -394,22 +395,26 @@ export function LeadPreviewDrawer({
             </h2>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-secondary">
               {headerPhone ? (
-                <a
-                  href={`tel:${headerPhone}`}
-                  className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
-                >
-                  <Phone className="h-3 w-3" aria-hidden="true" />
-                  {headerPhone}
-                </a>
+                <FieldGated resource="lead" field="phone">
+                  <a
+                    href={`tel:${headerPhone}`}
+                    className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
+                  >
+                    <Phone className="h-3 w-3" aria-hidden="true" />
+                    {headerPhone}
+                  </a>
+                </FieldGated>
               ) : null}
               {headerEmail ? (
-                <a
-                  href={`mailto:${headerEmail}`}
-                  className="inline-flex items-center gap-1 text-brand-700 hover:underline"
-                >
-                  <Mail className="h-3 w-3" aria-hidden="true" />
-                  {headerEmail}
-                </a>
+                <FieldGated resource="lead" field="email">
+                  <a
+                    href={`mailto:${headerEmail}`}
+                    className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                  >
+                    <Mail className="h-3 w-3" aria-hidden="true" />
+                    {headerEmail}
+                  </a>
+                </FieldGated>
               ) : null}
             </div>
             {lead ? (

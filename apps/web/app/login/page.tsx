@@ -61,6 +61,10 @@ export default function LoginPage() {
         roleNameEn: result.user.role.nameEn,
         roleNameAr: result.user.role.nameAr,
         capabilities: result.user.capabilities,
+        // Phase C — C6: persist the role's field permission set on
+        // login so `lib/permissions.ts` works on the first render
+        // without waiting for AuthBar's `/auth/me` round-trip.
+        fieldPermissions: result.user.fieldPermissions ?? [],
       });
       router.push(next);
     } catch (err) {
