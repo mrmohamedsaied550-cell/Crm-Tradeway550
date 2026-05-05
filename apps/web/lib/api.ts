@@ -62,7 +62,11 @@ import type {
   PartnerSourcesListResponse,
   CreatePartnerSourceInput,
   UpdatePartnerSourceInput,
-  PartnerTestConnectionResult,
+  PartnerConnectionTestResult,
+  PartnerSnapshotRow,
+  PartnerSnapshotsListResponse,
+  PartnerSnapshotRecordsResponse,
+  PartnerSyncRunResult,
   PartnerMappingRow,
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
@@ -1613,10 +1617,46 @@ export const partnerSourcesApi = {
     apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'PATCH', body }),
   disable: (id: string): Promise<PartnerSourceRow> =>
     apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'DELETE' }),
-  testConnection: (id: string): Promise<PartnerTestConnectionResult> =>
-    apiFetch<PartnerTestConnectionResult>(`/partner-sources/${id}/test-connection`, {
+  testConnection: (id: string): Promise<PartnerConnectionTestResult> =>
+    apiFetch<PartnerConnectionTestResult>(`/partner-sources/${id}/test-connection`, {
       method: 'POST',
     }),
+  /** D4.3 — manual sync trigger (no upload). For Google Sheets
+   *  sources the adapter is currently a seam and the run will land
+   *  as `failed` with `partner.adapter.not_wired`. */
+  sync: (id: string): Promise<PartnerSyncRunResult> =>
+    apiFetch<PartnerSyncRunResult>(`/partner-sources/${id}/sync`, { method: 'POST' }),
+  /** D4.3 — manual upload sync. Source must have
+   *  `adapter='manual_upload'`. */
+  syncUpload: (id: string, csv: string): Promise<PartnerSyncRunResult> =>
+    apiFetch<PartnerSyncRunResult>(`/partner-sources/${id}/sync-upload`, {
+      method: 'POST',
+      body: { csv },
+    }),
+};
+
+/**
+ * Phase D4 — D4.3: PartnerSnapshot read-only client.
+ */
+export const partnerSnapshotsApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PartnerSnapshotsListResponse> =>
+    apiFetch<PartnerSnapshotsListResponse>('/partner-snapshots', { query }),
+  get: (id: string): Promise<PartnerSnapshotRow> =>
+    apiFetch<PartnerSnapshotRow>(`/partner-snapshots/${id}`),
+  records: (
+    id: string,
+    query: { limit?: number; offset?: number } = {},
+  ): Promise<PartnerSnapshotRecordsResponse> =>
+    apiFetch<PartnerSnapshotRecordsResponse>(`/partner-snapshots/${id}/records`, { query }),
 };
 
 export const partnerMappingsApi = {

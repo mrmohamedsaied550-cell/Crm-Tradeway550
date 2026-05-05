@@ -1282,3 +1282,66 @@ export interface PartnerMappingReadiness {
   phoneMapped: boolean;
   missingTargets: string[];
 }
+
+/**
+ * Phase D4 — D4.3: snapshot + sync result shapes.
+ */
+export interface PartnerSnapshotRow {
+  id: string;
+  partnerSourceId: string;
+  partnerSource: { id: string; displayName: string; partnerCode: string } | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  rowsTotal: number;
+  rowsImported: number;
+  rowsSkipped: number;
+  rowsError: number;
+  sourceMetadata: Record<string, unknown> | null;
+  triggeredBy: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface PartnerSnapshotsListResponse {
+  items: PartnerSnapshotRow[];
+  total: number;
+}
+
+export interface PartnerSnapshotRecordRow {
+  id: string;
+  phone: string | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  tripCount: number | null;
+  lastTripAt: string | null;
+  contactResolved: boolean;
+  createdAt: string;
+}
+
+export interface PartnerSnapshotRecordsResponse {
+  items: PartnerSnapshotRecordRow[];
+  total: number;
+}
+
+export interface PartnerSyncRunResult {
+  wasSkipped: boolean;
+  reason?: string;
+  snapshotId?: string;
+  status?: 'success' | 'partial' | 'failed';
+  total?: number;
+  imported?: number;
+  skipped?: number;
+  errors?: number;
+  resolvedTabName?: string | null;
+}
+
+/**
+ * Real adapter probe result (D4.3). Status values include
+ * `'not_wired'` for the Google Sheets seam.
+ */
+export interface PartnerConnectionTestResult {
+  status: string;
+  message: string;
+  tabs?: Array<{ name: string; modifiedAt: string | null }>;
+}

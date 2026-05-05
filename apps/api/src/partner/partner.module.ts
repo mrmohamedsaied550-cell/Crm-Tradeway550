@@ -1,29 +1,55 @@
 import { Module } from '@nestjs/common';
 
+import { TenantsModule } from '../tenants/tenants.module';
+import { GoogleSheetsAdapter } from './adapters/google-sheets-adapter';
+import { ManualUploadAdapter } from './adapters/manual-upload-adapter';
 import { PartnerCredentialsCryptoService } from './partner-credentials-crypto.service';
 import { PartnerMappingsController } from './partner-mappings.controller';
 import { PartnerMappingsService } from './partner-mappings.service';
+import { PartnerSnapshotsController } from './partner-snapshots.controller';
+import { PartnerSnapshotsService } from './partner-snapshots.service';
 import { PartnerSourcesController } from './partner-sources.controller';
 import { PartnerSourcesService } from './partner-sources.service';
+import { PartnerSyncSchedulerService } from './partner-sync.scheduler';
+import { PartnerSyncService } from './partner-sync.service';
 
 /**
- * Phase D4 — D4.2: Partner Data Hub module.
+ * Phase D4 — D4.2 → D4.3: Partner Data Hub module.
  *
- * Configuration only. No sync engine, no Google Sheets adapter, no
- * scheduler tick. Later D4.x chunks add:
- *   D4.3 — sync engine + adapters + scheduler
+ * D4.2: configuration CRUD (sources + mappings) + credential
+ * envelope.
+ * D4.3: sync engine + Google Sheets adapter seam + manual upload
+ * adapter + snapshot history endpoints + cron scheduler.
+ *
+ * Later D4.x chunks add:
  *   D4.4 — verification projection + lead-detail card
  *   D4.5 — controlled merge + evidence
  *   D4.6 — reconciliation reports
  *   D4.7 — milestones + commission CSV
  *
- * The module is plain (not @Global) — services are imported by
- * later modules explicitly so the dependency graph stays
- * inspectable.
+ * Imports `TenantsModule` so `TenantSettingsService` (used by
+ * the sync engine for the tenant default dial code during phone
+ * normalisation) is available without a circular dep.
  */
 @Module({
-  controllers: [PartnerSourcesController, PartnerMappingsController],
-  providers: [PartnerSourcesService, PartnerMappingsService, PartnerCredentialsCryptoService],
-  exports: [PartnerSourcesService, PartnerMappingsService, PartnerCredentialsCryptoService],
+  imports: [TenantsModule],
+  controllers: [PartnerSourcesController, PartnerMappingsController, PartnerSnapshotsController],
+  providers: [
+    PartnerSourcesService,
+    PartnerMappingsService,
+    PartnerSnapshotsService,
+    PartnerSyncService,
+    PartnerSyncSchedulerService,
+    PartnerCredentialsCryptoService,
+    GoogleSheetsAdapter,
+    ManualUploadAdapter,
+  ],
+  exports: [
+    PartnerSourcesService,
+    PartnerMappingsService,
+    PartnerSnapshotsService,
+    PartnerSyncService,
+    PartnerCredentialsCryptoService,
+  ],
 })
 export class PartnerModule {}

@@ -52,6 +52,7 @@
       "whatsappTemplates": "قوالب واتساب",
       "metaLeadSources": "مصادر Meta",
       "partnerSources": "مصادر الشركاء",
+      "partnerSnapshots": "سجلات مزامنة الشركاء",
       "calendar": "التقويم",
       "reports": "التقارير",
       "distribution": "التوزيع",
@@ -1940,7 +1941,41 @@
         "auth_failed": "فشل المصادقة",
         "sheet_not_found": "الملف غير موجود",
         "unknown": "غير معروف",
-        "stubbed": "اختبار مبدئي"
+        "stubbed": "اختبار مبدئي",
+        "not_wired": "غير مُفعّل بعد",
+        "running": "جارٍ التنفيذ",
+        "success": "ناجحة",
+        "partial": "جزئية",
+        "failed": "فشلت"
+      },
+      "sync": {
+        "syncNowCta": "مزامنة الآن",
+        "uploadCta": "رفع CSV",
+        "historyCta": "سجل المزامنة",
+        "lastSyncLabel": "آخر تشغيل",
+        "testResultTitle": "اختبار الاتصال",
+        "resolvedTab": "التبويب المختار",
+        "openHistory": "فتح سجل المزامنة",
+        "lastRunCounts": "الإجمالي {total} · مستورد {imported} · متجاوَز {skipped} · أخطاء {errors}",
+        "lastRunTitle": {
+          "success": "اكتملت المزامنة بنجاح",
+          "partial": "اكتملت المزامنة مع أخطاء صفوف",
+          "failed": "فشلت المزامنة"
+        },
+        "toast": {
+          "success": "اكتملت مزامنة الشريك.",
+          "partial": "اكتملت المزامنة مع أخطاء.",
+          "failed": "فشلت مزامنة الشريك.",
+          "skipped": "تم تخطي المزامنة."
+        },
+        "upload": {
+          "title": "رفع ملف CSV",
+          "body": "ألصق محتوى الـ CSV. الصف الأول يجب أن يكون رؤوس الأعمدة. تُطبَّق التحويلات عند كتابة الصفوف؛ القيم الأصلية تُحفظ دائمًا.",
+          "csvLabel": "محتوى CSV",
+          "csvHelper": "الصف الأول هو رؤوس الأعمدة.",
+          "csvPlaceholder": "phone,partner_status,partner_active_date,trip_count\n+201001234567,active,2026-04-01,12\n…",
+          "cta": "تشغيل المزامنة"
+        }
       },
       "testConnection": {
         "stubTitle": "اختبار الاتصال",
@@ -2106,6 +2141,40 @@
             "label": "مطلوب (تخطّي الصفوف الفاقدة لهذا العمود)"
           }
         }
+      }
+    },
+    "partnerSnapshots": {
+      "title": "سجلات مزامنة الشركاء",
+      "subtitle": "كل تشغيلات المزامنة، الأحدث أولًا. تظهر أعداد الصفوف، التبويب المختار، وأسماء الأخطاء عند الفشل.",
+      "noAccessTitle": "لا توجد صلاحية",
+      "noAccessBody": "ليس لديك صلاحية الوصول لسجلات المزامنة.",
+      "featureDisabled": "مركز بيانات الشركاء معطّل في هذه البيئة.",
+      "filterLabel": "الفلتر:",
+      "emptyTitle": "لا توجد سجلات مزامنة بعد.",
+      "emptyBody": "تُسجَّل العمليات في كل مرة تشتغل فيها مزامنة. شغّل مزامنة من صفحة تفاصيل المصدر.",
+      "emptyFilteredTitle": "لا توجد سجلات مطابقة",
+      "emptyFilteredBody": "لا شيء يطابق الفلتر الحالي. أزِل الفلتر لعرض السجل الكامل.",
+      "sourceRemoved": "تم حذف المصدر",
+      "resolvedTab": "التبويب المختار",
+      "triggeredBy": "مُشغِّل بواسطة",
+      "errorPrefix": "خطأ",
+      "counts": {
+        "total": "الإجمالي",
+        "imported": "مستورد",
+        "skipped": "متجاوَز",
+        "error": "أخطاء"
+      },
+      "statuses": {
+        "all": "الكل",
+        "running": "جارٍ التنفيذ",
+        "success": "ناجحة",
+        "partial": "جزئية",
+        "failed": "فشلت"
+      },
+      "triggers": {
+        "manual": "يدوي",
+        "manual_upload": "رفع يدوي",
+        "cron": "مجدول"
       }
     }
   },

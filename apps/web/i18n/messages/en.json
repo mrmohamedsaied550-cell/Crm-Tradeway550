@@ -52,6 +52,7 @@
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
       "partnerSources": "Partner Sources",
+      "partnerSnapshots": "Partner Snapshots",
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
@@ -1940,7 +1941,41 @@
         "auth_failed": "Auth failed",
         "sheet_not_found": "Sheet not found",
         "unknown": "Unknown",
-        "stubbed": "Stubbed"
+        "stubbed": "Stubbed",
+        "not_wired": "Not wired",
+        "running": "Running",
+        "success": "Success",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "sync": {
+        "syncNowCta": "Sync now",
+        "uploadCta": "Upload CSV",
+        "historyCta": "Sync history",
+        "lastSyncLabel": "Last run",
+        "testResultTitle": "Connection test",
+        "resolvedTab": "Resolved tab",
+        "openHistory": "Open sync history",
+        "lastRunCounts": "Total {total} · imported {imported} · skipped {skipped} · errors {errors}",
+        "lastRunTitle": {
+          "success": "Sync completed successfully",
+          "partial": "Sync completed with row errors",
+          "failed": "Sync failed"
+        },
+        "toast": {
+          "success": "Partner sync completed.",
+          "partial": "Partner sync completed with row errors.",
+          "failed": "Partner sync failed.",
+          "skipped": "Partner sync skipped."
+        },
+        "upload": {
+          "title": "Upload CSV",
+          "body": "Paste the CSV content. The first row must be the header. Mappings are applied at row-write time; raw values are preserved either way.",
+          "csvLabel": "CSV content",
+          "csvHelper": "First row is the header.",
+          "csvPlaceholder": "phone,partner_status,partner_active_date,trip_count\n+201001234567,active,2026-04-01,12\n…",
+          "cta": "Run sync"
+        }
       },
       "testConnection": {
         "stubTitle": "Connection test",
@@ -2106,6 +2141,40 @@
             "label": "Required (skip rows missing this column)"
           }
         }
+      }
+    },
+    "partnerSnapshots": {
+      "title": "Partner Snapshots",
+      "subtitle": "Every partner sync run, newest first. Shows row counts, resolved tabs, and error names for failed runs.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner snapshots.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "filterLabel": "Filter:",
+      "emptyTitle": "No partner snapshots yet.",
+      "emptyBody": "Snapshots are recorded every time a partner sync runs. Trigger one from a partner source detail page.",
+      "emptyFilteredTitle": "No matching snapshots",
+      "emptyFilteredBody": "Nothing matches the current filter. Clear it to see the full history.",
+      "sourceRemoved": "Source removed",
+      "resolvedTab": "Resolved tab",
+      "triggeredBy": "Triggered by",
+      "errorPrefix": "Error",
+      "counts": {
+        "total": "Total",
+        "imported": "Imported",
+        "skipped": "Skipped",
+        "error": "Errors"
+      },
+      "statuses": {
+        "all": "All",
+        "running": "Running",
+        "success": "Success",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "triggers": {
+        "manual": "Manual",
+        "manual_upload": "Manual upload",
+        "cron": "Scheduled"
       }
     }
   },

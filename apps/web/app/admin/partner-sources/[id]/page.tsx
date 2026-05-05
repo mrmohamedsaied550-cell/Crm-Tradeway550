@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { AlertOctagon, ArrowLeft, PlugZap, Power } from 'lucide-react';
+import { ArrowLeft, History, PlayCircle, PlugZap, Power, Upload } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Field, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
@@ -15,41 +16,56 @@ import { useToast } from '@/components/ui/toast';
 import { PartnerMappingBuilder } from '@/components/admin/partner-sources/partner-mapping-builder';
 import { PartnerSourceForm } from '@/components/admin/partner-sources/partner-source-form';
 import { ApiError, partnerSourcesApi } from '@/lib/api';
-import type { PartnerSourceRow, PartnerTestConnectionResult } from '@/lib/api-types';
+import type {
+  PartnerConnectionTestResult,
+  PartnerSourceRow,
+  PartnerSyncRunResult,
+} from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 
 /**
- * Phase D4 — D4.2: Partner Source detail page.
+ * Phase D4 — D4.3: Partner Source detail page.
  *
  * Sections:
- *   • Header with status badges + "Test connection" stub + Disable
- *     button
- *   • Source-config form (re-saves on submit)
- *   • Mapping builder
- *
- * The "Test connection" button is a STUB in D4.2 — it validates
- * config shape only and surfaces a clear "real probe lands in D4.3"
- * message. Real adapter probes ship with the sync engine.
+ *   • Status strip — active / credentials / connection status /
+ *     last sync timestamp.
+ *   • "Test connection" — real adapter probe (D4.3). Updates
+ *     connectionStatus + lastTestedAt server-side.
+ *   • "Sync now" — triggers a real sync run. For Google Sheets
+ *     sources, the adapter is currently a seam and the run will
+ *     land as `failed` with `partner.adapter.not_wired`. The UI
+ *     surfaces that result truthfully — no fake-success copy.
+ *   • "Upload CSV" — opens a paste modal for manual_upload
+ *     sources. Reuses the same /sync-upload endpoint.
+ *   • Disable, source-config form, mapping builder.
  */
 export default function PartnerSourceDetailPage(): JSX.Element {
   const params = useParams();
   const router = useRouter();
   const t = useTranslations('admin.partnerSources');
   const tForm = useTranslations('admin.partnerSources.form');
+  const tSync = useTranslations('admin.partnerSources.sync');
+  const tCommon = useTranslations('admin.common');
   const { toast } = useToast();
 
   const canRead = hasCapability('partner.source.read');
   const canWrite = hasCapability('partner.source.write');
+  const canRunSync = hasCapability('partner.sync.run');
 
   const id = typeof params['id'] === 'string' ? params['id'] : '';
 
   const [source, setSource] = useState<PartnerSourceRow | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<PartnerTestConnectionResult | null>(null);
+  const [testResult, setTestResult] = useState<PartnerConnectionTestResult | null>(null);
   const [testing, setTesting] = useState<boolean>(false);
   const [disabling, setDisabling] = useState<boolean>(false);
   const [disableOpen, setDisableOpen] = useState<boolean>(false);
+
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [lastRun, setLastRun] = useState<PartnerSyncRunResult | null>(null);
+  const [uploadOpen, setUploadOpen] = useState<boolean>(false);
+  const [uploadCsv, setUploadCsv] = useState<string>('');
 
   const reload = useCallback(async (): Promise<void> => {
     if (!id || !canRead) {
@@ -93,10 +109,58 @@ export default function PartnerSourceDetailPage(): JSX.Element {
     try {
       const result = await partnerSourcesApi.testConnection(source.id);
       setTestResult(result);
+      // Reload to pick up the server-side connectionStatus +
+      // lastTestedAt updates.
+      await reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function onSyncNow(): Promise<void> {
+    if (!source) return;
+    setSyncing(true);
+    setLastRun(null);
+    try {
+      const result = await partnerSourcesApi.sync(source.id);
+      setLastRun(result);
+      const tone =
+        result.status === 'success' ? 'success' : result.status === 'failed' ? 'error' : 'info';
+      toast({
+        tone,
+        title: tSync(`toast.${result.status ?? 'skipped'}` as 'toast.success'),
+      });
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function onSyncUpload(): Promise<void> {
+    if (!source) return;
+    if (uploadCsv.trim().length === 0) return;
+    setSyncing(true);
+    setLastRun(null);
+    try {
+      const result = await partnerSourcesApi.syncUpload(source.id, uploadCsv);
+      setLastRun(result);
+      const tone =
+        result.status === 'success' ? 'success' : result.status === 'failed' ? 'error' : 'info';
+      toast({
+        tone,
+        title: tSync(`toast.${result.status ?? 'skipped'}` as 'toast.success'),
+      });
+      setUploadOpen(false);
+      setUploadCsv('');
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -131,12 +195,22 @@ export default function PartnerSourceDetailPage(): JSX.Element {
         title={source?.displayName ?? t('detailTitle')}
         subtitle={source ? `${source.partnerCode} · ${source.adapter}` : t('detailSubtitle')}
         actions={
-          <Link href="/admin/partner-sources">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('backCta')}
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            {source ? (
+              <Link href={`/admin/partner-snapshots?partnerSourceId=${source.id}`}>
+                <Button variant="ghost" size="sm">
+                  <History className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tSync('historyCta')}
+                </Button>
+              </Link>
+            ) : null}
+            <Link href="/admin/partner-sources">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('backCta')}
+              </Button>
+            </Link>
+          </div>
         }
       />
 
@@ -167,9 +241,22 @@ export default function PartnerSourceDetailPage(): JSX.Element {
                   )}
                 </Badge>
               ) : null}
+              {source.lastSyncStatus ? (
+                <Badge tone="neutral">
+                  {tSync('lastSyncLabel')}:{' '}
+                  {t(
+                    `connectionStatuses.${source.lastSyncStatus}` as 'connectionStatuses.untested',
+                  )}
+                </Badge>
+              ) : null}
+              {source.lastSyncAt ? (
+                <span className="text-[11px] text-ink-tertiary">
+                  {t('lastSync')}: {new Date(source.lastSyncAt).toLocaleString()}
+                </span>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
-              {canWrite ? (
+              {canRunSync ? (
                 <>
                   <Button
                     variant="secondary"
@@ -180,45 +267,99 @@ export default function PartnerSourceDetailPage(): JSX.Element {
                     <PlugZap className="h-3.5 w-3.5" aria-hidden="true" />
                     {t('testConnectionCta')}
                   </Button>
-                  {source.isActive ? (
+                  {source.adapter === 'manual_upload' ? (
                     <Button
-                      variant="ghost"
+                      variant="primary"
                       size="sm"
-                      onClick={() => setDisableOpen(true)}
-                      disabled={disabling}
+                      onClick={() => setUploadOpen(true)}
+                      disabled={syncing}
                     >
-                      <Power className="h-3.5 w-3.5" aria-hidden="true" />
-                      {t('disableCta')}
+                      <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                      {tSync('uploadCta')}
                     </Button>
-                  ) : null}
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => void onSyncNow()}
+                      loading={syncing}
+                      disabled={!source.isActive}
+                    >
+                      <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                      {tSync('syncNowCta')}
+                    </Button>
+                  )}
                 </>
+              ) : null}
+              {canWrite && source.isActive ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDisableOpen(true)}
+                  disabled={disabling}
+                >
+                  <Power className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('disableCta')}
+                </Button>
               ) : null}
             </div>
           </div>
 
-          {/* Stub "Test connection" result */}
+          {/* Test connection result */}
           {testResult ? (
-            <Notice tone="info">
+            <Notice
+              tone={
+                testResult.status === 'ok'
+                  ? 'success'
+                  : testResult.status === 'auth_failed' || testResult.status === 'sheet_not_found'
+                    ? 'error'
+                    : 'info'
+              }
+            >
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-ink-primary">
-                  {t('testConnection.stubTitle')}
+                  {tSync('testResultTitle')}:{' '}
+                  {t(`connectionStatuses.${testResult.status}` as 'connectionStatuses.untested')}
                 </span>
                 <span className="text-xs text-ink-secondary">{testResult.message}</span>
-                {testResult.configIssues.length > 0 ? (
-                  <ul className="ms-4 mt-1 list-disc text-xs text-status-warning">
-                    {testResult.configIssues.map((issue) => (
-                      <li key={issue}>
-                        <AlertOctagon
-                          className="me-1 inline h-3 w-3 align-text-bottom"
-                          aria-hidden="true"
-                        />
-                        {issue}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <span className="text-xs text-ink-tertiary">{t('testConnection.noIssues')}</span>
-                )}
+              </div>
+            </Notice>
+          ) : null}
+
+          {/* Last sync result (manual run / upload). */}
+          {lastRun && lastRun.snapshotId ? (
+            <Notice
+              tone={
+                lastRun.status === 'success'
+                  ? 'success'
+                  : lastRun.status === 'failed'
+                    ? 'error'
+                    : 'info'
+              }
+            >
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-ink-primary">
+                  {tSync(`lastRunTitle.${lastRun.status ?? 'partial'}` as 'lastRunTitle.success')}
+                </span>
+                <span className="text-xs text-ink-secondary">
+                  {tSync('lastRunCounts', {
+                    total: lastRun.total ?? 0,
+                    imported: lastRun.imported ?? 0,
+                    skipped: lastRun.skipped ?? 0,
+                    errors: lastRun.errors ?? 0,
+                  })}
+                </span>
+                {lastRun.resolvedTabName ? (
+                  <span className="text-xs text-ink-tertiary">
+                    {tSync('resolvedTab')}: {lastRun.resolvedTabName}
+                  </span>
+                ) : null}
+                <Link
+                  href={`/admin/partner-snapshots`}
+                  className="text-xs font-medium text-brand-700 hover:underline"
+                >
+                  {tSync('openHistory')} →
+                </Link>
               </div>
             </Notice>
           ) : null}
@@ -262,6 +403,48 @@ export default function PartnerSourceDetailPage(): JSX.Element {
             }
           >
             <p className="text-sm text-ink-primary">{t('disableConfirm.body')}</p>
+          </Modal>
+
+          {/* Upload CSV modal — only used when adapter='manual_upload' */}
+          <Modal
+            open={uploadOpen}
+            title={tSync('upload.title')}
+            onClose={() => (syncing ? undefined : setUploadOpen(false))}
+            width="lg"
+            footer={
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setUploadOpen(false)}
+                  disabled={syncing}
+                >
+                  {tCommon('cancel')}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => void onSyncUpload()}
+                  loading={syncing}
+                  disabled={uploadCsv.trim().length === 0}
+                >
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tSync('upload.cta')}
+                </Button>
+              </>
+            }
+          >
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-ink-secondary">{tSync('upload.body')}</p>
+              <Field label={tSync('upload.csvLabel')} hint={tSync('upload.csvHelper')} required>
+                <Textarea
+                  value={uploadCsv}
+                  onChange={(e) => setUploadCsv(e.target.value)}
+                  rows={12}
+                  placeholder={tSync('upload.csvPlaceholder')}
+                  required
+                />
+              </Field>
+            </div>
           </Modal>
         </>
       )}

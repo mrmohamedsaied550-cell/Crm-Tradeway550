@@ -23,6 +23,7 @@ import {
   Megaphone,
   Calendar,
   Database,
+  History,
   Network,
   BarChart3,
   Settings,
@@ -62,7 +63,8 @@ interface NavItem {
     | 'lostReasons'
     | 'roles'
     | 'backup'
-    | 'partnerSources';
+    | 'partnerSources'
+    | 'partnerSnapshots';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -141,6 +143,14 @@ const ITEMS: readonly NavItem[] = [
     href: '/admin/partner-sources',
     labelKey: 'partnerSources',
     icon: Network,
+    cap: 'partner.source.read',
+  },
+  // Phase D4 — D4.3: snapshot history (read-only). Same capability
+  // gate as partner sources — anyone who can configure can audit.
+  {
+    href: '/admin/partner-snapshots',
+    labelKey: 'partnerSnapshots',
+    icon: History,
     cap: 'partner.source.read',
   },
   // PL-4 — Calendar lives at /agent/calendar but is useful to managers
