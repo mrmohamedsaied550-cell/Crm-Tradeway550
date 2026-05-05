@@ -7,6 +7,7 @@ import { ArrowRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { DuplicateRulesPanel } from '@/components/admin/duplicate-rules-panel';
+import { EscalationRulesPanel } from '@/components/admin/escalation-rules-panel';
 import { Field, Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
@@ -140,6 +141,12 @@ export default function TenantSettingsPage(): JSX.Element {
           (`tenant.duplicate_rules.write`) and the audience usually
           differs (Ops Manager vs. tenant admin). */}
       <DuplicateRulesPanel />
+
+      {/* Phase D3 — D3.7: SLA escalation rules. Reuses the core
+          `tenant.settings.write` capability — the audience is Ops
+          Manager / Account Manager / Super Admin (the same matrix
+          that owns timezone / SLA window). */}
+      <EscalationRulesPanel />
 
       {/* Phase 1A — A10: the legacy inline rules editor moved to
           /admin/distribution. Keep a visible deprecation pointer here

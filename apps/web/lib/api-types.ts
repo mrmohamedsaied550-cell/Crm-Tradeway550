@@ -1093,3 +1093,71 @@ export interface LeadReviewsListResponse {
   limit: number;
   offset: number;
 }
+
+/**
+ * Phase D3 — D3.7: agent-workspace "Needs attention now" payload.
+ *
+ * Three sanitised lists for the calling agent. NEVER carries
+ * previous-owner / actor names — the workspace surface intentionally
+ * redacts blame fields. The audit page (`/admin/audit`) is the place
+ * for full attribution; the workspace is operational, not forensic.
+ */
+export interface NeedsAttentionResponse {
+  rotatedToMe: Array<{
+    rotationId: string;
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    rotatedAt: string;
+  }>;
+  atRiskSla: Array<{
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    threshold: 't150' | 't200';
+    thresholdAt: string | null;
+  }>;
+  openReviews: Array<{
+    reviewId: string;
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    reason: LeadReviewReason | string;
+    createdAt: string;
+  }>;
+}
+
+/**
+ * Phase D3 — D3.7: SLA escalation policy (per-tenant).
+ *
+ * Mirrors the backend Zod shape (`EscalationRulesSchema`). The
+ * editor at `/admin/tenant-settings` saves the full object; the
+ * service computes the diff for the audit row.
+ */
+export type EscalationAction =
+  | 'notify_only'
+  | 'notify_and_tag'
+  | 'rotate'
+  | 'rotate_or_review'
+  | 'raise_review';
+
+export type EscalationHandoverMode = 'full' | 'summary' | 'clean';
+
+export interface EscalationThresholdPolicy {
+  action: EscalationAction;
+  rotateOnFirst: boolean;
+  reviewOnRepeatWithinHours: number;
+}
+
+export interface EscalationRulesConfig {
+  thresholds: {
+    t75: EscalationThresholdPolicy;
+    t100: EscalationThresholdPolicy;
+    t150: EscalationThresholdPolicy;
+    t200: EscalationThresholdPolicy;
+  };
+  defaultHandoverMode: EscalationHandoverMode;
+}

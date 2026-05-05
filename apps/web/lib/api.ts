@@ -56,6 +56,8 @@ import type {
   LeadReviewResolution,
   LeadReviewRow,
   LeadReviewsListResponse,
+  NeedsAttentionResponse,
+  EscalationRulesConfig,
   RoleScopeRow,
   RoleSummary,
   RotationHistoryResponse,
@@ -1549,6 +1551,29 @@ export const tenantSettingsApi = {
       method: 'PATCH',
       body: input,
     }),
+  /** D3.7 — read the per-tenant SLA escalation policy. */
+  getEscalationRules: (): Promise<EscalationRulesConfig> =>
+    apiFetch<EscalationRulesConfig>('/tenant/settings/escalation-rules'),
+  /** D3.7 — write the per-tenant SLA escalation policy. Full object
+   *  (no partial PATCH) so the server-side audit can compute a
+   *  meaningful before/after diff. */
+  updateEscalationRules: (input: EscalationRulesConfig): Promise<EscalationRulesConfig> =>
+    apiFetch<EscalationRulesConfig>('/tenant/settings/escalation-rules', {
+      method: 'PATCH',
+      body: input,
+    }),
+};
+
+/**
+ * Phase D3 — D3.7: agent-workspace "Needs attention now" feed.
+ *
+ * Compact, sanitised endpoint for the calling agent. Returns three
+ * lists; the workspace renders them as separate cards. Capability:
+ * `lead.read` — every operational role already holds it.
+ */
+export const agentWorkspaceApi = {
+  needsAttention: (): Promise<NeedsAttentionResponse> =>
+    apiFetch<NeedsAttentionResponse>('/agent/needs-attention'),
 };
 
 // ───────────────────────────────────────────────────────────────────────

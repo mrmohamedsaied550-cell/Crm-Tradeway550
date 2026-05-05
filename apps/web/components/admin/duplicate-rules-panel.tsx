@@ -9,8 +9,9 @@ import { Field, Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
-import { ApiError, tenantSettingsApi } from '@/lib/api';
+import { ApiError, lostReasonsApi, tenantSettingsApi } from '@/lib/api';
 import type { DuplicateRulesConfig, DuplicateRulesPatch, OwnershipOnReactivation } from '@/lib/api';
+import type { LostReason } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -51,6 +52,12 @@ export function DuplicateRulesPanel(): JSX.Element {
 
   const [persisted, setPersisted] = useState<DuplicateRulesConfig | null>(null);
   const [draft, setDraft] = useState<DuplicateRulesConfig | null>(null);
+  // Phase D3 — D3.7: surface the active lost-reason catalogue so
+  // operators can pick which reasons count as "no answer" for
+  // faster reactivation. Falls back gracefully when the listAll
+  // endpoint is denied (read-only / partial-permission users see
+  // the codes as plain chips with no friendly labels).
+  const [lostReasons, setLostReasons] = useState<LostReason[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,12 +71,21 @@ export function DuplicateRulesPanel(): JSX.Element {
     }
     let cancelled = false;
     setLoading(true);
-    tenantSettingsApi
-      .getDuplicateRules()
-      .then((row) => {
+    Promise.all([
+      tenantSettingsApi.getDuplicateRules(),
+      // Best-effort: a TL with read-only access may lack the admin
+      // lost-reasons endpoint. Fall back to the agent-visible active
+      // list when that happens; the chip editor still works because
+      // it only needs codes + labels.
+      lostReasonsApi
+        .listAll()
+        .catch(() => lostReasonsApi.listActive().catch(() => [] as LostReason[])),
+    ])
+      .then(([row, reasons]) => {
         if (cancelled) return;
         setPersisted(row);
         setDraft(row);
+        setLostReasons(reasons);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -209,6 +225,62 @@ export function DuplicateRulesPanel(): JSX.Element {
             disabled={!canWrite}
             className="max-w-[140px]"
           />
+        </Field>
+
+        {/* Phase D3 — D3.7: lost-reason chips that should be treated
+            as No-Answer-equivalent for faster reactivation. The
+            saved value already round-trips on the API; this surface
+            simply makes it editable. Falls back to the persisted
+            codes when the lost-reason catalogue can't be fetched. */}
+        <Field label={t('noAnswerCodes.label')} hint={t('noAnswerCodes.helper')}>
+          <div className="flex flex-wrap items-center gap-2">
+            {(lostReasons.length > 0
+              ? lostReasons
+              : draft.reactivateNoAnswerLostReasonCodes.map(
+                  (code) =>
+                    ({
+                      id: code,
+                      code,
+                      labelEn: code,
+                      labelAr: code,
+                      isActive: true,
+                    }) as Pick<LostReason, 'id' | 'code' | 'labelEn' | 'labelAr' | 'isActive'>,
+                )
+            ).map((reason) => {
+              const selected = draft.reactivateNoAnswerLostReasonCodes.includes(reason.code);
+              return (
+                <button
+                  key={reason.id ?? reason.code}
+                  type="button"
+                  onClick={() => {
+                    if (!canWrite) return;
+                    const codes = new Set(draft.reactivateNoAnswerLostReasonCodes);
+                    if (selected) {
+                      codes.delete(reason.code);
+                    } else {
+                      codes.add(reason.code);
+                    }
+                    setField('reactivateNoAnswerLostReasonCodes', Array.from(codes));
+                  }}
+                  disabled={!canWrite}
+                  aria-pressed={selected}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    selected
+                      ? 'border-brand-600 bg-brand-50 text-brand-700'
+                      : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-brand-50/30',
+                    !canWrite && 'cursor-not-allowed opacity-70',
+                  )}
+                  title={reason.code}
+                >
+                  {reason.labelEn || reason.code}
+                </button>
+              );
+            })}
+            {lostReasons.length === 0 && draft.reactivateNoAnswerLostReasonCodes.length === 0 ? (
+              <span className="text-xs italic text-ink-tertiary">{t('noAnswerCodes.empty')}</span>
+            ) : null}
+          </div>
         </Field>
       </fieldset>
 

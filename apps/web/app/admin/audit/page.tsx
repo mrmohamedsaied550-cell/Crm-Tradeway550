@@ -14,21 +14,38 @@ import { ApiError, auditApi, usersApi, type AuditRow } from '@/lib/api';
 import type { AdminUser } from '@/lib/api-types';
 
 /**
- * Phase D2 — D2.6: filter chips for the four D2 audit verbs the
- * Operations / Super Admin team uses to inspect duplicate decisions
- * and manual reactivations. Selecting a chip narrows the local view
- * to rows whose `action` matches; the API itself still returns the
- * full stream — this is a client-side filter intentionally, so a TL
- * can flip between "everything in the last 200 events" and "just the
- * D2 verbs" without re-fetching.
+ * Phase D2 — D2.6 (extended in D3.7): filter chips for D2 + D3 + the
+ * follow-up verbs. Selecting a chip narrows the local view to rows
+ * whose `action` matches; the API itself still returns the full
+ * stream — this is a client-side filter intentionally, so a TL can
+ * flip between "everything in the last 200 events" and "just the
+ * rotation verbs" without re-fetching.
+ *
+ * D3.7 added the rotation / review / SLA-review-pending verbs
+ * (rotation, escalation policy, and lead-review queue) plus the
+ * follow-up lifecycle verbs (`followup.create / .complete / .snooze
+ * / .delete`). The actual followup audit names live in
+ * `apps/api/src/follow-ups/follow-ups.service.ts`.
  */
-const D2_AUDIT_ACTIONS = [
+const FILTER_AUDIT_ACTIONS = [
+  // D2 — duplicates / reactivation / WhatsApp review
   'lead.duplicate_decision',
   'lead.reactivated',
   'tenant.duplicate_rules.update',
   'whatsapp.review.resolved',
+  // D3 — rotation / SLA review / Lead Review Queue / escalation policy
+  'lead.rotated',
+  'lead.review.raised',
+  'lead.review.resolved',
+  'lead.sla.review_pending',
+  'tenant.escalation_rules.update',
+  // Follow-ups (housekeeping)
+  'followup.create',
+  'followup.complete',
+  'followup.snooze',
+  'followup.delete',
 ] as const;
-type D2AuditAction = (typeof D2_AUDIT_ACTIONS)[number];
+type FilterAuditAction = (typeof FILTER_AUDIT_ACTIONS)[number];
 
 /**
  * /admin/audit (C40) — unified audit stream.
@@ -63,9 +80,10 @@ export default function AdminAuditPage(): JSX.Element {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  // Phase D2 — D2.6: chip-based filter for the D2 audit verbs. `null`
-  // disables the filter; a chip code shows only rows of that action.
-  const [actionFilter, setActionFilter] = useState<D2AuditAction | null>(null);
+  // Phase D2 — D2.6 (extended in D3.7): chip-based filter for D2/D3
+  // / follow-up audit verbs. `null` disables the filter; a chip code
+  // shows only rows of that action.
+  const [actionFilter, setActionFilter] = useState<FilterAuditAction | null>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -122,8 +140,10 @@ export default function AdminAuditPage(): JSX.Element {
         </Notice>
       ) : null}
 
-      {/* Phase D2 — D2.6: chip filter for D2 audit verbs. The chip is
-          a toggle; clicking the active one clears the filter. */}
+      {/* Phase D2 — D2.6 (extended D3.7): chip filter for D2/D3 +
+          follow-up audit verbs. The chip is a toggle; clicking the
+          active one clears the filter. RTL-clean — `flex-wrap`
+          rows + `gap-2` flow correctly mirrored. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-ink-tertiary">{t('filterLabel')}</span>
         <button
@@ -138,7 +158,7 @@ export default function AdminAuditPage(): JSX.Element {
         >
           {t('chips.all')}
         </button>
-        {D2_AUDIT_ACTIONS.map((code) => (
+        {FILTER_AUDIT_ACTIONS.map((code) => (
           <button
             key={code}
             type="button"

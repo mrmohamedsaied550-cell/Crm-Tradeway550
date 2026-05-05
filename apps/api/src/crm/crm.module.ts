@@ -20,6 +20,8 @@ import { RotationService } from './rotation.service';
 import { EscalationPolicyService } from './escalation-policy.service';
 import { LeadReviewService } from './lead-review.service';
 import { LeadReviewsController } from './lead-reviews.controller';
+import { AgentWorkspaceService } from './agent-workspace.service';
+import { AgentWorkspaceController } from './agent-workspace.controller';
 
 /**
  * CRM Core module (C10 + C11 + C18 + C29 + P2-07).
@@ -39,6 +41,7 @@ import { LeadReviewsController } from './lead-reviews.controller';
     LostReasonsController,
     PipelinesController,
     LeadReviewsController,
+    AgentWorkspaceController,
   ],
   providers: [
     LeadsService,
@@ -56,6 +59,7 @@ import { LeadReviewsController } from './lead-reviews.controller';
     RotationService,
     EscalationPolicyService,
     LeadReviewService,
+    AgentWorkspaceService,
   ],
   exports: [
     LeadsService,
@@ -73,6 +77,7 @@ import { LeadReviewsController } from './lead-reviews.controller';
     RotationService,
     EscalationPolicyService,
     LeadReviewService,
+    AgentWorkspaceService,
   ],
 })
 export class CrmModule {}
