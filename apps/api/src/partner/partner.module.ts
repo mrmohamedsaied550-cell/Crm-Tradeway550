@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { RbacModule } from '../rbac/rbac.module';
 import { TenantsModule } from '../tenants/tenants.module';
 import { GoogleSheetsAdapter } from './adapters/google-sheets-adapter';
 import { ManualUploadAdapter } from './adapters/manual-upload-adapter';
@@ -12,6 +13,8 @@ import { PartnerSourcesController } from './partner-sources.controller';
 import { PartnerSourcesService } from './partner-sources.service';
 import { PartnerSyncSchedulerService } from './partner-sync.scheduler';
 import { PartnerSyncService } from './partner-sync.service';
+import { PartnerVerificationController } from './partner-verification.controller';
+import { PartnerVerificationService } from './partner-verification.service';
 
 /**
  * Phase D4 — D4.2 → D4.3: Partner Data Hub module.
@@ -32,14 +35,20 @@ import { PartnerSyncService } from './partner-sync.service';
  * normalisation) is available without a circular dep.
  */
 @Module({
-  imports: [TenantsModule],
-  controllers: [PartnerSourcesController, PartnerMappingsController, PartnerSnapshotsController],
+  imports: [TenantsModule, RbacModule],
+  controllers: [
+    PartnerSourcesController,
+    PartnerMappingsController,
+    PartnerSnapshotsController,
+    PartnerVerificationController,
+  ],
   providers: [
     PartnerSourcesService,
     PartnerMappingsService,
     PartnerSnapshotsService,
     PartnerSyncService,
     PartnerSyncSchedulerService,
+    PartnerVerificationService,
     PartnerCredentialsCryptoService,
     GoogleSheetsAdapter,
     ManualUploadAdapter,
@@ -49,6 +58,7 @@ import { PartnerSyncService } from './partner-sync.service';
     PartnerMappingsService,
     PartnerSnapshotsService,
     PartnerSyncService,
+    PartnerVerificationService,
     PartnerCredentialsCryptoService,
   ],
 })

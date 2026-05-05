@@ -67,6 +67,7 @@ import type {
   PartnerSnapshotsListResponse,
   PartnerSnapshotRecordsResponse,
   PartnerSyncRunResult,
+  PartnerVerificationResult,
   PartnerMappingRow,
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
@@ -1633,6 +1634,27 @@ export const partnerSourcesApi = {
       method: 'POST',
       body: { csv },
     }),
+};
+
+/**
+ * Phase D4 — D4.4: PartnerVerification read-only client.
+ *
+ * Returns the projection per active partner source visible to the
+ * caller. `explicitCheck=true` audits the read as a deliberate
+ * "Check now" action; default page-load reads do NOT audit.
+ */
+export const partnerVerificationApi = {
+  forLead: (
+    leadId: string,
+    opts: { partnerSourceId?: string; explicitCheck?: boolean } = {},
+  ): Promise<PartnerVerificationResult> => {
+    const query: Record<string, string> = {};
+    if (opts.partnerSourceId) query['partnerSourceId'] = opts.partnerSourceId;
+    if (opts.explicitCheck) query['explicitCheck'] = '1';
+    return apiFetch<PartnerVerificationResult>(`/partner-verification/leads/${leadId}`, {
+      query,
+    });
+  },
 };
 
 /**

@@ -236,6 +236,24 @@ export class PartnerSyncService {
       opts.actorUserId ?? null,
     );
 
+    // D4.4 — best-effort verification-cache writer. Walks the
+    // snapshot's matched records and refreshes
+    // `lead.partner_verification_cache` so the lead-detail card
+    // and the future lead-list partner column don't have to
+    // re-aggregate at read time. Failures here are LOGGED but
+    // never bubble up — the snapshot itself is the source of
+    // truth and the read-time projection in
+    // `PartnerVerificationService` already works without a cache.
+    if (finalStatus !== 'failed') {
+      try {
+        await this.updateVerificationCache(tenantId, partnerSourceId, acquired.snapshotId);
+      } catch (err) {
+        this.logger.warn(
+          `partner-source ${partnerSourceId} cache update failed: ${(err as Error).name}`,
+        );
+      }
+    }
+
     return {
       wasSkipped: false,
       snapshotId: acquired.snapshotId,
@@ -246,6 +264,94 @@ export class PartnerSyncService {
       errors: summary.errors,
       resolvedTabName,
     };
+  }
+
+  /**
+   * D4.4 — verification cache writer.
+   *
+   * For every record in the snapshot that resolved to a Contact,
+   * find every lead linked to that contact in the tenant and merge
+   * the latest projection into `Lead.partner_verification_cache`
+   * keyed by `partnerSourceId`. The shape matches D4.1's reserved
+   * JSONB:
+   *   {
+   *     "<partnerSourceId>": {
+   *       "found": true,
+   *       "partnerStatus": …,
+   *       "partnerActiveDate": …,
+   *       "partnerDftDate": …,
+   *       "tripCount": …,
+   *       "lastTripAt": …,
+   *       "lastSyncAt": …
+   *     }
+   *   }
+   *
+   * Best-effort: each lead is updated independently inside its own
+   * tenant transaction so a single corrupted JSON cell never
+   * blocks the rest. Multiple snapshots can race the same cell;
+   * we use a read-merge-write pattern under `withTenant` which is
+   * safe because RLS plus the per-snapshot run-lock guarantee no
+   * other sync run targets the same source concurrently.
+   */
+  private async updateVerificationCache(
+    tenantId: string,
+    partnerSourceId: string,
+    snapshotId: string,
+  ): Promise<void> {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      const source = await tx.partnerSource.findUnique({
+        where: { id: partnerSourceId },
+        select: { lastSyncAt: true },
+      });
+      const lastSyncAt = source?.lastSyncAt ?? new Date();
+      const records = await tx.partnerRecord.findMany({
+        where: {
+          tenantId,
+          partnerSourceId,
+          snapshotId,
+          contactId: { not: null },
+        },
+        select: {
+          contactId: true,
+          partnerStatus: true,
+          partnerActiveDate: true,
+          partnerDftDate: true,
+          tripCount: true,
+          lastTripAt: true,
+        },
+      });
+      for (const r of records) {
+        if (!r.contactId) continue;
+        const leads = await tx.lead.findMany({
+          where: { tenantId, contactId: r.contactId },
+          select: { id: true, partnerVerificationCache: true },
+        });
+        for (const lead of leads) {
+          const current =
+            lead.partnerVerificationCache &&
+            typeof lead.partnerVerificationCache === 'object' &&
+            !Array.isArray(lead.partnerVerificationCache)
+              ? (lead.partnerVerificationCache as Record<string, unknown>)
+              : {};
+          const merged = {
+            ...current,
+            [partnerSourceId]: {
+              found: true,
+              partnerStatus: r.partnerStatus ?? null,
+              partnerActiveDate: r.partnerActiveDate ? r.partnerActiveDate.toISOString() : null,
+              partnerDftDate: r.partnerDftDate ? r.partnerDftDate.toISOString() : null,
+              tripCount: r.tripCount ?? null,
+              lastTripAt: r.lastTripAt ? r.lastTripAt.toISOString() : null,
+              lastSyncAt: lastSyncAt.toISOString(),
+            },
+          };
+          await tx.lead.update({
+            where: { id: lead.id },
+            data: { partnerVerificationCache: merged as unknown as Prisma.InputJsonValue },
+          });
+        }
+      }
+    });
   }
 
   // ─── adapter wiring ───────────────────────────────────────────

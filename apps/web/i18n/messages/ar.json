@@ -2176,6 +2176,43 @@
         "manual_upload": "رفع يدوي",
         "cron": "مجدول"
       }
+    },
+    "partnerData": {
+      "title": "بيانات الشريك",
+      "checkNow": "تحقّق الآن",
+      "loading": "جارٍ تحميل بيانات الشريك…",
+      "featureDisabled": "مركز بيانات الشركاء معطّل في هذه البيئة.",
+      "noPartnerData": "لا توجد بيانات شريك لهذا الليد حتى الآن.",
+      "neverSynced": "لم تتم مزامنة مصدر الشريك بعد.",
+      "lastSync": "آخر مزامنة",
+      "foundBadge": "موجود",
+      "notFoundBadge": "غير موجود",
+      "notFoundBody": "لا يظهر هذا الكونتاكت في آخر بيانات الشريك.",
+      "warningsHeader": "تنبيهات على بيانات الشريك",
+      "fields": {
+        "partnerStatus": "حالة الشريك",
+        "partnerActiveDate": "تاريخ التفعيل عند الشريك",
+        "partnerDftDate": "تاريخ DFT عند الشريك",
+        "tripCount": "عدد الرحلات",
+        "lastTripAt": "آخر رحلة"
+      },
+      "status": {
+        "matched": "مطابق للنظام",
+        "not_found": "غير موجود عند الشريك",
+        "crm_active_partner_missing": "النظام يقول مفعّل، الشريك لا يعرفه",
+        "partner_active_crm_not_active": "الشريك يقول مفعّل، النظام لا يقول",
+        "date_mismatch": "تاريخ التفعيل مختلف",
+        "dft_mismatch": "تاريخ DFT مختلف",
+        "trips_mismatch": "عدد الرحلات مختلف"
+      },
+      "warnings": {
+        "date_mismatch": "تاريخ التفعيل عند الشريك مختلف عن النظام.",
+        "dft_mismatch": "تاريخ DFT عند الشريك مختلف عن النظام.",
+        "trips_mismatch": "عدد رحلات الشريك مختلف عن سجل النظام.",
+        "partner_has_active_date_crm_missing": "الشريك يحمل تاريخ تفعيل والنظام لا يحمله.",
+        "partner_has_dft_date_crm_missing": "الشريك يحمل تاريخ DFT والنظام لا يحمله.",
+        "partner_active_crm_no_captain_yet": "الشريك يقول مفعّل ولكن الليد لم يُحوَّل لكابتن بعد."
+      }
     }
   },
   "agent": {

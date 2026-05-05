@@ -32,6 +32,7 @@ import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ReactivateLeadModal } from '@/components/admin/reactivate-lead-modal';
 import { RotateLeadModal } from '@/components/admin/rotate-lead-modal';
+import { PartnerDataCard } from '@/components/admin/lead-detail/partner-data-card';
 import { RotationHistoryCard } from '@/components/admin/lead-detail/rotation-history-card';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { AttemptsHistoryCard } from '@/components/admin/lead-detail/attempts-history-card';
@@ -900,6 +901,13 @@ export default function LeadDetailPage(): JSX.Element {
               single neutral chip ("Handled previously") instead of
               the full from/to chain. */}
           <RotationHistoryCard leadId={lead.id} />
+
+          {/* Phase D4 — D4.4: read-only Partner Data card. The
+              component returns `null` for callers without
+              `partner.verification.read` (sales agents in D4.4),
+              so the section is invisible to them. TLs / Ops /
+              Account Manager / Super Admin see the projection. */}
+          <PartnerDataCard leadId={lead.id} />
 
           {/* Captain card — only when converted */}
           {isConverted ? (

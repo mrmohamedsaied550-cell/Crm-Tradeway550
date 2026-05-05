@@ -2176,6 +2176,43 @@
         "manual_upload": "Manual upload",
         "cron": "Scheduled"
       }
+    },
+    "partnerData": {
+      "title": "Partner Data",
+      "checkNow": "Check now",
+      "loading": "Loading partner verification…",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "noPartnerData": "No partner data found for this lead yet.",
+      "neverSynced": "This partner source has not synced yet.",
+      "lastSync": "Last sync",
+      "foundBadge": "Found",
+      "notFoundBadge": "Not found",
+      "notFoundBody": "This contact does not appear in the latest partner snapshot.",
+      "warningsHeader": "Partner data flags",
+      "fields": {
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "tripCount": "Trips count",
+        "lastTripAt": "Last trip"
+      },
+      "status": {
+        "matched": "Matches CRM",
+        "not_found": "Not in partner",
+        "crm_active_partner_missing": "CRM active, partner missing",
+        "partner_active_crm_not_active": "Partner active, CRM not active",
+        "date_mismatch": "Active date mismatch",
+        "dft_mismatch": "DFT date mismatch",
+        "trips_mismatch": "Trips mismatch"
+      },
+      "warnings": {
+        "date_mismatch": "Active date differs from CRM.",
+        "dft_mismatch": "DFT date differs from CRM.",
+        "trips_mismatch": "Partner trip count differs from CRM ledger.",
+        "partner_has_active_date_crm_missing": "Partner has an active date but CRM has none.",
+        "partner_has_dft_date_crm_missing": "Partner has a DFT date but CRM has none.",
+        "partner_active_crm_no_captain_yet": "Partner says active but the lead has not been converted yet."
+      }
     }
   },
   "agent": {

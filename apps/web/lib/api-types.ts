@@ -1345,3 +1345,38 @@ export interface PartnerConnectionTestResult {
   message: string;
   tabs?: Array<{ name: string; modifiedAt: string | null }>;
 }
+
+/**
+ * Phase D4 — D4.4: per-source verification projection.
+ */
+export type PartnerVerificationStatus =
+  | 'not_found'
+  | 'matched'
+  | 'crm_active_partner_missing'
+  | 'partner_active_crm_not_active'
+  | 'date_mismatch'
+  | 'dft_mismatch'
+  | 'trips_mismatch';
+
+export interface PartnerVerificationProjection {
+  partnerSourceId: string;
+  partnerSourceName: string;
+  partnerCode: string;
+  lastSyncAt: string | null;
+  snapshotId: string | null;
+  recordId: string | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  tripCount: number | null;
+  lastTripAt: string | null;
+  verificationStatus: PartnerVerificationStatus;
+  warnings: string[];
+}
+
+export interface PartnerVerificationResult {
+  leadId: string;
+  phone: string | null;
+  hasCaptain: boolean;
+  projections: PartnerVerificationProjection[];
+}
