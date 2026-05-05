@@ -17,6 +17,7 @@ import { SlaSchedulerService } from './sla.scheduler';
 import { SlaThresholdsService } from './sla-thresholds.service';
 import { LeadStageStatusService } from './lead-stage-status.service';
 import { RotationService } from './rotation.service';
+import { EscalationPolicyService } from './escalation-policy.service';
 
 /**
  * CRM Core module (C10 + C11 + C18 + C29 + P2-07).
@@ -50,6 +51,7 @@ import { RotationService } from './rotation.service';
     SlaThresholdsService,
     LeadStageStatusService,
     RotationService,
+    EscalationPolicyService,
   ],
   exports: [
     LeadsService,
@@ -65,6 +67,7 @@ import { RotationService } from './rotation.service';
     SlaThresholdsService,
     LeadStageStatusService,
     RotationService,
+    EscalationPolicyService,
   ],
 })
 export class CrmModule {}

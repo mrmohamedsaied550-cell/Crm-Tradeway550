@@ -2021,6 +2021,26 @@ model TenantSettings {
   /// NULL on UPDATE; no behavior change.
   duplicateRules    Json?    @map("duplicate_rules")
 
+  /// Phase D3 — D3.5: per-tenant SLA escalation policy (JSONB seam).
+  /// Shape:
+  /// {
+  ///   "thresholds": {
+  ///     "t75":  { "action": "notify_only" },
+  ///     "t100": { "action": "notify_and_tag" },
+  ///     "t150": {
+  ///       "action": "rotate_or_review",
+  ///       "rotateOnFirst": true,
+  ///       "reviewOnRepeatWithinHours": 24
+  ///     },
+  ///     "t200": { "action": "raise_review" }
+  ///   },
+  ///   "defaultHandoverMode": "full"
+  /// }
+  /// NULL = use the locked product defaults (DEFAULT_ESCALATION_RULES
+  /// in escalation-rules.dto.ts). No admin UI ships in D3.5 — the
+  /// column is service-only until D3.7 polish adds the editor panel.
+  escalationRules   Json?    @map("escalation_rules")
+
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
