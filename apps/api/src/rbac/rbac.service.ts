@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 import type { CapabilityCode } from './capabilities.registry';
+import { PermissionCacheService } from './permission-cache.service';
 import { ROLE_DEFINITIONS, type RoleCode, ALL_ROLE_CODES } from './roles.registry';
 import type {
   CreateRoleDto,
@@ -95,6 +96,15 @@ export class RbacService {
      * dependency is missing.
      */
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D5 — D5.1: permission cache invalidator. @Optional so
+     * existing test fixtures (which build RbacService directly)
+     * keep compiling without wiring it. When provided, every
+     * mutation that affects a role's resolved permissions calls
+     * `permissionCache.invalidateRole(...)` so the next
+     * resolver lookup sees fresh data.
+     */
+    @Optional() private readonly permissionCache?: PermissionCacheService,
   ) {}
 
   /**
@@ -442,6 +452,10 @@ export class RbacService {
           },
         },
       });
+      // Phase D5 — D5.1: invalidate the resolver cache for this role
+      // so the next request sees the new bundle. Safe no-op when the
+      // cache provider isn't wired (older test fixtures).
+      this.permissionCache?.invalidateRole(id, tenantId);
       return this.shapeRole(reloaded!);
     });
   }
@@ -490,6 +504,11 @@ export class RbacService {
         actorUserId,
         payload: { code: role.code },
       });
+      // Phase D5 — D5.1: drop any cached resolutions for the deleted
+      // role. New entries can't be written for it (the resolver's
+      // zero-bundle path skips caching) but lingering hits would
+      // serve stale capabilities.
+      this.permissionCache?.invalidateRole(id, tenantId);
     });
   }
 
@@ -694,6 +713,9 @@ export class RbacService {
         where: { roleId: id },
         select: { resource: true, scope: true },
       });
+      // Phase D5 — D5.1: scope changes invalidate every cached
+      // resolution for this role.
+      this.permissionCache?.invalidateRole(id, tenantId);
       return after.map((r) => ({
         resource: r.resource as RoleScopeResource,
         scope: r.scope as RoleScopeValue,
@@ -769,6 +791,10 @@ export class RbacService {
           afterCount: dto.permissions.length,
         },
       });
+
+      // Phase D5 — D5.1: field-permission changes invalidate every
+      // cached resolution for this role.
+      this.permissionCache?.invalidateRole(id, tenantId);
 
       return dto.permissions.map((p) => ({
         resource: p.resource,

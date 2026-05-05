@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionCacheService } from '../rbac/permission-cache.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 export interface CompanyAssignmentRow {
@@ -60,6 +61,12 @@ export class UserScopeAssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    /**
+     * Phase D5 — D5.1: optional permission-cache invalidator.
+     * @Optional so existing tests build without wiring the RBAC
+     * module. Active in production wiring.
+     */
+    @Optional() private readonly permissionCache?: PermissionCacheService,
   ) {}
 
   /** Read the current assignments for a user, joined to the entity rows. */
@@ -255,6 +262,10 @@ export class UserScopeAssignmentsService {
       }
       companies.sort((a, b) => a.name.localeCompare(b.name));
       countries.sort((a, b) => a.name.localeCompare(b.name));
+      // Phase D5 — D5.1: company/country assignments feed the
+      // PermissionResolverService.userScopes block. Invalidate so
+      // the user's next request sees the new set.
+      this.permissionCache?.invalidateUser(userId, tenantId);
       return { companies, countries };
     });
   }
