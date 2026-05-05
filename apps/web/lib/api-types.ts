@@ -1380,3 +1380,42 @@ export interface PartnerVerificationResult {
   hasCaptain: boolean;
   projections: PartnerVerificationProjection[];
 }
+
+/**
+ * Phase D4 — D4.5: controlled-merge shapes.
+ */
+export type PartnerMergeableField = 'active_date' | 'dft_date';
+
+export interface PartnerMergeRequest {
+  partnerSourceId: string;
+  fields: PartnerMergeableField[];
+  evidenceNote?: string;
+}
+
+export interface PartnerMergeResult {
+  leadId: string;
+  captainId: string;
+  partnerSourceId: string;
+  partnerSnapshotId: string;
+  partnerRecordId: string;
+  evidenceId: string;
+  activityId: string;
+  changedFields: PartnerMergeableField[];
+  before: Record<string, string | null>;
+  after: Record<string, string | null>;
+}
+
+export interface LeadEvidenceRow {
+  id: string;
+  leadId: string;
+  kind: string;
+  partnerRecordId: string | null;
+  partnerSnapshotId: string | null;
+  storageRef: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  notes: string | null;
+  capturedBy: { id: string; name: string } | null;
+  createdAt: string;
+}

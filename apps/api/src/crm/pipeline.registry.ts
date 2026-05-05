@@ -97,6 +97,13 @@ export const ACTIVITY_TYPES = [
   // own activity feed. Inert when `D3_ENGINE_V1` resolves false.
   'lead_review_raised',
   'lead_review_resolved',
+  // Phase D4 — D4.5: emitted by PartnerMergeService.mergeFields —
+  // once per controlled merge action. The dedicated audit verb
+  // `partner.merge.applied` carries the dashboard-friendly handle
+  // with structured before/after; this timeline entry surfaces
+  // the same event on the lead's own activity feed in friendly
+  // copy. Inert when `D4_PARTNER_HUB_V1` resolves false.
+  'partner_merge',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

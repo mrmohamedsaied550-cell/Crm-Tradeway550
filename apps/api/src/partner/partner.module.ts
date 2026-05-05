@@ -7,6 +7,7 @@ import { ManualUploadAdapter } from './adapters/manual-upload-adapter';
 import { PartnerCredentialsCryptoService } from './partner-credentials-crypto.service';
 import { PartnerMappingsController } from './partner-mappings.controller';
 import { PartnerMappingsService } from './partner-mappings.service';
+import { PartnerMergeService } from './partner-merge.service';
 import { PartnerSnapshotsController } from './partner-snapshots.controller';
 import { PartnerSnapshotsService } from './partner-snapshots.service';
 import { PartnerSourcesController } from './partner-sources.controller';
@@ -49,6 +50,7 @@ import { PartnerVerificationService } from './partner-verification.service';
     PartnerSyncService,
     PartnerSyncSchedulerService,
     PartnerVerificationService,
+    PartnerMergeService,
     PartnerCredentialsCryptoService,
     GoogleSheetsAdapter,
     ManualUploadAdapter,
@@ -59,6 +61,7 @@ import { PartnerVerificationService } from './partner-verification.service';
     PartnerSnapshotsService,
     PartnerSyncService,
     PartnerVerificationService,
+    PartnerMergeService,
     PartnerCredentialsCryptoService,
   ],
 })

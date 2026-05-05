@@ -68,6 +68,9 @@ import type {
   PartnerSnapshotRecordsResponse,
   PartnerSyncRunResult,
   PartnerVerificationResult,
+  PartnerMergeRequest,
+  PartnerMergeResult,
+  LeadEvidenceRow,
   PartnerMappingRow,
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
@@ -1655,6 +1658,16 @@ export const partnerVerificationApi = {
       query,
     });
   },
+  /** D4.5 — controlled merge of selected partner fields into the
+   *  lead's captain. Capability: `partner.merge.write`. */
+  merge: (leadId: string, body: PartnerMergeRequest): Promise<PartnerMergeResult> =>
+    apiFetch<PartnerMergeResult>(`/partner-verification/leads/${leadId}/merge`, {
+      method: 'POST',
+      body,
+    }),
+  /** D4.5 — list partner evidence rows on a lead. */
+  evidence: (leadId: string): Promise<LeadEvidenceRow[]> =>
+    apiFetch<LeadEvidenceRow[]>(`/partner-verification/leads/${leadId}/evidence`),
 };
 
 /**

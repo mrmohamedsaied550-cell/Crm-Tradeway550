@@ -1,13 +1,19 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { createZodDto } from 'nestjs-zod';
+import { z } from 'zod';
 
 import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
@@ -17,27 +23,48 @@ import { RequireCapability } from '../rbac/require-capability.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { isD4PartnerHubV1Enabled } from './d4-feature-flag';
+import { PartnerMergeService } from './partner-merge.service';
 import { PartnerVerificationService } from './partner-verification.service';
 
 /**
- * Phase D4 — D4.4: PartnerVerification read-only surface.
+ * D4.5 — Zod schema for the merge body. Closed list of mergeable
+ * fields enforced at the parser boundary; `evidenceNote` capped at
+ * 1 KB matching the LeadReview notes pattern.
+ */
+const MergePartnerFieldsSchema = z
+  .object({
+    partnerSourceId: z.string().uuid(),
+    fields: z
+      .array(z.enum(['active_date', 'dft_date']))
+      .min(1)
+      .max(2),
+    evidenceNote: z.string().trim().max(1000).optional(),
+  })
+  .strict();
+class MergePartnerFieldsDto extends createZodDto(MergePartnerFieldsSchema) {}
+
+/**
+ * Phase D4 — D4.4 → D4.5: PartnerVerification surface.
  *
- *   GET /partner-verification/leads/:leadId
- *     ?partnerSourceId  — narrow to one source (optional).
- *     ?explicitCheck=1  — operator-initiated "Check now" action.
- *                          Adds a `partner.verification.checked`
- *                          audit row. Default page-load reads
- *                          DON'T audit (would be too chatty).
+ *   GET  /partner-verification/leads/:leadId
+ *   GET  /partner-verification/leads/:leadId/evidence
+ *   POST /partner-verification/leads/:leadId/merge
  *
- * Capability: `partner.verification.read`. Sales / activation /
- * driving agents do NOT hold this in D4.4 (intentional conservative
- * default — D4.4 plan §7). TLs / Ops / AM / Super Admin can read.
+ * Read endpoints behind `partner.verification.read`; merge behind
+ * `partner.merge.write`. Sales / activation / driving agents hold
+ * NEITHER capability in this build (D4.4 conservative default).
+ *
+ * Feature-flag gate is the same `partner.feature.disabled` shape
+ * the rest of the partner surface uses.
  */
 @ApiTags('partner')
 @Controller('partner-verification')
 @UseGuards(JwtAuthGuard, CapabilityGuard)
 export class PartnerVerificationController {
-  constructor(private readonly verification: PartnerVerificationService) {}
+  constructor(
+    private readonly verification: PartnerVerificationService,
+    private readonly merge: PartnerMergeService,
+  ) {}
 
   @Get('leads/:leadId')
   @RequireCapability('partner.verification.read')
@@ -49,17 +76,61 @@ export class PartnerVerificationController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     this.assertEnabled();
-    const claims: ScopeUserClaims = {
-      userId: user.sub,
-      tenantId: user.tid,
-      roleId: user.rid,
-    };
+    const claims = this.toClaims(user);
     return this.verification.getForLead(leadId, claims, {
       ...(partnerSourceId && { partnerSourceId }),
       explicitCheck: explicitCheck === '1' || explicitCheck === 'true',
       actorUserId: user.sub,
     });
   }
+
+  /**
+   * D4.5 — list partner-related evidence rows on a lead. Surfaces
+   * what merges / screenshots / notes are attached. Capability is
+   * `partner.verification.read` so a TL inspecting a lead can see
+   * the evidence chain even if they don't hold the merge cap.
+   */
+  @Get('leads/:leadId/evidence')
+  @RequireCapability('partner.verification.read')
+  @ApiOperation({ summary: 'List partner-related evidence rows attached to a lead' })
+  evidence(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    this.assertEnabled();
+    return this.merge.listEvidenceForLead(leadId, this.toClaims(user));
+  }
+
+  /**
+   * D4.5 — controlled merge. The body whitelist is enforced by the
+   * Zod parser AND the service layer. One tx writes the captain
+   * update + LeadEvidence + LeadActivity('partner_merge') + audit
+   * row. NEVER touches `Captain.tripCount` or `CaptainTrip`.
+   */
+  @Post('leads/:leadId/merge')
+  @RequireCapability('partner.merge.write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      "Apply selected partner fields to the lead's captain (controlled merge with evidence + audit)",
+  })
+  mergePartner(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @Body() body: MergePartnerFieldsDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    this.assertEnabled();
+    return this.merge.mergeFields({
+      leadId,
+      partnerSourceId: body.partnerSourceId,
+      fields: body.fields,
+      ...(body.evidenceNote && { evidenceNote: body.evidenceNote }),
+      actorUserId: user.sub,
+      userClaims: this.toClaims(user),
+    });
+  }
+
+  // ─── helpers ──────────────────────────────────────────────────
 
   private assertEnabled(): void {
     if (!isD4PartnerHubV1Enabled()) {
@@ -68,5 +139,9 @@ export class PartnerVerificationController {
         message: 'Partner Data Hub is disabled in this environment.',
       });
     }
+  }
+
+  private toClaims(user: AccessTokenClaims): ScopeUserClaims {
+    return { userId: user.sub, tenantId: user.tid, roleId: user.rid };
   }
 }

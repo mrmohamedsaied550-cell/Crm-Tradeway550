@@ -2212,6 +2212,41 @@
         "partner_has_active_date_crm_missing": "Partner has an active date but CRM has none.",
         "partner_has_dft_date_crm_missing": "Partner has a DFT date but CRM has none.",
         "partner_active_crm_no_captain_yet": "Partner says active but the lead has not been converted yet."
+      },
+      "merge": {
+        "useCta": {
+          "active_date": "Use partner active date",
+          "dft_date": "Use partner DFT date"
+        },
+        "noCaptainHint": "Convert the lead to a captain before merging partner dates.",
+        "confirmTitle": "Apply partner field to CRM",
+        "confirmCta": "Apply merge",
+        "confirmWarning": "This will update the selected captain field and write an audit record. Action cannot be undone automatically.",
+        "confirmBody": {
+          "active_date": "Replace the captain's active date with the partner's value?",
+          "dft_date": "Replace the captain's DFT date with the partner's value?"
+        },
+        "partnerSourceLabel": "Partner source",
+        "snapshotTimeLabel": "Snapshot time",
+        "partnerValueLabel": "Partner value",
+        "crmValueLabel": "Current CRM value",
+        "crmValueHint": "See the lead detail above for current CRM values.",
+        "noteLabel": "Evidence note (optional)",
+        "noteHelper": "A short note about why you trust this partner value. Visible in the audit trail.",
+        "notePlaceholder": "Verified against partner snapshot screenshot dated …",
+        "toast": {
+          "active_date": "Active date updated from partner.",
+          "dft_date": "DFT date updated from partner."
+        },
+        "errors": {
+          "no_captain": "Convert the lead to a captain before merging partner dates.",
+          "no_record": "No partner record matches this lead in the selected source.",
+          "field_not_mergeable": "This field is not mergeable.",
+          "field_missing_in_partner": "Partner snapshot does not have a value for this field.",
+          "value_unchanged": "Partner value already matches CRM; nothing to merge.",
+          "snapshot_stale": "Partner snapshot is too old. Sync the source again before merging.",
+          "feature_disabled": "Partner Data Hub is disabled in this environment."
+        }
       }
     }
   },

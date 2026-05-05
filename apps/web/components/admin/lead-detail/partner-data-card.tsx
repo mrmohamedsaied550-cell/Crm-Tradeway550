@@ -9,15 +9,20 @@ import {
   Loader2,
   Phone,
   RefreshCw,
+  Save,
   ShieldQuestion,
   XCircle,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Field as InputField, Textarea } from '@/components/ui/input';
+import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, partnerVerificationApi } from '@/lib/api';
 import type {
+  PartnerMergeableField,
   PartnerVerificationProjection,
   PartnerVerificationResult,
   PartnerVerificationStatus,
@@ -26,29 +31,33 @@ import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
 /**
- * Phase D4 — D4.4: Partner Data Card on lead detail.
+ * Phase D4 — D4.4 → D4.5: Partner Data Card on lead detail.
  *
- * Read-only verification surface. Mounted on `/admin/leads/[id]`
- * by the lead detail page. Sales / activation / driving agents
- * fail the `partner.verification.read` capability gate and the
- * card hides itself entirely (returns null) — same pattern as
- * other capability-gated detail cards.
+ * D4.4 — read-only verification surface.
+ * D4.5 — adds per-field "Use partner …" merge buttons gated on
+ * `partner.merge.write`. Buttons appear only when:
+ *   • the lead has a captain (otherwise we surface a friendly hint
+ *     pointing the operator at the conversion flow),
+ *   • the partner record exists with a non-null value for the
+ *     selected field,
+ *   • the merge result wouldn't be a no-op (we still let the
+ *     server make the final call — the button is just a UX hint).
  *
- * No merge actions, no "Use this date" buttons, no
- * source-config link, no raw row payload. Multi-source: one tab
- * per matching partner source; default to the most-recently-
- * synced source.
- *
- * The "Check now" button re-fetches the projection AND audits
- * the read as `partner.verification.checked`. Page-load reads
- * never audit.
+ * No merge runs without a confirmation modal showing CRM value vs
+ * partner value, source, snapshot time, and an optional evidence
+ * note. The backend audits every merge with structured before /
+ * after.
  */
 export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | null {
   const t = useTranslations('admin.partnerData');
   const tStatus = useTranslations('admin.partnerData.status');
   const tWarn = useTranslations('admin.partnerData.warnings');
+  const tMerge = useTranslations('admin.partnerData.merge');
+  const tCommon = useTranslations('admin.common');
+  const { toast } = useToast();
 
   const canRead = hasCapability('partner.verification.read');
+  const canMerge = hasCapability('partner.merge.write');
 
   const [data, setData] = useState<PartnerVerificationResult | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -56,6 +65,13 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
   const [featureDisabled, setFeatureDisabled] = useState<boolean>(false);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   const [checking, setChecking] = useState<boolean>(false);
+
+  // Merge confirmation modal state.
+  const [mergeOpen, setMergeOpen] = useState<boolean>(false);
+  const [mergeField, setMergeField] = useState<PartnerMergeableField | null>(null);
+  const [mergeNote, setMergeNote] = useState<string>('');
+  const [merging, setMerging] = useState<boolean>(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   const reload = useCallback(
     async (explicitCheck = false): Promise<void> => {
@@ -72,8 +88,6 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
         });
         setData(result);
         setFeatureDisabled(false);
-        // Default tab: source with the most-recent successful sync;
-        // if none, the first source.
         if (result.projections.length > 0) {
           const sorted = [...result.projections].sort((a, b) => {
             const at = a.lastSyncAt ? Date.parse(a.lastSyncAt) : 0;
@@ -104,9 +118,6 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
 
   useEffect(() => {
     void reload(false);
-    // The reload identity changes when activeSourceId flips, but
-    // we don't want a re-fetch on every tab click — we already
-    // have the data for every source in `data.projections`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId, canRead]);
 
@@ -118,8 +129,38 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
     [data, activeSourceId],
   );
 
-  // Hide the card entirely when the user lacks the capability —
-  // sales agents in D4.4 shouldn't even see the section header.
+  function openMerge(field: PartnerMergeableField): void {
+    setMergeField(field);
+    setMergeNote('');
+    setMergeError(null);
+    setMergeOpen(true);
+  }
+
+  async function onConfirmMerge(): Promise<void> {
+    if (!mergeField || !active) return;
+    setMerging(true);
+    setMergeError(null);
+    try {
+      await partnerVerificationApi.merge(leadId, {
+        partnerSourceId: active.partnerSourceId,
+        fields: [mergeField],
+        ...(mergeNote.trim().length > 0 ? { evidenceNote: mergeNote.trim() } : {}),
+      });
+      toast({
+        tone: 'success',
+        title: tMerge(`toast.${mergeField}` as 'toast.active_date'),
+      });
+      setMergeOpen(false);
+      setMergeField(null);
+      setMergeNote('');
+      await reload(false);
+    } catch (err) {
+      setMergeError(err instanceof ApiError ? translateMergeError(err, tMerge) : String(err));
+    } finally {
+      setMerging(false);
+    }
+  }
+
   if (!canRead) return null;
 
   return (
@@ -153,7 +194,6 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
         <p className="text-sm text-ink-tertiary">{t('noPartnerData')}</p>
       ) : (
         <>
-          {/* Multi-source tabs (only when > 1 active source) */}
           {data.projections.length > 1 ? (
             <div className="flex flex-wrap gap-2">
               {data.projections.map((p) => (
@@ -180,11 +220,79 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
               t={t}
               tStatus={tStatus}
               tWarn={tWarn}
+              tMerge={tMerge}
               phone={data.phone}
+              hasCaptain={data.hasCaptain}
+              canMerge={canMerge}
+              onMerge={openMerge}
             />
           ) : null}
         </>
       )}
+
+      {/* Merge confirmation modal */}
+      <Modal
+        open={mergeOpen}
+        title={tMerge('confirmTitle')}
+        onClose={() => (merging ? undefined : setMergeOpen(false))}
+        width="md"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMergeOpen(false)}
+              disabled={merging}
+            >
+              {tCommon('cancel')}
+            </Button>
+            <Button size="sm" onClick={() => void onConfirmMerge()} loading={merging}>
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              {tMerge('confirmCta')}
+            </Button>
+          </>
+        }
+      >
+        {mergeField && active ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-ink-primary">
+              {tMerge(`confirmBody.${mergeField}` as 'confirmBody.active_date')}
+            </p>
+            <div className="flex flex-col gap-2 rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
+              <span className="inline-flex items-center gap-1 font-medium">
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                {tMerge('confirmWarning')}
+              </span>
+            </div>
+            <dl className="grid grid-cols-1 gap-3 rounded-md border border-surface-border bg-surface px-3 py-2 sm:grid-cols-2">
+              <ConfirmField label={tMerge('partnerSourceLabel')} value={active.partnerSourceName} />
+              <ConfirmField
+                label={tMerge('snapshotTimeLabel')}
+                value={active.lastSyncAt ? new Date(active.lastSyncAt).toLocaleString() : null}
+              />
+              <ConfirmField
+                label={tMerge('partnerValueLabel')}
+                value={
+                  mergeField === 'active_date'
+                    ? formatDate(active.partnerActiveDate)
+                    : formatDate(active.partnerDftDate)
+                }
+              />
+              <ConfirmField label={tMerge('crmValueLabel')} value={tMerge('crmValueHint')} muted />
+            </dl>
+            <InputField label={tMerge('noteLabel')} hint={tMerge('noteHelper')}>
+              <Textarea
+                value={mergeNote}
+                onChange={(e) => setMergeNote(e.target.value)}
+                rows={3}
+                maxLength={1000}
+                placeholder={tMerge('notePlaceholder')}
+              />
+            </InputField>
+            {mergeError ? <Notice tone="error">{mergeError}</Notice> : null}
+          </div>
+        ) : null}
+      </Modal>
     </section>
   );
 }
@@ -194,13 +302,21 @@ function SourcePanel({
   t,
   tStatus,
   tWarn,
+  tMerge,
   phone,
+  hasCaptain,
+  canMerge,
+  onMerge,
 }: {
   projection: PartnerVerificationProjection;
   t: ReturnType<typeof useTranslations>;
   tStatus: ReturnType<typeof useTranslations>;
   tWarn: ReturnType<typeof useTranslations>;
+  tMerge: ReturnType<typeof useTranslations>;
   phone: string | null;
+  hasCaptain: boolean;
+  canMerge: boolean;
+  onMerge: (field: PartnerMergeableField) => void;
 }): JSX.Element {
   const found = projection.recordId !== null;
   const neverSynced = projection.lastSyncAt === null;
@@ -245,7 +361,6 @@ function SourcePanel({
         </span>
       </div>
 
-      {/* Phone reminder line — neutral; the join key */}
       {phone ? (
         <p className="inline-flex items-center gap-1 text-xs text-ink-tertiary">
           <Phone className="h-3 w-3" aria-hidden="true" />
@@ -253,28 +368,43 @@ function SourcePanel({
         </p>
       ) : null}
 
-      {/* Field grid — only when found */}
+      {/* Field grid + per-field merge buttons */}
       {found ? (
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={t('fields.partnerStatus')} value={projection.partnerStatus} />
-          <Field
+          <DataField label={t('fields.partnerStatus')} value={projection.partnerStatus} />
+          <DataField
             label={t('fields.partnerActiveDate')}
-            value={
-              projection.partnerActiveDate
-                ? new Date(projection.partnerActiveDate).toLocaleDateString()
-                : null
+            value={formatDate(projection.partnerActiveDate)}
+            action={
+              canMerge && projection.partnerActiveDate ? (
+                <MergeButton
+                  field="active_date"
+                  hasCaptain={hasCaptain}
+                  onClick={onMerge}
+                  tMerge={tMerge}
+                />
+              ) : null
             }
           />
-          <Field
+          <DataField
             label={t('fields.partnerDftDate')}
-            value={
-              projection.partnerDftDate
-                ? new Date(projection.partnerDftDate).toLocaleDateString()
-                : null
+            value={formatDate(projection.partnerDftDate)}
+            action={
+              canMerge && projection.partnerDftDate ? (
+                <MergeButton
+                  field="dft_date"
+                  hasCaptain={hasCaptain}
+                  onClick={onMerge}
+                  tMerge={tMerge}
+                />
+              ) : null
             }
           />
-          <Field label={t('fields.tripCount')} value={projection.tripCount?.toString() ?? null} />
-          <Field
+          <DataField
+            label={t('fields.tripCount')}
+            value={projection.tripCount?.toString() ?? null}
+          />
+          <DataField
             label={t('fields.lastTripAt')}
             value={projection.lastTripAt ? new Date(projection.lastTripAt).toLocaleString() : null}
           />
@@ -282,6 +412,15 @@ function SourcePanel({
       ) : (
         <p className="text-sm text-ink-tertiary">{t('notFoundBody')}</p>
       )}
+
+      {/* Captain-required hint when merge buttons are visible but
+          there's no captain. Plays the role of the inline "Create or
+          link a captain before merging" copy from the spec. */}
+      {canMerge && found && !hasCaptain ? (
+        <p className="rounded-md border border-surface-border bg-surface px-3 py-2 text-xs text-ink-secondary">
+          {tMerge('noCaptainHint')}
+        </p>
+      ) : null}
 
       {/* Warnings */}
       {projection.warnings.length > 0 ? (
@@ -301,14 +440,47 @@ function SourcePanel({
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null }): JSX.Element {
+function DataField({
+  label,
+  value,
+  action,
+}: {
+  label: string;
+  value: string | null;
+  action?: JSX.Element | null;
+}): JSX.Element {
   return (
     <div className="flex flex-col">
       <dt className="text-[11px] uppercase tracking-wide text-ink-tertiary">{label}</dt>
-      <dd className="text-sm text-ink-primary">
-        {value ?? <span className="text-ink-tertiary">—</span>}
+      <dd className="flex flex-wrap items-center justify-between gap-2 text-sm text-ink-primary">
+        <span>{value ?? <span className="text-ink-tertiary">—</span>}</span>
+        {action}
       </dd>
     </div>
+  );
+}
+
+function MergeButton({
+  field,
+  hasCaptain,
+  onClick,
+  tMerge,
+}: {
+  field: PartnerMergeableField;
+  hasCaptain: boolean;
+  onClick: (field: PartnerMergeableField) => void;
+  tMerge: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={() => onClick(field)}
+      disabled={!hasCaptain}
+      title={!hasCaptain ? tMerge('noCaptainHint') : undefined}
+    >
+      {tMerge(`useCta.${field}` as 'useCta.active_date')}
+    </Button>
   );
 }
 
@@ -342,4 +514,41 @@ function VerificationBadge({
       {label}
     </Badge>
   );
+}
+
+function ConfirmField({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: string | null;
+  muted?: boolean;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[11px] uppercase tracking-wide text-ink-tertiary">{label}</dt>
+      <dd className={cn('text-sm', muted ? 'text-ink-tertiary' : 'text-ink-primary')}>
+        {value ?? <span className="text-ink-tertiary">—</span>}
+      </dd>
+    </div>
+  );
+}
+
+function formatDate(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString();
+}
+
+function translateMergeError(err: ApiError, tMerge: ReturnType<typeof useTranslations>): string {
+  const code = err.code ?? '';
+  if (code === 'partner.merge.no_captain') return tMerge('errors.no_captain');
+  if (code === 'partner.merge.no_record') return tMerge('errors.no_record');
+  if (code === 'partner.merge.field_not_mergeable') return tMerge('errors.field_not_mergeable');
+  if (code === 'partner.merge.field_missing_in_partner')
+    return tMerge('errors.field_missing_in_partner');
+  if (code === 'partner.merge.value_unchanged') return tMerge('errors.value_unchanged');
+  if (code === 'partner.merge.snapshot_stale') return tMerge('errors.snapshot_stale');
+  if (code === 'partner.feature.disabled') return tMerge('errors.feature_disabled');
+  return err.message;
 }
