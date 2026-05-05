@@ -1,8 +1,10 @@
 import { Global, Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { RbacService } from './rbac.service';
 import { RbacController } from './rbac.controller';
 import { CapabilityGuard } from './capability.guard';
 import { FieldFilterService } from './field-filter.service';
+import { FieldRedactionInterceptor } from './field-redaction.interceptor';
 import { PermissionCacheService } from './permission-cache.service';
 import { PermissionResolverService } from './permission-resolver.service';
 import { ScopeContextService } from './scope-context.service';
@@ -30,6 +32,13 @@ import { ScopeContextService } from './scope-context.service';
  * interceptor, D5.7 previous-owner field permissions, …) consume
  * the resolver to drive dynamic permissions without rewriting the
  * existing per-request lookups.
+ *
+ * Phase D5 — D5.3: registers `FieldRedactionInterceptor` as a
+ * global APP_INTERCEPTOR. The interceptor is a no-op for every
+ * route that lacks `@ResourceFieldGate(resource)` metadata AND a
+ * no-op when `D5_DYNAMIC_PERMISSIONS_V1=false`. D5.3 only attaches
+ * the decorator to LeadsController.list / findOne; later chunks
+ * extend it.
  */
 @Global()
 @Module({
@@ -41,6 +50,11 @@ import { ScopeContextService } from './scope-context.service';
     FieldFilterService,
     PermissionCacheService,
     PermissionResolverService,
+    FieldRedactionInterceptor,
+    {
+      provide: APP_INTERCEPTOR,
+      useExisting: FieldRedactionInterceptor,
+    },
   ],
   exports: [
     RbacService,
@@ -49,6 +63,7 @@ import { ScopeContextService } from './scope-context.service';
     FieldFilterService,
     PermissionCacheService,
     PermissionResolverService,
+    FieldRedactionInterceptor,
   ],
 })
 export class RbacModule {}
