@@ -1419,3 +1419,57 @@ export interface LeadEvidenceRow {
   capturedBy: { id: string; name: string } | null;
   createdAt: string;
 }
+
+/**
+ * Phase D4 — D4.6: partner reconciliation shapes.
+ */
+export type ReconciliationCategory =
+  | 'partner_missing'
+  | 'partner_active_not_in_crm'
+  | 'partner_date_mismatch'
+  | 'partner_dft_mismatch'
+  | 'partner_trips_mismatch';
+
+export type ReconciliationSeverity = 'info' | 'warning';
+
+export interface ReconciliationItem {
+  category: ReconciliationCategory;
+  partnerSourceId: string;
+  partnerSourceName: string;
+  leadId: string | null;
+  captainId: string | null;
+  contactId: string | null;
+  phone: string;
+  crmName: string | null;
+  crmStage: string | null;
+  crmLifecycleState: string | null;
+  crmActiveDate: string | null;
+  crmDftDate: string | null;
+  crmTripCount: number | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  partnerTripCount: number | null;
+  lastSyncAt: string | null;
+  severity: ReconciliationSeverity;
+  recommendedAction: string;
+}
+
+export interface ReconciliationResult {
+  items: ReconciliationItem[];
+  counts: Record<ReconciliationCategory, number>;
+  generatedAt: string;
+}
+
+export interface ReconciliationOpenReviewInput {
+  category: ReconciliationCategory;
+  leadId: string;
+  partnerSourceId: string;
+  partnerRecordId?: string;
+  notes?: string;
+}
+
+export interface ReconciliationOpenReviewResult {
+  reviewId: string;
+  alreadyOpen: boolean;
+}

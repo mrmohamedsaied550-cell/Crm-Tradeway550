@@ -71,6 +71,10 @@ import type {
   PartnerMergeRequest,
   PartnerMergeResult,
   LeadEvidenceRow,
+  ReconciliationCategory,
+  ReconciliationResult,
+  ReconciliationOpenReviewInput,
+  ReconciliationOpenReviewResult,
   PartnerMappingRow,
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
@@ -1668,6 +1672,51 @@ export const partnerVerificationApi = {
   /** D4.5 — list partner evidence rows on a lead. */
   evidence: (leadId: string): Promise<LeadEvidenceRow[]> =>
     apiFetch<LeadEvidenceRow[]>(`/partner-verification/leads/${leadId}/evidence`),
+};
+
+/**
+ * Phase D4 — D4.6: PartnerReconciliation client.
+ *
+ * Pure derived view over the partner snapshots + CRM rows. Read +
+ * CSV export gated on `partner.reconciliation.read`; promoting a
+ * discrepancy into the TL Review Queue gated on
+ * `partner.reconciliation.resolve`.
+ */
+export const partnerReconciliationApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      companyId?: string;
+      countryId?: string;
+      category?: ReconciliationCategory;
+      limit?: number;
+    } = {},
+  ): Promise<ReconciliationResult> =>
+    apiFetch<ReconciliationResult>('/partner/reconciliation', { query }),
+  /** Returns the absolute URL to the CSV endpoint with current
+   *  filters as query params — the frontend uses an `<a download>`
+   *  to trigger the browser's native CSV download flow. */
+  exportCsvUrl: (
+    query: {
+      partnerSourceId?: string;
+      companyId?: string;
+      countryId?: string;
+      category?: ReconciliationCategory;
+    } = {},
+  ): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    if (query.companyId) params.set('companyId', query.companyId);
+    if (query.countryId) params.set('countryId', query.countryId);
+    if (query.category) params.set('category', query.category);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reconciliation/export.csv${qs ? `?${qs}` : ''}`;
+  },
+  openReview: (input: ReconciliationOpenReviewInput): Promise<ReconciliationOpenReviewResult> =>
+    apiFetch<ReconciliationOpenReviewResult>(`/partner/reconciliation/open-review`, {
+      method: 'POST',
+      body: input,
+    }),
 };
 
 /**

@@ -53,6 +53,7 @@
       "metaLeadSources": "مصادر Meta",
       "partnerSources": "مصادر الشركاء",
       "partnerSnapshots": "سجلات مزامنة الشركاء",
+      "partnerReconciliation": "مطابقة بيانات الشركاء",
       "calendar": "التقويم",
       "reports": "التقارير",
       "distribution": "التوزيع",
@@ -1369,7 +1370,12 @@
         "followup.create": "إنشاء متابعة",
         "followup.complete": "إتمام متابعة",
         "followup.snooze": "تأجيل متابعة",
-        "followup.delete": "حذف متابعة"
+        "followup.delete": "حذف متابعة",
+        "partner.sync.completed": "مزامنة بيانات شريك",
+        "partner.merge.applied": "دمج بيانات شريك",
+        "partner.evidence.attached": "إرفاق دليل شريك",
+        "partner.verification.checked": "تحقق من بيانات شريك",
+        "partner.reconciliation.review_opened": "فتح مراجعة من المطابقة"
       }
     },
     "reports": {
@@ -2141,6 +2147,49 @@
             "label": "مطلوب (تخطّي الصفوف الفاقدة لهذا العمود)"
           }
         }
+      }
+    },
+    "partnerReconciliation": {
+      "title": "مطابقة بيانات الشركاء",
+      "subtitle": "مقارنة بين بيانات النظام وآخر بيانات شريك متاحة. للقراءة فقط — لا يتم تعديل أي حقل في النظام من هذا التقرير.",
+      "noAccessTitle": "لا توجد صلاحية",
+      "noAccessBody": "ليس لديك صلاحية الوصول لتقرير المطابقة.",
+      "featureDisabled": "مركز بيانات الشركاء معطّل في هذه البيئة.",
+      "exportCsv": "تصدير CSV",
+      "emptyTitle": "لا توجد اختلافات في العرض الحالي.",
+      "emptyBody": "إما أن البيانات مطابقة لآخر سنابشوت من الشريك، أو لا توجد مصادر شركاء تُغطّي نطاقك.",
+      "unnamedLead": "(بدون اسم)",
+      "lastSync": "آخر مزامنة",
+      "openLead": "فتح الليد",
+      "filters": {
+        "source": "مصدر الشريك",
+        "allSources": "كل المصادر",
+        "category": "الفئة",
+        "allCategories": "الكل"
+      },
+      "categories": {
+        "partner_missing": "غير موجود عند الشريك",
+        "partner_active_not_in_crm": "مفعّل عند الشريك وليس في النظام",
+        "partner_date_mismatch": "اختلاف تاريخ التفعيل",
+        "partner_dft_mismatch": "اختلاف تاريخ DFT",
+        "partner_trips_mismatch": "اختلاف عدد الرحلات"
+      },
+      "values": {
+        "partner": "قيمة الشريك",
+        "crm": "قيمة النظام"
+      },
+      "openReview": {
+        "cta": "فتح كمراجعة",
+        "title": "فتح كمراجعة",
+        "body": "سيتم رفع صف في قائمة مراجعة قائد الفريق مرتبط بهذا الاختلاف. لا يتم تعديل الليد؛ القائمة هي السطح القابل للتنفيذ.",
+        "alreadyOpenToast": "هناك مراجعة مفتوحة لهذا الليد وهذه الفئة بالفعل.",
+        "openedToast": "تم فتح المراجعة.",
+        "partnerSource": "مصدر الشريك",
+        "category": "الفئة",
+        "lead": "الليد",
+        "phone": "الهاتف",
+        "notesLabel": "ملاحظات للمراجِع (اختياري)",
+        "notesHelper": "سياق قصير يراه من يلتقط هذه المراجعة لاحقًا."
       }
     },
     "partnerSnapshots": {

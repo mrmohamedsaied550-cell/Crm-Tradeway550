@@ -25,6 +25,7 @@ import {
   Database,
   History,
   Network,
+  ScanSearch,
   BarChart3,
   Settings,
   Route,
@@ -64,7 +65,8 @@ interface NavItem {
     | 'roles'
     | 'backup'
     | 'partnerSources'
-    | 'partnerSnapshots';
+    | 'partnerSnapshots'
+    | 'partnerReconciliation';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -152,6 +154,15 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'partnerSnapshots',
     icon: History,
     cap: 'partner.source.read',
+  },
+  // Phase D4 — D4.6: reconciliation report. Visible with
+  // `partner.reconciliation.read` (TL+); the "Open as review"
+  // action gates separately on `partner.reconciliation.resolve`.
+  {
+    href: '/admin/partner-reconciliation',
+    labelKey: 'partnerReconciliation',
+    icon: ScanSearch,
+    cap: 'partner.reconciliation.read',
   },
   // PL-4 — Calendar lives at /agent/calendar but is useful to managers
   // too; we link to the same surface from the admin sidebar so TLs and

@@ -44,6 +44,15 @@ const FILTER_AUDIT_ACTIONS = [
   'followup.complete',
   'followup.snooze',
   'followup.delete',
+  // Phase D4 — partner data hub verbs (D4.3 sync / D4.4 verification
+  // / D4.5 merge + evidence / D4.6 reconciliation review-opens).
+  // The full list is intentionally surfaced together so an Ops
+  // user can audit the whole partner-data trail in one chip pass.
+  'partner.sync.completed',
+  'partner.merge.applied',
+  'partner.evidence.attached',
+  'partner.verification.checked',
+  'partner.reconciliation.review_opened',
 ] as const;
 type FilterAuditAction = (typeof FILTER_AUDIT_ACTIONS)[number];
 

@@ -53,6 +53,7 @@
       "metaLeadSources": "Meta Sources",
       "partnerSources": "Partner Sources",
       "partnerSnapshots": "Partner Snapshots",
+      "partnerReconciliation": "Partner Reconciliation",
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
@@ -1369,7 +1370,12 @@
         "followup.create": "Follow-up created",
         "followup.complete": "Follow-up completed",
         "followup.snooze": "Follow-up snoozed",
-        "followup.delete": "Follow-up deleted"
+        "followup.delete": "Follow-up deleted",
+        "partner.sync.completed": "Partner sync",
+        "partner.merge.applied": "Partner merge",
+        "partner.evidence.attached": "Partner evidence",
+        "partner.verification.checked": "Partner check",
+        "partner.reconciliation.review_opened": "Partner review opened"
       }
     },
     "reports": {
@@ -2141,6 +2147,49 @@
             "label": "Required (skip rows missing this column)"
           }
         }
+      }
+    },
+    "partnerReconciliation": {
+      "title": "Partner Reconciliation",
+      "subtitle": "Compare CRM truth to the latest partner snapshot. Read-only — no CRM fields are changed by this report.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner reconciliation.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "exportCsv": "Export CSV",
+      "emptyTitle": "No discrepancies found in the selected view.",
+      "emptyBody": "Either everything matches the latest partner snapshot, or no partner sources are syncing rows that overlap your scope.",
+      "unnamedLead": "(no name)",
+      "lastSync": "Last sync",
+      "openLead": "Open lead",
+      "filters": {
+        "source": "Partner source",
+        "allSources": "All sources",
+        "category": "Category",
+        "allCategories": "All"
+      },
+      "categories": {
+        "partner_missing": "Missing in partner",
+        "partner_active_not_in_crm": "Partner active, not in CRM",
+        "partner_date_mismatch": "Active date mismatch",
+        "partner_dft_mismatch": "DFT mismatch",
+        "partner_trips_mismatch": "Trips mismatch"
+      },
+      "values": {
+        "partner": "Partner value",
+        "crm": "CRM value"
+      },
+      "openReview": {
+        "cta": "Open as review",
+        "title": "Open as review",
+        "body": "This raises a TL Review Queue row pinned to this discrepancy. The lead is not changed; the queue is the actionable surface.",
+        "alreadyOpenToast": "A review for this lead and category is already open.",
+        "openedToast": "Review opened.",
+        "partnerSource": "Partner source",
+        "category": "Category",
+        "lead": "Lead",
+        "phone": "Phone",
+        "notesLabel": "Reviewer notes (optional)",
+        "notesHelper": "Short context the resolver should see when they pick up this review."
       }
     },
     "partnerSnapshots": {
