@@ -84,6 +84,8 @@ model Tenant {
   leadStageStatuses           LeadStageStatus[]
   /// Phase D3 — D3.4: per-lead rotation history.
   leadRotationLogs            LeadRotationLog[]
+  /// Phase D3 — D3.6: TL Review Queue rows.
+  leadReviews                 LeadReview[]
 
   @@map("tenants")
 }
@@ -367,6 +369,9 @@ model User {
   rotatedFromLogs             LeadRotationLog[]      @relation("LeadRotationLogFromUser")
   rotatedToLogs               LeadRotationLog[]      @relation("LeadRotationLogToUser")
   triggeredRotations          LeadRotationLog[]      @relation("LeadRotationLogActor")
+  /// Phase D3 — D3.6: TL Review Queue back-relations.
+  assignedLeadReviews         LeadReview[]           @relation("LeadReviewAssignedTl")
+  resolvedLeadReviews         LeadReview[]           @relation("LeadReviewResolver")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -623,6 +628,10 @@ model Lead {
   /// TL+ see the full from/to chain. Visibility gate lives in
   /// `RotationService`. Empty until D3.4's first rotation lands.
   rotationLogs         LeadRotationLog[]
+  /// Phase D3 — D3.6: TL Review Queue rows raised for this lead.
+  /// Most leads have zero. SLA breach repeats / rotation failures /
+  /// manual TL flags create rows here for ops/TL action.
+  reviews              LeadReview[]
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -893,6 +902,83 @@ model LeadRotationLog {
   // Per-trigger reporting (Ops dashboards, breach analytics).
   @@index([tenantId, trigger, createdAt(sort: Desc)])
   @@map("lead_rotation_logs")
+}
+
+/// Phase D3 — D3.6: TL Review Queue.
+///
+/// Each row is ONE review item — surfaced to a TL (or Ops / Account
+/// Manager) for human action. Mirrors `WhatsAppConversationReview`'s
+/// shape (proven D1.5 pattern) but stays a SEPARATE model:
+/// conversation reviews are conversation-anchored 1:1; lead reviews
+/// can stack multiple per lead lifecycle.
+///
+/// Reasons (free-string column; service validates):
+///   - `sla_breach_repeat`   — second t150 SLA breach within the
+///                              policy window. Raised by D3.5.
+///   - `rotation_failed`     — D3.7+ heuristic for "rotated and the
+///                              new owner also missed it within X".
+///   - `manual_tl_review`    — TL flagged this lead for review.
+///   - `bottleneck_flagged`  — system detected a stuck-in-stage
+///                              cohort (D3.7+).
+///   - `escalated_by_tl`     — child review created when a TL
+///                              resolves a parent review with
+///                              `escalated`.
+///
+/// Resolutions (free-string column; service validates):
+///   - `rotated`     — TL acted via the rotation engine; the
+///                      review row is closed once the rotation
+///                      succeeded.
+///   - `kept_owner`  — TL decided current owner stays. Notes
+///                      required (TL accountability).
+///   - `escalated`   — pushes to Account Manager. A new
+///                      `escalated_by_tl` review is created with
+///                      `assignedTlId = NULL` so Ops queue picks
+///                      it up.
+///   - `dismissed`   — false positive. Notes required.
+///
+/// `assignedTlId` defaults at raise time to the lead's team's
+/// `team_leader_id`; NULL when the team has no TL or when the
+/// caller didn't provide a target. Ops / Account Manager queues
+/// surface NULL-assigned rows for triage.
+///
+/// FORCE RLS on tenant_id (matches every other tenant-scoped
+/// table). Per-row visibility (sales agents must NOT see this
+/// table at all) is enforced at the service / capability layer.
+model LeadReview {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId          String    @map("lead_id") @db.Uuid
+  lead            Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Stable code; service validates against the known reason set.
+  reason          String
+  /// Forensic context — what produced this review row. Schema-free
+  /// JSON so each reason can carry whatever its raiser knows
+  /// (recent rotation id, breach count, prior assignee, …).
+  reasonPayload   Json?     @map("reason_payload")
+  /// TL the row is assigned to. NULL = Ops queue (no TL on the
+  /// lead's team, or escalated upward).
+  assignedTlId    String?   @map("assigned_tl_id") @db.Uuid
+  assignedTl      User?     @relation("LeadReviewAssignedTl", fields: [assignedTlId], references: [id], onDelete: SetNull)
+  /// Resolution state. NULL while the row is open.
+  resolution      String?
+  resolvedById    String?   @map("resolved_by_id") @db.Uuid
+  resolvedBy      User?     @relation("LeadReviewResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+  /// TL/Ops free-text rationale for the resolution. Required when
+  /// resolution is `kept_owner` or `dismissed` (TL accountability);
+  /// service enforces.
+  resolutionNotes String?   @map("resolution_notes")
+
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // TL queue: "open reviews assigned to me, newest first".
+  @@index([tenantId, assignedTlId, resolvedAt, createdAt(sort: Desc)])
+  // Per-lead history (lead detail card surfaces it later).
+  @@index([tenantId, leadId])
+  // Reason-chip count queries (tenant-wide reporting).
+  @@index([tenantId, reason, resolvedAt])
+  @@map("lead_reviews")
 }
 
 /// Captain — a Lead converted to an active driver.

@@ -11,6 +11,7 @@ import { AssignmentService } from './assignment.service';
 import { getSlaMinutes } from './sla.config';
 import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { EscalationPolicyService } from './escalation-policy.service';
+import { LeadReviewService } from './lead-review.service';
 import { SlaThresholdsService, type SlaThreshold } from './sla-thresholds.service';
 import { RotationService } from './rotation.service';
 
@@ -131,6 +132,15 @@ export class SlaService {
      * keep compiling.
      */
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D3 — D3.6: TL Review Queue. When wired AND the t150
+     * repeat detection fires, the SLA scanner additionally calls
+     * `LeadReviewService.raiseReview` so a TL/Ops can pick up the
+     * lead from the queue UI (mirrors the WhatsApp Review Queue
+     * D1.5 pattern). Idempotent on `(lead, reason, open)`. Optional
+     * so D3.5 test harnesses keep compiling without the new dep.
+     */
+    @Optional() private readonly leadReviews?: LeadReviewService,
   ) {}
 
   /**
@@ -852,10 +862,26 @@ export class SlaService {
       );
       isRepeat = recentRotation !== null;
       if (isRepeat) {
-        // Repeat-within-window — do NOT rotate again. Stage a
-        // placeholder audit row so D3.6 can pick it up and
-        // materialise a LeadReview from the same context. The
-        // lead stays breached; the prior owner keeps it for now.
+        // Repeat-within-window — do NOT rotate again. Materialise a
+        // LeadReview row (D3.6) so a TL / Ops can act on it from the
+        // queue. The legacy `lead.sla.review_pending` audit row is
+        // ALSO emitted as the dashboard handle so existing audit-page
+        // chip filters keep working without a code change. D3.6's
+        // `lead.review.raised` audit row is the structured handle for
+        // the queue page itself.
+        if (this.leadReviews) {
+          await this.leadReviews.raiseReview({
+            leadId,
+            reason: 'sla_breach_repeat',
+            reasonPayload: {
+              recentRotationId: recentRotation!.id,
+              recentRotationAt: recentRotation!.createdAt.toISOString(),
+              windowHours: t150.reviewOnRepeatWithinHours,
+              priorAssigneeId: fromUserId,
+            } as Prisma.InputJsonValue,
+            actorUserId: null,
+          });
+        }
         if (this.audit) {
           await this.audit.writeForTenant(tenantId, {
             action: 'lead.sla.review_pending',

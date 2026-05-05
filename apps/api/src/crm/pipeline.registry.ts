@@ -89,6 +89,14 @@ export const ACTIVITY_TYPES = [
   // payload (no from/to user names, no sensitive notes); TL+ see
   // the full chain. Inert when `D3_ENGINE_V1` resolves false.
   'rotation',
+  // Phase D3 — D3.6: emitted by LeadReviewService.raiseReview /
+  // resolveReview — once per queue-row state transition. The
+  // dedicated audit verbs `lead.review.raised` /
+  // `lead.review.resolved` carry the dashboard-friendly handle;
+  // these timeline entries surface the same event on the lead's
+  // own activity feed. Inert when `D3_ENGINE_V1` resolves false.
+  'lead_review_raised',
+  'lead_review_resolved',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

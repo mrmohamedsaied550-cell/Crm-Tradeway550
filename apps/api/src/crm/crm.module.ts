@@ -18,6 +18,8 @@ import { SlaThresholdsService } from './sla-thresholds.service';
 import { LeadStageStatusService } from './lead-stage-status.service';
 import { RotationService } from './rotation.service';
 import { EscalationPolicyService } from './escalation-policy.service';
+import { LeadReviewService } from './lead-review.service';
+import { LeadReviewsController } from './lead-reviews.controller';
 
 /**
  * CRM Core module (C10 + C11 + C18 + C29 + P2-07).
@@ -36,6 +38,7 @@ import { EscalationPolicyService } from './escalation-policy.service';
     CaptainDocumentsController,
     LostReasonsController,
     PipelinesController,
+    LeadReviewsController,
   ],
   providers: [
     LeadsService,
@@ -52,6 +55,7 @@ import { EscalationPolicyService } from './escalation-policy.service';
     LeadStageStatusService,
     RotationService,
     EscalationPolicyService,
+    LeadReviewService,
   ],
   exports: [
     LeadsService,
@@ -68,6 +72,7 @@ import { EscalationPolicyService } from './escalation-policy.service';
     LeadStageStatusService,
     RotationService,
     EscalationPolicyService,
+    LeadReviewService,
   ],
 })
 export class CrmModule {}

@@ -52,6 +52,10 @@ import type {
   FieldCatalogueEntry,
   RoleDetail,
   RoleFieldPermissionRow,
+  LeadReviewReason,
+  LeadReviewResolution,
+  LeadReviewRow,
+  LeadReviewsListResponse,
   RoleScopeRow,
   RoleSummary,
   RotationHistoryResponse,
@@ -1116,6 +1120,35 @@ export const reviewsApi = {
       `/whatsapp/reviews/${id}/resolve`,
       { method: 'POST', body },
     ),
+};
+
+/**
+ * Phase D3 — D3.6: TL Review Queue (consumes /lead-reviews).
+ *
+ * Mirrors the WhatsApp reviews API shape — list / count / get / resolve.
+ * Reasons + resolutions are server-validated; the UI just passes the
+ * literal codes through.
+ */
+export const leadReviewsApi = {
+  list: (
+    query: {
+      resolved?: boolean;
+      reason?: LeadReviewReason;
+      assignedToMe?: boolean;
+      leadId?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<LeadReviewsListResponse> =>
+    apiFetch<LeadReviewsListResponse>('/lead-reviews', { query }),
+  count: (): Promise<{ unresolved: number }> =>
+    apiFetch<{ unresolved: number }>('/lead-reviews/count'),
+  get: (id: string): Promise<LeadReviewRow> => apiFetch<LeadReviewRow>(`/lead-reviews/${id}`),
+  resolve: (
+    id: string,
+    body: { resolution: LeadReviewResolution; notes?: string },
+  ): Promise<{ id: string; resolution: LeadReviewResolution; childReviewId?: string }> =>
+    apiFetch(`/lead-reviews/${id}/resolve`, { method: 'POST', body }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

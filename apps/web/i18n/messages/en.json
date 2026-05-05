@@ -48,6 +48,7 @@
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
       "whatsappReviews": "WA Reviews",
+      "leadReviews": "Lead Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
       "calendar": "Calendar",
@@ -983,6 +984,83 @@
           "title": "No resolved reviews",
           "body": "Once review items are resolved, they'll show up here for the historical record."
         }
+      }
+    },
+    "leadReviews": {
+      "title": "Lead Review Queue",
+      "subtitle": "Leads that need TL or Ops attention — repeated SLA breaches, escalations, manual flags.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "Your role can't view the TL Review Queue. Ask an admin to grant lead.review.read.",
+      "filterLabel": "Filter:",
+      "tabs": {
+        "active": "Active",
+        "resolved": "Resolved"
+      },
+      "chips": {
+        "all": "All reasons"
+      },
+      "emptyActiveTitle": "Inbox zero",
+      "emptyActiveBody": "There are no open lead reviews in your scope right now.",
+      "emptyResolvedTitle": "No resolved reviews yet",
+      "emptyResolvedBody": "Resolved reviews from your scope will land here.",
+      "notesPrefix": "Notes",
+      "reason": {
+        "sla_breach_repeat": "Repeated SLA breach",
+        "rotation_failed": "Rotation did not solve the issue",
+        "manual_tl_review": "Manual TL review",
+        "bottleneck_flagged": "Bottleneck detected",
+        "escalated_by_tl": "Escalated by TL"
+      },
+      "reasonExplain": {
+        "sla_breach_repeat": "This lead breached its SLA twice within the policy window. Decide whether to rotate again, keep with the current owner, or escalate.",
+        "rotation_failed": "A previous rotation did not solve the issue — the new owner also missed the SLA. Decide what to do next.",
+        "manual_tl_review": "A team leader flagged this lead for review.",
+        "bottleneck_flagged": "This lead has been stuck in the same stage for too long.",
+        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected."
+      },
+      "resolution": {
+        "rotated": "Rotated",
+        "kept_owner": "Kept owner",
+        "escalated": "Escalated",
+        "dismissed": "Dismissed"
+      },
+      "actions": {
+        "rotate": "Open lead to rotate",
+        "markRotated": "Mark rotated",
+        "keepOwner": "Keep current owner",
+        "escalate": "Escalate",
+        "dismiss": "Dismiss"
+      },
+      "resolve": {
+        "title": {
+          "rotated": "Confirm rotation",
+          "kept_owner": "Keep current owner",
+          "escalated": "Escalate to Ops",
+          "dismissed": "Dismiss this review"
+        },
+        "body": {
+          "rotated": "Mark this review as rotated. Use this AFTER you've already triggered the rotation from the lead detail page.",
+          "kept_owner": "Keep the current owner on this lead. Notes are required so an auditor can later understand the decision.",
+          "escalated": "Escalate to Operations / Account Manager. A new escalated_by_tl review will be created in the Ops queue automatically.",
+          "dismissed": "Dismiss this review without action. Notes are required so the queue stays auditable."
+        },
+        "confirm": {
+          "rotated": "Mark rotated",
+          "kept_owner": "Keep owner",
+          "escalated": "Escalate",
+          "dismissed": "Dismiss"
+        },
+        "toast": {
+          "rotated": "Review marked as rotated.",
+          "kept_owner": "Keeping current owner.",
+          "escalated": "Escalated to Operations.",
+          "dismissed": "Review dismissed."
+        },
+        "notesLabel": "Notes (optional)",
+        "notesLabelRequired": "Notes",
+        "notesHint": "Up to 1000 characters. Visible on the audit trail and the lead's timeline.",
+        "errorNotesRequired": "Notes are required for this resolution.",
+        "errorAlreadyResolved": "This review has already been resolved by someone else."
       }
     },
     "whatsappTemplates": {

@@ -70,6 +70,19 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'lead.rotate',
     description: 'Rotate a lead to a different owner (writes a rotation audit row)',
   },
+  // Phase D3 — D3.6: TL Review Queue. Read = list/inspect; resolve =
+  // close a row with one of (rotated | kept_owner | escalated |
+  // dismissed). Granted to TLs (own team) + ops_manager +
+  // account_manager + super_admin. NOT granted to agents — sales /
+  // activation / driving never see this surface.
+  {
+    code: 'lead.review.read',
+    description: 'View the TL Review Queue (lead reviews)',
+  },
+  {
+    code: 'lead.review.resolve',
+    description: 'Resolve a lead-review row (rotated / kept_owner / escalated / dismissed)',
+  },
 
   // Meta lead-source registration (P2-06)
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },

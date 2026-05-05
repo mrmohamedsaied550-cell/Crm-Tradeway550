@@ -1046,3 +1046,50 @@ export interface RotationHistoryResponse {
   canSeeOwners: boolean;
   rotations: RotationHistoryRow[];
 }
+
+/**
+ * Phase D3 — D3.6: TL Review Queue.
+ *
+ * Reasons, resolutions, and the row + paginated-response shapes the
+ * `/lead-reviews` endpoints return. Reason / resolution sets stay
+ * separate from `WhatsAppReviewReason` / `WhatsAppReviewResolution`
+ * — the two queues mirror each other's UX but never share data
+ * shape, so collapsing them would force an awkward middle layer.
+ */
+export type LeadReviewReason =
+  | 'sla_breach_repeat'
+  | 'rotation_failed'
+  | 'manual_tl_review'
+  | 'bottleneck_flagged'
+  | 'escalated_by_tl';
+
+export type LeadReviewResolution = 'rotated' | 'kept_owner' | 'escalated' | 'dismissed';
+
+export interface LeadReviewRow {
+  id: string;
+  leadId: string;
+  reason: LeadReviewReason;
+  reasonPayload: Record<string, unknown> | null;
+  assignedTlId: string | null;
+  resolution: LeadReviewResolution | null;
+  resolvedAt: string | null;
+  resolutionNotes: string | null;
+  createdAt: string;
+  assignedTl: { id: string; name: string } | null;
+  resolvedBy: { id: string; name: string } | null;
+  lead: {
+    id: string;
+    name: string;
+    phone: string;
+    slaThreshold: string;
+    stage: { code: string; name: string };
+    assignedTo: { id: string; name: string } | null;
+  };
+}
+
+export interface LeadReviewsListResponse {
+  items: LeadReviewRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
