@@ -306,8 +306,14 @@ describe('D2.6 — manual reactivation override', () => {
     );
 
     // New row carries the chain fields the engine writes for any
-    // reactivation, with `manual_override` as the rule code.
-    const created = await prisma.lead.findUnique({ where: { id: result.id } });
+    // reactivation, with `manual_override` as the rule code. The
+    // verification reads MUST run inside a tenant-scoped tx — the
+    // FORCE RLS policy on `leads`, `duplicate_decision_log`, and
+    // `audit_events` hides every row from a bare client (no
+    // `app.tenant_id` GUC set).
+    const created = await withTenantRaw(tenantId, (tx) =>
+      tx.lead.findUnique({ where: { id: result.id } }),
+    );
     assert.ok(created, 'new attempt row exists');
     assert.equal(created!.attemptIndex, 2);
     assert.equal(created!.previousLeadId, first.id);
@@ -317,18 +323,22 @@ describe('D2.6 — manual reactivation override', () => {
     assert.equal(created!.stageId, entryStageId);
 
     // DuplicateDecisionLog captures manual_override + created_new_attempt.
-    const log = await prisma.duplicateDecisionLog.findFirst({
-      where: { tenantId, resultLeadId: result.id },
-    });
+    const log = await withTenantRaw(tenantId, (tx) =>
+      tx.duplicateDecisionLog.findFirst({
+        where: { tenantId, resultLeadId: result.id },
+      }),
+    );
     assert.ok(log, 'duplicate decision log row exists');
     assert.equal(log!.ruleApplied, 'manual_override');
     assert.equal(log!.decision, 'created_new_attempt');
     assert.equal(log!.actorUserId, actorUserId);
 
     // Dedicated `lead.reactivated` audit verb is written.
-    const reactAudit = await prisma.auditEvent.findFirst({
-      where: { tenantId, action: 'lead.reactivated', entityId: result.id },
-    });
+    const reactAudit = await withTenantRaw(tenantId, (tx) =>
+      tx.auditEvent.findFirst({
+        where: { tenantId, action: 'lead.reactivated', entityId: result.id },
+      }),
+    );
     assert.ok(reactAudit, 'lead.reactivated audit row exists');
     assert.equal(reactAudit!.actorUserId, actorUserId);
   });
