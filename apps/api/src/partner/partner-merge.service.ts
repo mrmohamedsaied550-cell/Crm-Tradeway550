@@ -301,6 +301,150 @@ export class PartnerMergeService {
   }
 
   /**
+   * D4.8 — evidence-only attach. NEVER mutates Captain / Lead
+   * lifecycle / CRM stage. Pure evidence trail. Used by the
+   * D4.8 ConvertConfirmModal so an approver can pin a partner
+   * snapshot to a lead at the moment of conversion without
+   * triggering a controlled merge.
+   *
+   * Single tx writes:
+   *   1. `LeadEvidence` row (kind = 'partner_record', resolved
+   *      partnerRecordId + partnerSnapshotId + optional notes,
+   *      capturedByUserId).
+   *   2. `LeadActivity` row (type = 'partner_evidence',
+   *      actionSource = 'lead') — surfaces on the timeline.
+   *   3. `audit_events` row (action = 'partner.evidence.attached').
+   *
+   * Resolution: if `partnerRecordId` not supplied, picks the
+   * latest `success` / `partial` snapshot record for the
+   * lead's contact phone (same rule the verification card uses).
+   */
+  async attachEvidence(input: {
+    leadId: string;
+    partnerSourceId: string;
+    partnerRecordId?: string;
+    partnerSnapshotId?: string;
+    notes?: string;
+    actorUserId: string;
+    userClaims: ScopeUserClaims;
+  }): Promise<{ evidenceId: string; partnerRecordId: string; partnerSnapshotId: string }> {
+    const tenantId = requireTenantId();
+
+    const scope = await this.scopeContext.resolveLeadScope(input.userClaims);
+    const lead = await this.prisma.withTenant(tenantId, (tx) => {
+      const where: Prisma.LeadWhereInput = scope.where
+        ? { AND: [{ id: input.leadId, tenantId }, scope.where] }
+        : { id: input.leadId, tenantId };
+      return tx.lead.findFirst({
+        where,
+        select: { id: true, contactId: true, phone: true },
+      });
+    });
+    if (!lead) {
+      throw new NotFoundException({
+        code: 'lead.not_found',
+        message: `Lead not found: ${input.leadId}`,
+      });
+    }
+
+    let recordId = input.partnerRecordId;
+    let snapshotId = input.partnerSnapshotId;
+    if (!recordId) {
+      // Latest record path — same rule as verification + merge.
+      const phone = await this.resolveJoinPhone(lead);
+      if (!phone) {
+        throw new BadRequestException({
+          code: 'partner.evidence.no_record',
+          message: 'No phone available on lead/contact to look up partner record.',
+        });
+      }
+      const record = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.partnerRecord.findFirst({
+          where: {
+            tenantId,
+            partnerSourceId: input.partnerSourceId,
+            phone,
+            snapshot: { status: { in: ['success', 'partial'] } },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, snapshotId: true },
+        }),
+      );
+      if (!record) {
+        throw new NotFoundException({
+          code: 'partner.evidence.no_record',
+          message: 'No partner record found for this lead in the requested source.',
+        });
+      }
+      recordId = record.id;
+      snapshotId = record.snapshotId;
+    } else if (!snapshotId) {
+      // Resolve the snapshot id from the supplied record so the
+      // evidence row points at both endpoints of the audit chain.
+      const record = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.partnerRecord.findFirst({
+          where: { tenantId, id: recordId, partnerSourceId: input.partnerSourceId },
+          select: { id: true, snapshotId: true },
+        }),
+      );
+      if (!record) {
+        throw new NotFoundException({
+          code: 'partner.evidence.no_record',
+          message: `Partner record not found: ${recordId}`,
+        });
+      }
+      snapshotId = record.snapshotId;
+    }
+
+    const { evidenceId } = await this.prisma.withTenant(tenantId, async (tx) => {
+      const evidence = await tx.leadEvidence.create({
+        data: {
+          tenantId,
+          leadId: lead.id,
+          kind: 'partner_record',
+          partnerRecordId: recordId!,
+          partnerSnapshotId: snapshotId!,
+          ...(input.notes && input.notes.trim().length > 0 ? { notes: input.notes.trim() } : {}),
+          capturedByUserId: input.actorUserId,
+        },
+      });
+      const activityPayload: Prisma.InputJsonValue = {
+        partnerSourceId: input.partnerSourceId,
+        partnerSnapshotId: snapshotId,
+        partnerRecordId: recordId,
+        evidenceId: evidence.id,
+      } as Prisma.InputJsonValue;
+      await tx.leadActivity.create({
+        data: {
+          tenantId,
+          leadId: lead.id,
+          type: 'partner_evidence',
+          actionSource: 'lead',
+          createdById: input.actorUserId,
+          payload: activityPayload,
+        },
+      });
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'partner.evidence.attached',
+        entityType: 'lead_evidence',
+        entityId: evidence.id,
+        actorUserId: input.actorUserId,
+        payload: {
+          leadId: lead.id,
+          kind: 'partner_record',
+          partnerSourceId: input.partnerSourceId,
+          partnerSnapshotId: snapshotId,
+          partnerRecordId: recordId,
+          source: 'evidence_only',
+        } as Prisma.InputJsonValue,
+      });
+      return { evidenceId: evidence.id };
+    });
+
+    return { evidenceId, partnerRecordId: recordId!, partnerSnapshotId: snapshotId! };
+  }
+
+  /**
    * Read-only evidence list for a lead. Visible to anyone with
    * lead access in scope — the controller-level capability gate
    * decides which `partner.*` cap is required.

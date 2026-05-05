@@ -334,6 +334,17 @@ function DiscrepancyCard({
               <AlertTriangle className="me-1 h-3 w-3" aria-hidden="true" />
               {t(`categories.${item.category}` as 'categories.partner_missing')}
             </Badge>
+            {/* D4.8 — recommendedAction chip. Translates the raw
+                action code into operator-readable copy in EN/AR.
+                Falls back to the raw code when an unknown action
+                lands (forward-compat with future categories). */}
+            {item.recommendedAction ? (
+              <Badge tone="neutral">
+                {t(
+                  `recommendedAction.${item.recommendedAction}` as 'recommendedAction.review_or_convert',
+                )}
+              </Badge>
+            ) : null}
             <span className="text-sm font-semibold text-ink-primary">
               {item.crmName ?? <span className="text-ink-tertiary">{t('unnamedLead')}</span>}
             </span>

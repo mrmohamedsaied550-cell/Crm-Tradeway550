@@ -44,6 +44,23 @@ const MergePartnerFieldsSchema = z
 class MergePartnerFieldsDto extends createZodDto(MergePartnerFieldsSchema) {}
 
 /**
+ * D4.8 — Zod schema for the evidence-only attach body. Lets an
+ * approver pin a partner snapshot record to a lead without
+ * mutating any CRM column. Used by the ConvertConfirmModal so
+ * the "Attach partner snapshot as evidence" toggle has a clean
+ * API to call.
+ */
+const AttachEvidenceSchema = z
+  .object({
+    partnerSourceId: z.string().uuid(),
+    partnerRecordId: z.string().uuid().optional(),
+    partnerSnapshotId: z.string().uuid().optional(),
+    notes: z.string().trim().max(1000).optional(),
+  })
+  .strict();
+class AttachEvidenceDto extends createZodDto(AttachEvidenceSchema) {}
+
+/**
  * Phase D4 — D4.4 → D4.5: PartnerVerification surface.
  *
  *   GET  /partner-verification/leads/:leadId
@@ -125,6 +142,42 @@ export class PartnerVerificationController {
       partnerSourceId: body.partnerSourceId,
       fields: body.fields,
       ...(body.evidenceNote && { evidenceNote: body.evidenceNote }),
+      actorUserId: user.sub,
+      userClaims: this.toClaims(user),
+    });
+  }
+
+  /**
+   * D4.8 — evidence-only attach. Pins a partner snapshot record
+   * to a lead as `LeadEvidence` without mutating Captain or any
+   * CRM column. Used by the convert-confirm modal so an approver
+   * can leave a forensic trail without triggering a controlled
+   * merge.
+   *
+   * Capability: `partner.evidence.write` (TLs / Ops / Account
+   * Manager / Super Admin via TEAM_LEAD_EXTRAS + explicit grants).
+   * Sales / activation / driving agents cannot reach this
+   * endpoint by capability.
+   */
+  @Post('leads/:leadId/evidence')
+  @RequireCapability('partner.evidence.write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Attach a partner snapshot record as evidence on a lead (no Captain mutation, no merge)',
+  })
+  attachEvidence(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @Body() body: AttachEvidenceDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    this.assertEnabled();
+    return this.merge.attachEvidence({
+      leadId,
+      partnerSourceId: body.partnerSourceId,
+      ...(body.partnerRecordId && { partnerRecordId: body.partnerRecordId }),
+      ...(body.partnerSnapshotId && { partnerSnapshotId: body.partnerSnapshotId }),
+      ...(body.notes && { notes: body.notes }),
       actorUserId: user.sub,
       userClaims: this.toClaims(user),
     });

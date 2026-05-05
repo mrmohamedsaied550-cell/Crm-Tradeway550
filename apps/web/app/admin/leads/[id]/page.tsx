@@ -32,6 +32,8 @@ import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ReactivateLeadModal } from '@/components/admin/reactivate-lead-modal';
 import { RotateLeadModal } from '@/components/admin/rotate-lead-modal';
+import { ActiveDftConvertDecisionModal } from '@/components/admin/lead-detail/active-dft-convert-decision-modal';
+import { EvidenceCard } from '@/components/admin/lead-detail/evidence-card';
 import { PartnerDataCard } from '@/components/admin/lead-detail/partner-data-card';
 import { RotationHistoryCard } from '@/components/admin/lead-detail/rotation-history-card';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
@@ -51,6 +53,7 @@ import {
   followUpsApi,
   leadsApi,
   lostReasonsApi,
+  partnerVerificationApi,
   pipelineApi,
   pipelinesApi,
   teamsApi,
@@ -152,6 +155,10 @@ export default function LeadDetailPage(): JSX.Element {
   const [activityType, setActivityType] = useState<'note' | 'call'>('note');
   const [activityBody, setActivityBody] = useState<string>('');
   const [actionPending, setActionPending] = useState<string | null>(null);
+
+  // D4.8 — Active / DFT / Convert Decision Modal state.
+  const [convertModalOpen, setConvertModalOpen] = useState<boolean>(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
 
   // Refs used by the quick-actions bar to focus the composer + open the
   // move-stage dropdown.
@@ -490,17 +497,39 @@ export default function LeadDetailPage(): JSX.Element {
     });
   }
 
-  async function onConvert(): Promise<void> {
+  // D4.8 — Active / DFT / Convert Decision Modal replaces the
+  // legacy window.confirm flow. The modal embeds a read-only
+  // partner verification summary plus an optional evidence-only
+  // attach. Convert remains the technical CRM action — the modal
+  // does NOT auto-merge partner Active / DFT dates.
+  async function onConvertConfirmed(opts: {
+    evidence: { partnerSourceId: string; notes?: string } | null;
+  }): Promise<void> {
     if (!lead) return;
-    if (!window.confirm(t('convertHint'))) return;
     setActionPending('convert');
+    setConvertError(null);
     setError(null);
     try {
       await leadsApi.convert(lead.id);
-      setNotice(tCommon('saved'));
+      if (opts.evidence) {
+        // Best-effort — a failed evidence attach must NOT roll back
+        // the conversion (different transactions, different concerns).
+        try {
+          await partnerVerificationApi.attachEvidence(lead.id, opts.evidence);
+          setNotice(tDetail('convertDecision.toastConvertedWithEvidence'));
+        } catch (err) {
+          setNotice(tDetail('convertDecision.toastConvertedEvidenceFailed'));
+          // Surface the evidence error in the existing error band so
+          // the operator can see why the attach didn't land.
+          setError(err instanceof ApiError ? err.message : String(err));
+        }
+      } else {
+        setNotice(tCommon('saved'));
+      }
+      setConvertModalOpen(false);
       await reload();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setConvertError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setActionPending(null);
     }
@@ -909,6 +938,14 @@ export default function LeadDetailPage(): JSX.Element {
               Account Manager / Super Admin see the projection. */}
           <PartnerDataCard leadId={lead.id} />
 
+          {/* Phase D4 — D4.8: EvidenceCard. Read-only list of
+              `LeadEvidence` rows attached to this lead — surfaces
+              what merges / evidence-only attaches happened
+              historically. Returns null for callers without
+              `partner.verification.read`, so it is invisible to
+              sales agents. */}
+          <EvidenceCard leadId={lead.id} />
+
           {/* Captain card — only when converted */}
           {isConverted ? (
             <section className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-4 shadow-card">
@@ -1003,7 +1040,10 @@ export default function LeadDetailPage(): JSX.Element {
             <div className="flex flex-col gap-2">
               <Button
                 variant="primary"
-                onClick={() => void onConvert()}
+                onClick={() => {
+                  setConvertError(null);
+                  setConvertModalOpen(true);
+                }}
                 loading={actionPending === 'convert'}
                 disabled={isConverted || isLost}
                 size="sm"
@@ -1112,6 +1152,25 @@ export default function LeadDetailPage(): JSX.Element {
         error={rotateError}
         onConfirm={(input) => void onRotateConfirm(input)}
         onClose={() => setRotateOpen(false)}
+      />
+
+      {/* Phase D4 — D4.8: Active / DFT / Convert Decision Modal.
+          Replaces the legacy window.confirm convert flow. Embeds
+          a read-only partner verification summary + optional
+          evidence-only attach. Convert remains the technical CRM
+          action; partner Active / DFT dates are NOT touched here. */}
+      <ActiveDftConvertDecisionModal
+        open={convertModalOpen}
+        leadId={lead.id}
+        leadName={lead.name}
+        leadPhone={lead.phone}
+        converting={actionPending === 'convert'}
+        convertError={convertError}
+        onConvert={onConvertConfirmed}
+        onClose={() => {
+          setConvertModalOpen(false);
+          setConvertError(null);
+        }}
       />
     </div>
   );

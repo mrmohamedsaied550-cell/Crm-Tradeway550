@@ -70,6 +70,8 @@ import type {
   PartnerVerificationResult,
   PartnerMergeRequest,
   PartnerMergeResult,
+  PartnerAttachEvidenceRequest,
+  PartnerAttachEvidenceResult,
   LeadEvidenceRow,
   ReconciliationCategory,
   ReconciliationResult,
@@ -1677,6 +1679,19 @@ export const partnerVerificationApi = {
   /** D4.5 — list partner evidence rows on a lead. */
   evidence: (leadId: string): Promise<LeadEvidenceRow[]> =>
     apiFetch<LeadEvidenceRow[]>(`/partner-verification/leads/${leadId}/evidence`),
+  /**
+   * D4.8 — evidence-only attach. Pins a partner snapshot record to
+   * a lead as `LeadEvidence` without mutating Captain / Lead /
+   * controlled-merge fields. Capability: `partner.evidence.write`.
+   */
+  attachEvidence: (
+    leadId: string,
+    body: PartnerAttachEvidenceRequest,
+  ): Promise<PartnerAttachEvidenceResult> =>
+    apiFetch<PartnerAttachEvidenceResult>(`/partner-verification/leads/${leadId}/evidence`, {
+      method: 'POST',
+      body,
+    }),
 };
 
 /**

@@ -1061,7 +1061,15 @@ export type LeadReviewReason =
   | 'rotation_failed'
   | 'manual_tl_review'
   | 'bottleneck_flagged'
-  | 'escalated_by_tl';
+  | 'escalated_by_tl'
+  // Phase D4 — D4.6: partner-reconciliation discrepancies promoted
+  // into the TL Review Queue. The `reasonPayload` carries
+  // `{ partnerSourceId, partnerRecordId?, category, notes? }`.
+  | 'partner_missing'
+  | 'partner_active_not_in_crm'
+  | 'partner_date_mismatch'
+  | 'partner_dft_mismatch'
+  | 'partner_trips_mismatch';
 
 export type LeadReviewResolution = 'rotated' | 'kept_owner' | 'escalated' | 'dismissed';
 
@@ -1418,6 +1426,24 @@ export interface LeadEvidenceRow {
   notes: string | null;
   capturedBy: { id: string; name: string } | null;
   createdAt: string;
+}
+
+/**
+ * Phase D4 — D4.8: evidence-only attach. Pins a partner snapshot
+ * record to a lead WITHOUT mutating Captain or any CRM column.
+ * Capability: `partner.evidence.write`.
+ */
+export interface PartnerAttachEvidenceRequest {
+  partnerSourceId: string;
+  partnerRecordId?: string;
+  partnerSnapshotId?: string;
+  notes?: string;
+}
+
+export interface PartnerAttachEvidenceResult {
+  evidenceId: string;
+  partnerRecordId: string;
+  partnerSnapshotId: string;
 }
 
 /**

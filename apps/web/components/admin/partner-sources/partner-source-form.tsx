@@ -307,6 +307,13 @@ export function PartnerSourceForm({
           </Select>
         </Field>
 
+        {/* D4.8 — Google Sheets adapter is not wired in this build.
+            Surface the operator hint up front so the credentials
+            sub-form below isn't mistaken for a working integration. */}
+        {form.adapter === 'google_sheets' ? (
+          <Notice tone="info">{t('adapter.googleSheetsNotWiredNotice')}</Notice>
+        ) : null}
+
         {/* Credentials state indicator. The plaintext is NEVER shown
             back from the API; we only know hasCredentials. */}
         {form.adapter === 'google_sheets' ? (

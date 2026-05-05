@@ -56,6 +56,7 @@ export function LeadReviewCard({
   const reasonLabel = t(`reason.${review.reason}` as 'reason.sla_breach_repeat');
   const reasonExplain = t(`reasonExplain.${review.reason}` as 'reasonExplain.sla_breach_repeat');
   const isResolved = review.resolvedAt !== null;
+  const partnerContext = readPartnerContext(review.reasonPayload);
 
   async function onConfirm(notes?: string): Promise<void> {
     if (!pendingResolution) return;
@@ -133,6 +134,69 @@ export function LeadReviewCard({
 
       <p className="text-sm text-ink-secondary">{reasonExplain}</p>
 
+      {partnerContext ? (
+        <dl className="grid grid-cols-1 gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 sm:grid-cols-2">
+          <div className="sm:col-span-2 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">
+            {t('partnerContext.header')}
+          </div>
+          {partnerContext.partnerSourceId ? (
+            <PartnerContextField
+              label={t('partnerContext.source')}
+              value={partnerContext.partnerSourceId}
+              mono
+            />
+          ) : null}
+          {partnerContext.category ? (
+            <PartnerContextField
+              label={t('partnerContext.category')}
+              value={t(`reason.${partnerContext.category}` as 'reason.partner_missing')}
+            />
+          ) : null}
+          {partnerContext.partnerStatus ? (
+            <PartnerContextField
+              label={t('partnerContext.partnerStatus')}
+              value={partnerContext.partnerStatus}
+            />
+          ) : null}
+          {partnerContext.partnerActiveDate ? (
+            <PartnerContextField
+              label={t('partnerContext.partnerActiveDate')}
+              value={formatDateMaybe(partnerContext.partnerActiveDate)}
+            />
+          ) : null}
+          {partnerContext.partnerDftDate ? (
+            <PartnerContextField
+              label={t('partnerContext.partnerDftDate')}
+              value={formatDateMaybe(partnerContext.partnerDftDate)}
+            />
+          ) : null}
+          {partnerContext.partnerTripCount !== undefined ? (
+            <PartnerContextField
+              label={t('partnerContext.partnerTripCount')}
+              value={String(partnerContext.partnerTripCount)}
+            />
+          ) : null}
+          {partnerContext.crmTripCount !== undefined ? (
+            <PartnerContextField
+              label={t('partnerContext.crmTripCount')}
+              value={String(partnerContext.crmTripCount)}
+            />
+          ) : null}
+          {partnerContext.captainActivatedAt ? (
+            <PartnerContextField
+              label={t('partnerContext.captainActivatedAt')}
+              value={formatDateMaybe(partnerContext.captainActivatedAt)}
+            />
+          ) : null}
+          {partnerContext.captainDftAt ? (
+            <PartnerContextField
+              label={t('partnerContext.captainDftAt')}
+              value={formatDateMaybe(partnerContext.captainDftAt)}
+            />
+          ) : null}
+        </dl>
+      ) : null}
+
       {isResolved && review.resolutionNotes ? (
         <p className="rounded-md bg-surface px-3 py-2 text-xs text-ink-secondary">
           <span className="font-medium text-ink-primary">{t('notesPrefix')}:</span>{' '}
@@ -207,5 +271,75 @@ export function LeadReviewCard({
         onClose={() => setPendingResolution(null)}
       />
     </article>
+  );
+}
+
+interface PartnerContext {
+  partnerSourceId?: string;
+  partnerRecordId?: string;
+  category?: string;
+  partnerStatus?: string;
+  partnerActiveDate?: string;
+  partnerDftDate?: string;
+  partnerTripCount?: number;
+  crmTripCount?: number;
+  captainActivatedAt?: string;
+  captainDftAt?: string;
+}
+
+/**
+ * D4.8 — extract partner-context fields from a LeadReview's
+ * `reasonPayload`. Returns null when the payload doesn't carry a
+ * partner reference (non-partner reasons + legacy rows). Treats
+ * unexpected shapes defensively — partner context is best-effort
+ * decoration, never a render blocker.
+ */
+function readPartnerContext(payload: Record<string, unknown> | null): PartnerContext | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const sourceId = stringOrUndef(payload['partnerSourceId']);
+  if (!sourceId) return null;
+  return {
+    partnerSourceId: sourceId,
+    partnerRecordId: stringOrUndef(payload['partnerRecordId']),
+    category: stringOrUndef(payload['category']),
+    partnerStatus: stringOrUndef(payload['partnerStatus']),
+    partnerActiveDate: stringOrUndef(payload['partnerActiveDate']),
+    partnerDftDate: stringOrUndef(payload['partnerDftDate']),
+    partnerTripCount: numberOrUndef(payload['partnerTripCount']),
+    crmTripCount: numberOrUndef(payload['crmTripCount']),
+    captainActivatedAt: stringOrUndef(payload['captainActivatedAt']),
+    captainDftAt: stringOrUndef(payload['captainDftAt']),
+  };
+}
+
+function stringOrUndef(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function numberOrUndef(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+function formatDateMaybe(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+}
+
+function PartnerContextField({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[11px] uppercase tracking-wide text-ink-tertiary">{label}</dt>
+      <dd className={cn('text-sm text-ink-primary', mono && 'font-mono text-xs break-all')}>
+        {value}
+      </dd>
+    </div>
   );
 }

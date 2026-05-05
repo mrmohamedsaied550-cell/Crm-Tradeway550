@@ -112,7 +112,8 @@
       "retry": "Retry",
       "clearFilters": "Clear filters",
       "errorTitle": "Couldn't load data",
-      "select": "Select…"
+      "select": "Select…",
+      "refresh": "Refresh"
     },
     "companies": {
       "title": "Companies",
@@ -632,6 +633,50 @@
         "whatsapp": "WhatsApp",
         "openFullPage": "Open full page",
         "stageMoved": "Stage moved"
+      },
+      "convertDecision": {
+        "title": "Active / DFT / Convert decision",
+        "lead": "Lead",
+        "phone": "Phone",
+        "distinctionTitle": "Convert is the technical CRM action",
+        "distinctionBody": "Conversion creates or links the Captain row from this lead. It does NOT mark the captain as Active and it does NOT pull partner Active or DFT dates. Use Partner Data → Use partner Active/DFT to apply those values via the controlled merge after this step.",
+        "noPartnerAccess": "Partner verification is hidden by your role. The conversion will still proceed.",
+        "noPartnerData": "No partner data found for this lead yet. Conversion will still proceed; you can attach evidence later from Partner Data.",
+        "partnerSummaryHeader": "Partner verification summary",
+        "mergeRedirectHint": "Use “Use partner …” buttons on the Partner Data card to apply Active or DFT dates with audit. This modal does not change those values.",
+        "foundBadge": "Found",
+        "notFoundBadge": "Not found",
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "partnerTrips": "Partner trips",
+        "partnerNotFoundBody": "The partner snapshot has no record matching this contact's phone.",
+        "attachEvidenceLabel": "Attach partner snapshot as evidence",
+        "attachEvidenceHelper": "Pins the latest partner snapshot record to this lead as evidence. No CRM column is changed; no merge is performed.",
+        "evidenceSourceLabel": "Partner source for evidence",
+        "evidenceNoteLabel": "Evidence note (optional)",
+        "evidenceNoteHelper": "Short context the auditor should see (e.g. “Confirmed by phone before convert”). Up to 1000 characters.",
+        "evidenceNoRecord": "No partner record exists for this source. Evidence cannot be attached for this source — pick another source or uncheck the box.",
+        "confirmCta": "Convert",
+        "toastConvertedWithEvidence": "Lead converted and partner evidence attached.",
+        "toastConvertedEvidenceFailed": "Lead converted, but the evidence attach failed."
+      },
+      "evidenceCard": {
+        "title": "Evidence",
+        "loading": "Loading evidence…",
+        "featureDisabled": "Partner Data Hub is disabled in this environment.",
+        "emptyBody": "No partner evidence attached yet.",
+        "byLabel": "By",
+        "fileLabel": "File",
+        "snapshotIdLabel": "Snapshot",
+        "recordIdLabel": "Record",
+        "notesLabel": "Notes",
+        "kind": {
+          "partner_record": "Partner record",
+          "manual_upload": "Manual upload",
+          "screenshot": "Screenshot",
+          "note": "Note"
+        }
       }
     },
     "discoveredRoles": "Discovered roles",
@@ -1013,14 +1058,36 @@
         "rotation_failed": "Rotation did not solve the issue",
         "manual_tl_review": "Manual TL review",
         "bottleneck_flagged": "Bottleneck detected",
-        "escalated_by_tl": "Escalated by TL"
+        "escalated_by_tl": "Escalated by TL",
+        "partner_missing": "CRM active, partner missing",
+        "partner_active_not_in_crm": "Partner active, CRM not active",
+        "partner_date_mismatch": "Active date mismatch",
+        "partner_dft_mismatch": "DFT date mismatch",
+        "partner_trips_mismatch": "Trips count mismatch"
       },
       "reasonExplain": {
         "sla_breach_repeat": "This lead breached its SLA twice within the policy window. Decide whether to rotate again, keep with the current owner, or escalate.",
         "rotation_failed": "A previous rotation did not solve the issue — the new owner also missed the SLA. Decide what to do next.",
         "manual_tl_review": "A team leader flagged this lead for review.",
         "bottleneck_flagged": "This lead has been stuck in the same stage for too long.",
-        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected."
+        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected.",
+        "partner_missing": "CRM marks this lead as active or won, but the latest partner snapshot has no matching record. Verify the partner sheet or update CRM.",
+        "partner_active_not_in_crm": "The partner sheet shows this contact as active, but CRM hasn't converted the lead yet. Confirm and convert if appropriate.",
+        "partner_date_mismatch": "Captain active date in CRM differs from the partner snapshot. Reconcile or apply the partner date via controlled merge.",
+        "partner_dft_mismatch": "Captain DFT date in CRM differs from the partner snapshot. Reconcile or apply the partner date via controlled merge.",
+        "partner_trips_mismatch": "Partner snapshot trip count differs from the CRM ledger. Investigate before applying commission."
+      },
+      "partnerContext": {
+        "header": "Partner context",
+        "source": "Source",
+        "category": "Category",
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "partnerTripCount": "Partner trips",
+        "crmTripCount": "CRM trips",
+        "captainActivatedAt": "Captain active date",
+        "captainDftAt": "Captain DFT date"
       },
       "resolution": {
         "rotated": "Rotated",
@@ -1949,7 +2016,7 @@
         "sheet_not_found": "Sheet not found",
         "unknown": "Unknown",
         "stubbed": "Stubbed",
-        "not_wired": "Not wired",
+        "not_wired": "Coming soon — use manual upload",
         "running": "Running",
         "success": "Success",
         "partial": "Partial",
@@ -2040,7 +2107,8 @@
             "google_sheets": "Google Sheets",
             "manual_upload": "Manual upload (CSV)"
           },
-          "manualUploadNotice": "Manual upload sources don't need stored credentials. The operator uploads a CSV per sync."
+          "manualUploadNotice": "Manual upload sources don't need stored credentials. The operator uploads a CSV per sync.",
+          "googleSheetsNotWiredNotice": "The Google Sheets adapter will be enabled in a follow-up. For now, use Upload CSV on this source."
         },
         "credentials": {
           "privacyHelper": "Credentials are encrypted server-side and never returned to the browser. Replacing them rotates the stored envelope.",
@@ -2175,6 +2243,16 @@
         "partner_dft_mismatch": "DFT mismatch",
         "partner_trips_mismatch": "Trips mismatch",
         "commission_risk": "Commission risk"
+      },
+      "recommendedAction": {
+        "review_or_convert": "Review or convert",
+        "investigate_partner_or_create_lead": "Investigate partner or create lead",
+        "check_partner_status": "Check partner status",
+        "sync_partner": "Sync partner",
+        "reconcile_dates": "Reconcile dates",
+        "investigate_telemetry": "Investigate telemetry",
+        "commission_window_expired": "Commission window expired",
+        "commission_push_needed": "Commission push needed"
       },
       "values": {
         "partner": "Partner value",
