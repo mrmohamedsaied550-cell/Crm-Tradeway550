@@ -31,6 +31,8 @@ import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ReactivateLeadModal } from '@/components/admin/reactivate-lead-modal';
+import { RotateLeadModal } from '@/components/admin/rotate-lead-modal';
+import { RotationHistoryCard } from '@/components/admin/lead-detail/rotation-history-card';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { AttemptsHistoryCard } from '@/components/admin/lead-detail/attempts-history-card';
 import { StageStatusPicker } from '@/components/admin/lead-detail/stage-status-picker';
@@ -171,6 +173,11 @@ export default function LeadDetailPage(): JSX.Element {
   const [reactivateOpen, setReactivateOpen] = useState<boolean>(false);
   const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [reactivateSubmitting, setReactivateSubmitting] = useState<boolean>(false);
+
+  // Phase D3 — D3.4: rotation modal state.
+  const [rotateOpen, setRotateOpen] = useState<boolean>(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  const [rotateSubmitting, setRotateSubmitting] = useState<boolean>(false);
 
   // Tick once a minute so relative-time labels stay fresh in the
   // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
@@ -527,6 +534,53 @@ export default function LeadDetailPage(): JSX.Element {
     }
   }
 
+  // Phase D3 — D3.4: manual rotation. Capability gating happens on
+  // the CTA's render guard; here we just call the endpoint and
+  // refresh the lead detail (the rotation log + history card pull
+  // their own data on the next reload).
+  async function onRotateConfirm(input: {
+    handoverMode: 'full' | 'summary' | 'clean';
+    toUserId?: string;
+    reasonCode?: string;
+    notes?: string;
+  }): Promise<void> {
+    if (!lead) return;
+    setRotateSubmitting(true);
+    setRotateError(null);
+    try {
+      await leadsApi.rotate(lead.id, input);
+      toast({ tone: 'success', title: tDetail('rotate.successToast') });
+      setRotateOpen(false);
+      await reload();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        switch (err.code) {
+          case 'lead.rotate.disabled':
+            setRotateError(tDetail('rotate.errorDisabled'));
+            break;
+          case 'lead.rotate.same_owner':
+            setRotateError(tDetail('rotate.errorSameOwner'));
+            break;
+          case 'lead.rotate.invalid_target':
+            setRotateError(tDetail('rotate.errorInvalidTarget'));
+            break;
+          case 'lead.rotate.no_eligible_agent':
+            setRotateError(tDetail('rotate.errorNoEligible'));
+            break;
+          case 'auth.forbidden':
+            setRotateError(tDetail('rotate.errorForbidden'));
+            break;
+          default:
+            setRotateError(err.message);
+        }
+      } else {
+        setRotateError(String(err));
+      }
+    } finally {
+      setRotateSubmitting(false);
+    }
+  }
+
   // ─────── Loading / error / not found ───────
 
   if (loading && !lead) {
@@ -841,6 +895,12 @@ export default function LeadDetailPage(): JSX.Element {
               out-of-scope hint for multi-attempt cases. */}
           <AttemptsHistoryCard leadId={lead.id} />
 
+          {/* Phase D3 — D3.4: rotation history. Renders nothing when
+              no rotations exist; a sales-agent-shaped role sees a
+              single neutral chip ("Handled previously") instead of
+              the full from/to chain. */}
+          <RotationHistoryCard leadId={lead.id} />
+
           {/* Captain card — only when converted */}
           {isConverted ? (
             <section className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-4 shadow-card">
@@ -964,6 +1024,24 @@ export default function LeadDetailPage(): JSX.Element {
                   {tDetail('reactivate.action')}
                 </Button>
               ) : null}
+
+              {/* Phase D3 — D3.4: rotate CTA. Surfaced only when the
+                  user holds `lead.rotate` (TL+ / Ops). Hidden for
+                  agents. The modal opens with current owner pre-shown
+                  and three handover-mode radio cards. */}
+              {hasCapability('lead.rotate') ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setRotateError(null);
+                    setRotateOpen(true);
+                  }}
+                  size="sm"
+                >
+                  <ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tDetail('rotate.action')}
+                </Button>
+              ) : null}
             </div>
           </section>
         </aside>
@@ -1009,6 +1087,23 @@ export default function LeadDetailPage(): JSX.Element {
         error={reactivateError}
         onConfirm={() => void onReactivateConfirm()}
         onClose={() => setReactivateOpen(false)}
+      />
+
+      {/* Phase D3 — D3.4: rotate-lead modal. Eligible-users list is
+          the active-user roster the page already loads for the
+          assignee picker. Capability-gated CTA at render guards the
+          parent button; the modal trusts that gate. */}
+      <RotateLeadModal
+        open={rotateOpen}
+        leadName={lead.name}
+        currentOwnerName={
+          lead.assignedToId ? (userById.get(lead.assignedToId)?.name ?? null) : null
+        }
+        eligibleUsers={activeUsers.filter((u) => u.id !== lead.assignedToId)}
+        submitting={rotateSubmitting}
+        error={rotateError}
+        onConfirm={(input) => void onRotateConfirm(input)}
+        onClose={() => setRotateOpen(false)}
       />
     </div>
   );

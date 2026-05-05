@@ -495,12 +495,14 @@
             "sla_breach": "SLA breach",
             "sla_threshold_crossed": "SLA threshold",
             "stage_status_changed": "Stage status changed",
+            "rotation": "Lead rotated",
             "system": "System"
           },
           "summary": {
             "stageChange": "Moved from {from} to {to}",
             "stageStatusChanged": "Stage status changed",
             "stageStatusChangedTo": "Stage status: {status}",
+            "rotation": "Lead rotated to a different owner",
             "assigned": "Assigned to {user}",
             "unassigned": "Unassigned",
             "reassigned": "Reassigned from {from} to {to}",
@@ -563,6 +565,62 @@
           "saved": "Stage status saved.",
           "invalidStatus": "That status is not configured for this stage. Refresh and try again.",
           "requiredOnExit": "Pick a status for this stage before moving the lead."
+        },
+        "rotate": {
+          "action": "Rotate",
+          "title": "Rotate this lead",
+          "body": "This will change the owner of {name} and write an audit log. Operational history is preserved server-side.",
+          "currentOwner": "Current owner: {name}",
+          "currentOwnerNone": "This lead is currently unassigned.",
+          "warning": "Rotation is recorded in the audit log. Visibility of previous owners follows the role and scope rules of the receiving agent.",
+          "confirm": "Rotate",
+          "successToast": "Lead rotated.",
+          "errorDisabled": "Rotation is disabled in this environment.",
+          "errorSameOwner": "That user is already the current owner.",
+          "errorInvalidTarget": "Pick a different active user as the target.",
+          "errorNoEligible": "No eligible agent was found by the route engine. Pick a target manually.",
+          "errorForbidden": "You don't have permission to rotate this lead.",
+          "loadFailed": "Couldn't load rotation history.",
+          "targetLabel": "Send to",
+          "targetHint": "Leave empty to let the route engine pick the next owner.",
+          "targetAuto": "Auto via route engine",
+          "reasonLabel": "Reason code (optional)",
+          "reasonHint": "Stable tag for reporting (e.g. capacity_balance, sla_t150_breach).",
+          "notesLabel": "Notes (optional)",
+          "notesHint": "Up to 1000 characters. Summary Transfer surfaces this to the new owner.",
+          "handoverMode": {
+            "legend": "Handover mode",
+            "full": {
+              "title": "Full Transfer",
+              "help": "Operational history is preserved. Visibility still follows permissions."
+            },
+            "summary": {
+              "title": "Summary Transfer",
+              "help": "New owner sees the summary you write — not the prior transcript."
+            },
+            "clean": {
+              "title": "Clean Transfer",
+              "help": "New owner starts fresh. Pending follow-ups owned by the prior agent are cancelled."
+            }
+          },
+          "historyTitle": "Rotation history",
+          "historyRedacted": "Handled previously ({count} rotations)",
+          "fromTo": "Rotated {from} → {to}",
+          "toOnly": "Assigned to {to}",
+          "actorLine": "By {actor}",
+          "reasonLine": "Reason: {reason}",
+          "mode": {
+            "full": "Full",
+            "summary": "Summary",
+            "clean": "Clean"
+          },
+          "trigger": {
+            "manual_tl": "Manual",
+            "manual_ops": "Manual (Ops)",
+            "sla_breach": "SLA breach",
+            "agent_unavailable": "Agent unavailable",
+            "capacity_balance": "Capacity balance"
+          }
         }
       },
       "drawer": {

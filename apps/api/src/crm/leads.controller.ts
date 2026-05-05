@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -34,9 +35,11 @@ function claimsToScope(claims: AccessTokenClaims): ScopeUserClaims {
 
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
+import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { LeadStageStatusService } from './lead-stage-status.service';
 import { SetStageStatusSchema } from './lead-stage-status.dto';
 import { PipelineService } from './pipeline.service';
+import { RotationService } from './rotation.service';
 import { SlaService } from './sla.service';
 import {
   AddActivitySchema,
@@ -49,9 +52,11 @@ import {
   ListLeadsByStageQuerySchema,
   ListLeadsQuerySchema,
   MoveStageSchema,
+  RotateLeadSchema,
   UpdateLeadSchema,
 } from './leads.dto';
 
+class RotateLeadDto extends createZodDto(RotateLeadSchema) {}
 class SetStageStatusDto extends createZodDto(SetStageStatusSchema) {}
 class CreateLeadDto extends createZodDto(CreateLeadSchema) {}
 class UpdateLeadDto extends createZodDto(UpdateLeadSchema) {}
@@ -84,6 +89,8 @@ export class LeadsController {
     private readonly sla: SlaService,
     /** Phase D3 — D3.3: stage-specific status surface. */
     private readonly stageStatus: LeadStageStatusService,
+    /** Phase D3 — D3.4: lead rotation engine. */
+    private readonly rotation: RotationService,
   ) {}
 
   @Get('pipeline/stages')
@@ -308,6 +315,65 @@ export class LeadsController {
       user.sub,
       claimsToScope(user),
     );
+  }
+
+  /**
+   * Phase D3 — D3.4: lead rotation surface.
+   *
+   * `POST /leads/:id/rotate` — capability `lead.rotate` (TLs / ops /
+   * account_manager / super_admin). Body picks `handoverMode` (full
+   * / summary / clean) and optional `toUserId`, `reasonCode`,
+   * `notes`. Rejects with `lead.rotate.disabled` when D3_ENGINE_V1
+   * resolves false (the engine + log are dormant under flag-off so
+   * legacy behaviour stays byte-identical).
+   *
+   * `GET /leads/:id/rotations` — capability `lead.read` (any caller
+   * who can see the lead). Service-side visibility gate sanitises
+   * `fromUser` / `toUser` / `actor` / `notes` for callers without
+   * `lead.write` (D2.6 pattern). The `canSeeOwners` flag in the
+   * response body lets the frontend render neutral copy without
+   * second-guessing the redaction.
+   */
+  @Post('leads/:id/rotate')
+  @RequireCapability('lead.rotate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rotate a lead to a different owner (audited)' })
+  rotate(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: RotateLeadDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    if (!isD3EngineV1Enabled()) {
+      throw new BadRequestException({
+        code: 'lead.rotate.disabled',
+        message: 'Rotation is disabled in this environment.',
+      });
+    }
+    // Manual rotation through this endpoint is always recorded as
+    // `manual_tl` — the distinction between TL and Ops triggers is
+    // a reporting concern that can be derived later from
+    // `actorUserId`'s role. Keeping a single trigger here avoids
+    // a per-request DB role lookup.
+    return this.rotation.rotateLead({
+      leadId: id,
+      trigger: 'manual_tl',
+      handoverMode: body.handoverMode,
+      ...(body.toUserId !== undefined && { toUserId: body.toUserId }),
+      ...(body.reasonCode !== undefined && { reasonCode: body.reasonCode }),
+      ...(body.notes !== undefined && { notes: body.notes }),
+      actorUserId: user.sub,
+      userClaims: claimsToScope(user),
+    });
+  }
+
+  @Get('leads/:id/rotations')
+  @RequireCapability('lead.read')
+  @ApiOperation({ summary: 'List rotation history for a lead (visibility-gated)' })
+  listRotations(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.rotation.listRotationsForLead(id, claimsToScope(user));
   }
 
   @Post('leads/:id/activities')

@@ -9,6 +9,13 @@ import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
 import { getSlaMinutes } from './sla.config';
 import { SlaThresholdsService, type SlaThreshold } from './sla-thresholds.service';
+// Phase D3 — D3.4: RotationService is wired as a constructor dep
+// (`@Optional()`) so D3.5 can route SLA-breach reassignment through
+// the rotation engine without another service-shape change. D3.4
+// itself does NOT change `runReassignmentForBreaches` body — the
+// legacy inline path stays the only SLA-breach handler under both
+// flag-on and flag-off. Activating the seam is a D3.5 concern.
+import { RotationService } from './rotation.service';
 
 /**
  * Phase D3 — D3.2: shape returned by `recomputeThreshold` when the
@@ -90,7 +97,49 @@ export class SlaService {
      * provides it.
      */
     @Optional() private readonly thresholds?: SlaThresholdsService,
+    /**
+     * Phase D3 — D3.4: rotation engine. Optional so legacy test
+     * harnesses keep compiling. When wired AND D3_ENGINE_V1=true,
+     * SLA-breach reassignment routes through `RotationService`
+     * (writes a structured `LeadRotationLog` row + the `lead.rotated`
+     * audit verb in addition to the legacy `sla_breach` activity).
+     * When unwired or flag-off, the existing inline reassignment
+     * path runs unchanged.
+     */
+    @Optional() private readonly rotation?: RotationService,
   ) {}
+
+  /**
+   * Phase D3 — D3.4 seam for D3.5: route an SLA-breach reassignment
+   * through the rotation engine (when wired AND `D3_ENGINE_V1` is on).
+   * Currently UNUSED — `runReassignmentForBreaches` keeps the legacy
+   * inline path. D3.5 flips this seam to active by replacing the
+   * inline reassignment block in `runReassignmentForBreaches` with
+   * a call to this method.
+   *
+   * The method is intentionally tiny: a thin shim that asserts the
+   * dependency is wired and delegates to `RotationService.rotateLead`
+   * with `trigger: 'sla_breach'` and `handoverMode: 'full'` (the
+   * locked product default for SLA-driven auto-rotations). Returning
+   * the rotation outcome lets the caller fold it into its existing
+   * per-tenant log line.
+   */
+  async routeSlaBreachThroughRotation(input: {
+    leadId: string;
+    actorUserId: string | null;
+    reasonCode?: string;
+  }) {
+    if (!this.rotation) {
+      throw new Error('SlaService: RotationService not wired (D3.5 must inject it)');
+    }
+    return this.rotation.rotateLead({
+      leadId: input.leadId,
+      trigger: 'sla_breach',
+      handoverMode: 'full',
+      ...(input.reasonCode !== undefined && { reasonCode: input.reasonCode }),
+      actorUserId: input.actorUserId,
+    });
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // helpers used by LeadsService / CaptainsService inside their own tx

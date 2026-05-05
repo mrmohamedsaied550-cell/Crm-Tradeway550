@@ -82,6 +82,8 @@ model Tenant {
   duplicateDecisionLogs       DuplicateDecisionLog[]
   /// Phase D3 — D3.3: per-(lead × stage) status history.
   leadStageStatuses           LeadStageStatus[]
+  /// Phase D3 — D3.4: per-lead rotation history.
+  leadRotationLogs            LeadRotationLog[]
 
   @@map("tenants")
 }
@@ -360,6 +362,11 @@ model User {
   /// Phase D3 — D3.3: stage-status rows authored by this user. Empty
   /// until D3.3 wires the agent picker.
   authoredStageStatuses       LeadStageStatus[]      @relation("LeadStageStatusAuthor")
+  /// Phase D3 — D3.4: rotation-log back-relations. Empty until the
+  /// engine ships in D3.4.
+  rotatedFromLogs             LeadRotationLog[]      @relation("LeadRotationLogFromUser")
+  rotatedToLogs               LeadRotationLog[]      @relation("LeadRotationLogToUser")
+  triggeredRotations          LeadRotationLog[]      @relation("LeadRotationLogActor")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -611,6 +618,11 @@ model Lead {
   /// Back-relation for every LeadStageStatus row historically
   /// written for this lead (across stages and attempts).
   stageStatuses        LeadStageStatus[] @relation("LeadStageStatusHistory")
+  /// Phase D3 — D3.4: append-only rotation-history rows for the lead.
+  /// Sales agents see a redacted view (no from/to user names);
+  /// TL+ see the full from/to chain. Visibility gate lives in
+  /// `RotationService`. Empty until D3.4's first rotation lands.
+  rotationLogs         LeadRotationLog[]
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -800,6 +812,87 @@ model LeadStageStatus {
   @@index([tenantId, leadId, createdAt(sort: Desc)])
   @@index([tenantId, stageId, status])
   @@map("lead_stage_statuses")
+}
+
+/// Phase D3 — D3.4: append-only lead-rotation history.
+///
+/// Each row records ONE rotation — the moment a lead's owner changed,
+/// the trigger (SLA breach, manual TL action, capacity-balance,
+/// agent-unavailable), the handover mode (full / summary / clean),
+/// and forensic context (reason code, free-text notes, optional
+/// payload snapshot). Distinct from `LeadActivity { type: 'rotation' }`
+/// — the activity row is the human-facing timeline entry, this
+/// table is the structured query surface for "rotated to me in the
+/// last 24h" agent-workspace banners and TL coaching dashboards.
+///
+/// Visibility:
+///   The full `(fromUser, toUser, reasonCode, notes, payload)` set is
+///   server-authoritative. The read endpoint redacts those fields
+///   for callers that lack `lead.write` (D2.6 pattern; future
+///   `lead.previous_owner.read` capability will replace it). The
+///   table itself never deletes rows — the redaction happens at the
+///   service-response layer.
+///
+/// `attemptIndex` snapshots `Lead.attemptIndex` so a rotation that
+/// happened on attempt #2 doesn't get silently re-attributed to a
+/// later attempt's report.
+///
+/// FORCE RLS on tenant_id (matches every other tenant-scoped table
+/// in the schema).
+model LeadRotationLog {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId        String  @map("lead_id") @db.Uuid
+  lead          Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Owner of the lead BEFORE the rotation. NULL when the lead was
+  /// unassigned at rotation time (rare but possible — e.g. SLA
+  /// breach on a lead the route engine had previously failed to
+  /// place). SetNull on user delete so disabling an agent never
+  /// destroys the audit trail.
+  fromUserId    String? @map("from_user_id") @db.Uuid
+  fromUser      User?   @relation("LeadRotationLogFromUser", fields: [fromUserId], references: [id], onDelete: SetNull)
+  /// Owner AFTER the rotation. NULL when the route engine had no
+  /// eligible agent and the lead was left unassigned (the activity
+  /// row + log still record the attempt). SetNull on user delete.
+  toUserId      String? @map("to_user_id") @db.Uuid
+  toUser        User?   @relation("LeadRotationLogToUser", fields: [toUserId], references: [id], onDelete: SetNull)
+  /// Free-text trigger code. Today: `sla_breach` | `manual_tl` |
+  /// `manual_ops` | `agent_unavailable` | `capacity_balance`. Stored
+  /// as TEXT (not enum) so future triggers don't need a migration.
+  trigger       String
+  /// Handover mode chosen at rotation time. `full` | `summary` |
+  /// `clean`. Drives the new owner's view + the activity payload
+  /// shape (see RotationService).
+  handoverMode  String  @map("handover_mode")
+  /// Optional stable code categorising the rotation (e.g.
+  /// `sla_t150_breach`, `tl_capacity_balance`). Distinct from
+  /// `trigger` — `trigger` is "what fired this", `reasonCode` is
+  /// "what tag should the dashboard group it under".
+  reasonCode    String? @map("reason_code")
+  /// Free-text TL/Ops note. For Summary Transfer this is shown to
+  /// the new owner; for Full / Clean it's TL+-only.
+  notes         String?
+  /// Forensic snapshot — anything the engine wants to preserve
+  /// (matched rule id, eligibility filter results, etc.). Optional.
+  payload       Json?
+  /// Snapshot of `Lead.attemptIndex` at rotation time.
+  attemptIndex  Int     @map("attempt_index")
+  /// Actor — the user who triggered the rotation. NULL when the
+  /// scheduler (system) initiated it.
+  actorUserId   String? @map("actor_user_id") @db.Uuid
+  actor         User?   @relation("LeadRotationLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Per-lead history (newest first) — drives the lead-detail card.
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  // "rotated to me in the last 24h" — drives the agent-workspace
+  // banner D3.7 ships.
+  @@index([tenantId, toUserId, createdAt(sort: Desc)])
+  // Per-trigger reporting (Ops dashboards, breach analytics).
+  @@index([tenantId, trigger, createdAt(sort: Desc)])
+  @@map("lead_rotation_logs")
 }
 
 /// Captain — a Lead converted to an active driver.

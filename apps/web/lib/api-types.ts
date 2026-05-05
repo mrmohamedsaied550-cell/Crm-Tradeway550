@@ -193,6 +193,11 @@ export type LeadActivityType =
   // when an agent records a stage-specific status (call disposition,
   // docs-pending sub-state, …). Inert when D3_ENGINE_V1=false.
   | 'stage_status_changed'
+  // Phase D3 — D3.4: emitted by RotationService.rotateLead alongside
+  // the structured `LeadRotationLog` row + `lead.rotated` audit verb.
+  // Sales agents see a sanitised summary (no from/to user names);
+  // TL+ see the full chain. Inert when D3_ENGINE_V1=false.
+  | 'rotation'
   | 'system';
 
 export type CaptainStatus = 'active' | 'inactive' | 'archived';
@@ -990,4 +995,54 @@ export interface SetStageStatusResponse {
   leadId: string;
   previousStatus: string | null;
   currentStatus: StageStatusHistoryRow;
+}
+
+/**
+ * Phase D3 — D3.4: lead rotation surfaces.
+ *
+ * `RotationOutcome` is the response from `POST /leads/:id/rotate`.
+ * `RotationHistoryRow` mirrors `GET /leads/:id/rotations`, with
+ * `fromUser` / `toUser` / `actor` / `notes` redacted to NULL by the
+ * server when the caller lacks `lead.write` (D2.6 visibility gate).
+ * The `canSeeOwners` boolean is the explicit signal so the UI
+ * doesn't have to second-guess null vs hidden.
+ */
+export type HandoverMode = 'full' | 'summary' | 'clean';
+export type RotationTrigger =
+  | 'manual_tl'
+  | 'manual_ops'
+  | 'sla_breach'
+  | 'agent_unavailable'
+  | 'capacity_balance';
+
+export interface RotationOutcome {
+  rotationId: string;
+  leadId: string;
+  fromUserId: string | null;
+  toUserId: string | null;
+  trigger: RotationTrigger;
+  handoverMode: HandoverMode;
+  attemptIndex: number;
+  cancelledFollowUpCount: number;
+}
+
+export interface RotationHistoryRow {
+  id: string;
+  trigger: string;
+  handoverMode: string;
+  reasonCode: string | null;
+  attemptIndex: number;
+  notes: string | null;
+  createdAt: string;
+  fromUser: { id: string; name: string } | null;
+  toUser: { id: string; name: string } | null;
+  actor: { id: string; name: string } | null;
+}
+
+export interface RotationHistoryResponse {
+  leadId: string;
+  /** When false, the server stripped fromUser / toUser / actor /
+   *  notes from every row. UI renders neutral copy. */
+  canSeeOwners: boolean;
+  rotations: RotationHistoryRow[];
 }

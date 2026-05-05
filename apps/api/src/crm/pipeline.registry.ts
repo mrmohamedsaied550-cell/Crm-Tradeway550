@@ -83,6 +83,12 @@ export const ACTIVITY_TYPES = [
   // remains in the registry so the audit table accepts it if a
   // tenant flips the flag mid-window).
   'stage_status_changed',
+  // Phase D3 — D3.4: emitted by RotationService.rotateLead — once
+  // per rotation, alongside the structured `LeadRotationLog` row +
+  // `lead.rotated` audit verb. Sales agents see a sanitised
+  // payload (no from/to user names, no sensitive notes); TL+ see
+  // the full chain. Inert when `D3_ENGINE_V1` resolves false.
+  'rotation',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

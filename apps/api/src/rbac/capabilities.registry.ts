@@ -60,6 +60,16 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'lead.stage.status.write',
     description: 'Record a stage-specific status on a lead',
   },
+  // Phase D3 — D3.4: rotate a lead — change its owner in a controlled,
+  // audited way. Distinct from `lead.assign` which is the agent-self-
+  // claim path; rotation is a TL+/Ops surface that writes a structured
+  // `LeadRotationLog` row + `lead.rotated` audit verb.
+  // Default grants: TLs (sales/activation/driving), ops_manager,
+  // account_manager, super_admin (auto). NOT granted to agents.
+  {
+    code: 'lead.rotate',
+    description: 'Rotate a lead to a different owner (writes a rotation audit row)',
+  },
 
   // Meta lead-source registration (P2-06)
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },

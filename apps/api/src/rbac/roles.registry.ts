@@ -75,6 +75,9 @@ const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
   'lead.write',
   'lead.convert',
   'lead.import',
+  // Phase D3 — D3.4: TLs rotate leads inside their team scope. Ops /
+  // Account Manager get it via their explicit role bundles below.
+  'lead.rotate',
   'whatsapp.handover',
   // Phase C — C10B-4: TLs reassign + reopen + see the review queue
   // (resolution is admin-only — see ops_manager / account_manager).
@@ -117,6 +120,8 @@ export const ROLE_DEFINITIONS = [
       'lead.reactivate',
       // Phase D3 — D3.3: stage-status write surface (mirrors agents).
       'lead.stage.status.write',
+      // Phase D3 — D3.4: rotate leads (cross-team scope for ops).
+      'lead.rotate',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -174,6 +179,8 @@ export const ROLE_DEFINITIONS = [
       'lead.reactivate',
       // Phase D3 — D3.3: stage-status write surface (mirrors agents).
       'lead.stage.status.write',
+      // Phase D3 — D3.4: rotate leads (mirrors ops_manager).
+      'lead.rotate',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',

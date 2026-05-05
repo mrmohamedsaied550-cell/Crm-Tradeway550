@@ -54,6 +54,9 @@ import type {
   RoleFieldPermissionRow,
   RoleScopeRow,
   RoleSummary,
+  RotationHistoryResponse,
+  RotationOutcome,
+  HandoverMode,
   SetStageStatusResponse,
   StageStatusesResponse,
   SlaStatus,
@@ -771,6 +774,26 @@ export const leadsApi = {
       method: 'POST',
       body: input,
     }),
+  /**
+   * Phase D3 — D3.4: lead rotation surface.
+   *
+   * `rotate` writes a `LeadRotationLog` row + `LeadActivity` +
+   * `lead.rotated` audit verb in one tx. Returns the outcome,
+   * including how many follow-ups were cancelled (Clean Transfer
+   * only).
+   *
+   * `getRotations` returns history with sensitive fields
+   * (fromUser / toUser / actor / notes) stripped by the server
+   * when the caller lacks `lead.write`. The `canSeeOwners` flag
+   * lets the UI render neutral copy without second-guessing.
+   */
+  rotate: (
+    id: string,
+    input: { handoverMode: HandoverMode; toUserId?: string; reasonCode?: string; notes?: string },
+  ): Promise<RotationOutcome> =>
+    apiFetch<RotationOutcome>(`/leads/${id}/rotate`, { method: 'POST', body: input }),
+  getRotations: (id: string): Promise<RotationHistoryResponse> =>
+    apiFetch<RotationHistoryResponse>(`/leads/${id}/rotations`),
   addActivity: (
     id: string,
     input: {

@@ -72,6 +72,12 @@ function activityTone(type: LeadActivityType): Tone {
     // happened in this stage" framing.
     case 'stage_status_changed':
       return 'info';
+    // Phase D3 — D3.4: rotation events render as warning so they
+    // stand out from regular assignments — a rotation carries more
+    // operational weight (audit row, log entry, possible follow-up
+    // cancellation) than a manual `assignment`.
+    case 'rotation':
+      return 'warning';
     default:
       return 'neutral';
   }
@@ -91,6 +97,10 @@ const ACTIVITY_ICON: Record<LeadActivityType, React.ComponentType<{ className?: 
   // icon so the timeline event reads as "the agent ticked off a
   // status in the stage's catalogue".
   stage_status_changed: ListChecks,
+  // Phase D3 — D3.4: arrow icon mirrors the rotate CTA + the
+  // history-card header icon — same visual language across the
+  // surface.
+  rotation: ArrowRightLeft,
   system: Settings,
 };
 
@@ -423,6 +433,15 @@ function pickSummary(
         return payload.toStatus
           ? tDetail('activity.summary.stageStatusChangedTo', { status: payload.toStatus })
           : tDetail('activity.summary.stageStatusChanged');
+      // Phase D3 — D3.4: rotation summary. The activity payload
+      // carries `fromUserId / toUserId` even for sales-agent
+      // viewers because the activity row itself is unsanitised
+      // (the dedicated rotation-history endpoint handles
+      // visibility). Sales-agent UI surfaces ought to render the
+      // neutral copy; the timeline text stays generic — no actor
+      // names appear here.
+      case 'rotation':
+        return tDetail('activity.summary.rotation');
       case 'system':
         if (payload.captainId) return tDetail('activity.summary.converted');
         return null;
