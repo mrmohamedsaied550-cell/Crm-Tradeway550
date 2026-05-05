@@ -1515,6 +1515,73 @@
         "canWrite": "Write",
         "sensitive": "Sensitive"
       }
+    },
+    "duplicateRules": {
+      "title": "Duplicate / reactivation rules",
+      "subtitle": "When a returning person matches an existing lead or captain, these rules decide whether the system reactivates, queues for review, or rejects.",
+      "loadFailed": "Couldn't load duplicate rules.",
+      "saveFailed": "Couldn't save duplicate rules.",
+      "saved": "Duplicate rules updated.",
+      "saveCta": "Save changes",
+      "resetCta": "Reset to defaults",
+      "noAccess": "You don't have access to tenant settings.",
+      "readOnlyBanner": "You can view these rules but cannot edit them.",
+      "sections": {
+        "timing": "Reactivation timing",
+        "review": "Review policies",
+        "ownership": "Ownership rules",
+        "scope": "Matching scope"
+      },
+      "lostDays": {
+        "label": "Reactivate Lost leads after (days)",
+        "helper": "Lost leads older than this can become a new attempt if the same person returns."
+      },
+      "noAnswerDays": {
+        "label": "Reactivate No Answer leads after (days)",
+        "helper": "No Answer leads can return sooner because they were not a confirmed rejection."
+      },
+      "captain": {
+        "label": "Active captains always go to review",
+        "helper": "Active captains may be asking for support, not trying to register again.",
+        "lockedHint": "Locked policy. The active-captain rule can't be auto-bypassed today."
+      },
+      "won": {
+        "label": "Won leads always go to review",
+        "helper": "Won leads may already be captains or completed activation, so a human should decide.",
+        "lockedHint": "Locked policy. Won leads always require manual review."
+      },
+      "ownership": {
+        "intro": "Choose who owns a returning lead's new attempt.",
+        "options": {
+          "route_engine": {
+            "label": "Route using distribution rules",
+            "helper": "Best for fair capacity-based assignment."
+          },
+          "previous_owner": {
+            "label": "Previous owner",
+            "helper": "Send returning leads back to the last owner."
+          },
+          "unassigned": {
+            "label": "Unassigned",
+            "helper": "Leaves the attempt unassigned for manual review."
+          }
+        }
+      },
+      "crossPipeline": {
+        "label": "Match duplicates across pipelines",
+        "helper": "When off, a lead in another company / country / pipeline will not block a new attempt.",
+        "warning": "This may block new attempts across different companies or countries."
+      },
+      "confirmSave": {
+        "title": "Apply duplicate rules",
+        "body": "These rules affect new manual leads, imports, Meta leads, and WhatsApp inbound. Continue?",
+        "cta": "Apply rules"
+      },
+      "confirmReset": {
+        "title": "Reset to defaults",
+        "body": "All duplicate / reactivation rules will revert to the platform-wide defaults. This is logged in the audit trail.",
+        "cta": "Reset to defaults"
+      }
     }
   },
   "agent": {

@@ -1410,10 +1410,45 @@ export interface UpdateTenantSettingsInput {
   distributionRules?: { source: LeadSource; assigneeUserId: string }[];
 }
 
+/**
+ * Phase D2 — D2.4: tenant duplicate / reactivation rules.
+ *
+ * Stored as a JSONB column on `tenant_settings.duplicate_rules` and
+ * exposed via two dedicated endpoints (separate capability from
+ * `tenant.settings.write`). NULL on the column = use the locked
+ * product defaults; the backend always returns a fully-populated
+ * config object so the UI never has to merge with defaults itself.
+ */
+export type OwnershipOnReactivation = 'route_engine' | 'previous_owner' | 'unassigned';
+export type CaptainBehavior = 'always_review';
+export type WonBehavior = 'always_review';
+
+export interface DuplicateRulesConfig {
+  reactivateLostAfterDays: number;
+  reactivateNoAnswerAfterDays: number;
+  reactivateNoAnswerLostReasonCodes: string[];
+  captainBehavior: CaptainBehavior;
+  wonBehavior: WonBehavior;
+  ownershipOnReactivation: OwnershipOnReactivation;
+  crossPipelineMatch: boolean;
+}
+
+/** Every field optional — the panel sends only what changed. */
+export type DuplicateRulesPatch = Partial<DuplicateRulesConfig>;
+
 export const tenantSettingsApi = {
   get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
   update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
     apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
+  /** D2.4 — read the per-tenant duplicate / reactivation rules. */
+  getDuplicateRules: (): Promise<DuplicateRulesConfig> =>
+    apiFetch<DuplicateRulesConfig>('/tenant/settings/duplicate-rules'),
+  /** D2.4 — write the per-tenant duplicate / reactivation rules. */
+  updateDuplicateRules: (input: DuplicateRulesPatch): Promise<DuplicateRulesConfig> =>
+    apiFetch<DuplicateRulesConfig>('/tenant/settings/duplicate-rules', {
+      method: 'PATCH',
+      body: input,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

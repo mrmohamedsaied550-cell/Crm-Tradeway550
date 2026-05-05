@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { ArrowRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { DuplicateRulesPanel } from '@/components/admin/duplicate-rules-panel';
 import { Field, Input } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
@@ -132,6 +133,13 @@ export default function TenantSettingsPage(): JSX.Element {
           </Button>
         </div>
       </form>
+
+      {/* Phase D2 — D2.4: tenant Duplicate / Reactivation Rules.
+          Operational decision panel — separate from the core SLA /
+          dial-code form because the capability gate is distinct
+          (`tenant.duplicate_rules.write`) and the audience usually
+          differs (Ops Manager vs. tenant admin). */}
+      <DuplicateRulesPanel />
 
       {/* Phase 1A — A10: the legacy inline rules editor moved to
           /admin/distribution. Keep a visible deprecation pointer here
