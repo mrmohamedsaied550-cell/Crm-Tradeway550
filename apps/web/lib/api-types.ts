@@ -106,13 +106,33 @@ export interface CapabilityCatalogueEntry {
   description: string;
 }
 
+/**
+ * Phase D5 — D5.2: catalogue widened to fourteen resources
+ * (lead, lead.activity, lead.review, rotation, followup, captain,
+ * contact, partner_source, partner.verification, partner.evidence,
+ * partner.reconciliation, whatsapp.conversation, report, audit).
+ * `resource` is typed as `string` because the role editor groups
+ * by it and the server treats it as an open string at the
+ * field_permissions DTO boundary; clients should not switch on
+ * the literal set.
+ */
 export interface FieldCatalogueEntry {
-  resource: 'lead';
+  resource: string;
   field: string;
+  /** Sub-group inside the resource — used by the role editor to chunk the matrix. */
+  group?: string;
   sensitive: boolean;
   defaultRead: boolean;
   defaultWrite: boolean;
   labelEn: string;
+  /** Arabic label — present in D5.2 onwards; older payloads may omit. */
+  labelAr?: string;
+  /**
+   * D5.2 — when `false`, runtime redaction MUST NOT strip this
+   * field even if a deny row exists (e.g. `lead.id`). Default
+   * `true` when omitted.
+   */
+  redactable?: boolean;
 }
 
 /**
