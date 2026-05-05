@@ -20,8 +20,11 @@ import { Field as InputField, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
-import { ApiError, partnerVerificationApi } from '@/lib/api';
+import { MilestoneProgress } from '@/components/admin/partner/milestone-progress';
+import { ApiError, partnerMilestoneProgressApi, partnerVerificationApi } from '@/lib/api';
 import type {
+  LeadMilestoneProgressResult,
+  MilestoneProgressProjection,
   PartnerMergeableField,
   PartnerVerificationProjection,
   PartnerVerificationResult,
@@ -60,6 +63,7 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
   const canMerge = hasCapability('partner.merge.write');
 
   const [data, setData] = useState<PartnerVerificationResult | null>(null);
+  const [milestones, setMilestones] = useState<LeadMilestoneProgressResult | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [featureDisabled, setFeatureDisabled] = useState<boolean>(false);
@@ -83,10 +87,19 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
       else setLoading(true);
       setError(null);
       try {
-        const result = await partnerVerificationApi.forLead(leadId, {
-          ...(explicitCheck && { explicitCheck: true }),
-        });
+        const [result, milestoneResult] = await Promise.all([
+          partnerVerificationApi.forLead(leadId, {
+            ...(explicitCheck && { explicitCheck: true }),
+          }),
+          // Best-effort — milestone data is purely informational;
+          // a 4xx here (e.g. lead.not_found racing) shouldn't kill
+          // the whole card.
+          partnerMilestoneProgressApi
+            .forLead(leadId)
+            .catch(() => null as LeadMilestoneProgressResult | null),
+        ]);
         setData(result);
+        setMilestones(milestoneResult);
         setFeatureDisabled(false);
         if (result.projections.length > 0) {
           const sorted = [...result.projections].sort((a, b) => {
@@ -225,6 +238,11 @@ export function PartnerDataCard({ leadId }: { leadId: string }): JSX.Element | n
               hasCaptain={data.hasCaptain}
               canMerge={canMerge}
               onMerge={openMerge}
+              milestones={
+                milestones?.projections.filter(
+                  (m) => m.partnerSourceId === active.partnerSourceId,
+                ) ?? []
+              }
             />
           ) : null}
         </>
@@ -307,6 +325,7 @@ function SourcePanel({
   hasCaptain,
   canMerge,
   onMerge,
+  milestones,
 }: {
   projection: PartnerVerificationProjection;
   t: ReturnType<typeof useTranslations>;
@@ -317,6 +336,7 @@ function SourcePanel({
   hasCaptain: boolean;
   canMerge: boolean;
   onMerge: (field: PartnerMergeableField) => void;
+  milestones: MilestoneProgressProjection[];
 }): JSX.Element {
   const found = projection.recordId !== null;
   const neverSynced = projection.lastSyncAt === null;
@@ -434,6 +454,16 @@ function SourcePanel({
               <li key={w}>{tWarn(w as 'date_mismatch')}</li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {/* D4.7 — milestone progress per active config on this
+          partner source. Pure read-only block; no merge actions. */}
+      {milestones.length > 0 ? (
+        <div className="flex flex-col gap-2">
+          {milestones.map((m) => (
+            <MilestoneProgress key={m.configId} projection={m} />
+          ))}
         </div>
       ) : null}
     </div>

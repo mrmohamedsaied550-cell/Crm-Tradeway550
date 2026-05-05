@@ -66,7 +66,8 @@ interface NavItem {
     | 'backup'
     | 'partnerSources'
     | 'partnerSnapshots'
-    | 'partnerReconciliation';
+    | 'partnerReconciliation'
+    | 'partnerMilestones';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -163,6 +164,15 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'partnerReconciliation',
     icon: ScanSearch,
     cap: 'partner.reconciliation.read',
+  },
+  // Phase D4 — D4.7: milestone configs + commission CSVs. Read
+  // gated on `partner.verification.read` so a TL inspecting can
+  // see the configs; write actions on `partner.milestone.write`.
+  {
+    href: '/admin/partner-milestones',
+    labelKey: 'partnerMilestones',
+    icon: Flag,
+    cap: 'partner.verification.read',
   },
   // PL-4 — Calendar lives at /agent/calendar but is useful to managers
   // too; we link to the same surface from the admin sidebar so TLs and

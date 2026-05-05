@@ -8,6 +8,9 @@ import { PartnerCredentialsCryptoService } from './partner-credentials-crypto.se
 import { PartnerMappingsController } from './partner-mappings.controller';
 import { PartnerMappingsService } from './partner-mappings.service';
 import { PartnerMergeService } from './partner-merge.service';
+import { PartnerMilestoneConfigsService } from './partner-milestone-configs.service';
+import { PartnerMilestoneProgressService } from './partner-milestone-progress.service';
+import { PartnerMilestonesController } from './partner-milestones.controller';
 import { PartnerReconciliationController } from './partner-reconciliation.controller';
 import { PartnerReconciliationService } from './partner-reconciliation.service';
 import { PartnerSnapshotsController } from './partner-snapshots.controller';
@@ -45,6 +48,7 @@ import { PartnerVerificationService } from './partner-verification.service';
     PartnerSnapshotsController,
     PartnerVerificationController,
     PartnerReconciliationController,
+    PartnerMilestonesController,
   ],
   providers: [
     PartnerSourcesService,
@@ -55,6 +59,8 @@ import { PartnerVerificationService } from './partner-verification.service';
     PartnerVerificationService,
     PartnerMergeService,
     PartnerReconciliationService,
+    PartnerMilestoneConfigsService,
+    PartnerMilestoneProgressService,
     PartnerCredentialsCryptoService,
     GoogleSheetsAdapter,
     ManualUploadAdapter,
@@ -67,6 +73,8 @@ import { PartnerVerificationService } from './partner-verification.service';
     PartnerVerificationService,
     PartnerMergeService,
     PartnerReconciliationService,
+    PartnerMilestoneConfigsService,
+    PartnerMilestoneProgressService,
     PartnerCredentialsCryptoService,
   ],
 })

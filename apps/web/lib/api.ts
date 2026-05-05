@@ -75,6 +75,11 @@ import type {
   ReconciliationResult,
   ReconciliationOpenReviewInput,
   ReconciliationOpenReviewResult,
+  MilestoneConfigRow,
+  MilestoneConfigsListResponse,
+  CreateMilestoneConfigInput,
+  UpdateMilestoneConfigInput,
+  LeadMilestoneProgressResult,
   PartnerMappingRow,
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
@@ -1717,6 +1722,56 @@ export const partnerReconciliationApi = {
       method: 'POST',
       body: input,
     }),
+};
+
+/**
+ * Phase D4 — D4.7: PartnerMilestoneConfigs admin client +
+ * progress + commission CSV exports.
+ */
+export const partnerMilestoneConfigsApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      isActive?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<MilestoneConfigsListResponse> =>
+    apiFetch<MilestoneConfigsListResponse>('/partner-milestone-configs', { query }),
+  get: (id: string): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`),
+  create: (body: CreateMilestoneConfigInput): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>('/partner-milestone-configs', { method: 'POST', body }),
+  update: (id: string, body: UpdateMilestoneConfigInput): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`, {
+      method: 'PATCH',
+      body,
+    }),
+  disable: (id: string): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`, { method: 'DELETE' }),
+};
+
+export const partnerMilestoneProgressApi = {
+  forLead: (leadId: string): Promise<LeadMilestoneProgressResult> =>
+    apiFetch<LeadMilestoneProgressResult>(`/partner/milestones/leads/${leadId}`),
+  /** Absolute URL for the commission CSV exports. Frontend uses
+   *  an `<a download>` to trigger the browser's native flow. */
+  progressCsvUrl: (query: { partnerSourceId?: string } = {}): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reports/commission-progress.csv${
+      qs ? `?${qs}` : ''
+    }`;
+  },
+  riskCsvUrl: (query: { partnerSourceId?: string } = {}): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reports/commission-risk.csv${
+      qs ? `?${qs}` : ''
+    }`;
+  },
 };
 
 /**

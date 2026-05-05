@@ -54,6 +54,7 @@
       "partnerSources": "Partner Sources",
       "partnerSnapshots": "Partner Snapshots",
       "partnerReconciliation": "Partner Reconciliation",
+      "partnerMilestones": "Partner Milestones",
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
@@ -2172,7 +2173,8 @@
         "partner_active_not_in_crm": "Partner active, not in CRM",
         "partner_date_mismatch": "Active date mismatch",
         "partner_dft_mismatch": "DFT mismatch",
-        "partner_trips_mismatch": "Trips mismatch"
+        "partner_trips_mismatch": "Trips mismatch",
+        "commission_risk": "Commission risk"
       },
       "values": {
         "partner": "Partner value",
@@ -2296,6 +2298,106 @@
           "snapshot_stale": "Partner snapshot is too old. Sync the source again before merging.",
           "feature_disabled": "Partner Data Hub is disabled in this environment."
         }
+      },
+      "milestone": {
+        "needsPush": "Needs push",
+        "trips": "Trips",
+        "window": "{days}-day window",
+        "deadline": "Deadline: {date}",
+        "daysLeft": "{days} days left",
+        "expiredDaysAgo": "Expired {days} days ago",
+        "nextMilestone": "Next milestone: {step}",
+        "risk": {
+          "low": "On track",
+          "medium": "Mid-window",
+          "high": "Push needed",
+          "expired": "Expired",
+          "completed": "Completed",
+          "unknown": "Pending"
+        },
+        "reason": {
+          "no_partner_record": "No matching partner record yet.",
+          "missing_anchor": "Partner record is missing the anchor date for this milestone."
+        }
+      }
+    },
+    "partnerMilestones": {
+      "title": "Partner Milestones",
+      "subtitle": "Configure commission-window milestones per partner source. Read-only progress is computed from partner snapshot trip counts.",
+      "helper": "Milestones are calculated from partner snapshot trip counts and do not update CRM status automatically.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to milestone configs.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "newCta": "New milestone config",
+      "exportProgress": "Commission progress",
+      "exportRisk": "Commission risk",
+      "emptyTitle": "No milestone configs yet.",
+      "emptyBody": "Define a window and ladder per partner source to surface commission progress on lead detail and the reconciliation report.",
+      "createdToast": "Milestone config created.",
+      "savedToast": "Milestone config saved.",
+      "disabledToast": "Milestone config disabled.",
+      "editorTitle": {
+        "create": "New milestone config",
+        "edit": "Edit milestone config"
+      },
+      "summary": {
+        "window": "{days}-day window"
+      },
+      "anchors": {
+        "partner_active_date": "Partner active date",
+        "partner_dft_date": "Partner DFT date",
+        "first_seen_in_partner": "First seen in partner sheet"
+      },
+      "badges": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "cardActions": {
+        "edit": "Edit",
+        "disable": "Disable"
+      },
+      "form": {
+        "partnerSource": {
+          "label": "Partner source",
+          "placeholder": "Pick a partner source…"
+        },
+        "code": {
+          "label": "Code",
+          "helper": "lowercase_snake_case, unique per partner source. Example: commission_50_30."
+        },
+        "displayName": {
+          "label": "Display name"
+        },
+        "windowDays": {
+          "label": "Window (days)",
+          "helper": "How long after the anchor date the captain has to reach the top milestone."
+        },
+        "anchor": {
+          "label": "Anchor date",
+          "helper": "What date the window starts from."
+        },
+        "steps": {
+          "label": "Milestone steps",
+          "helper": "Comma-separated, ascending. Example: 1, 5, 25, 50."
+        },
+        "risk": {
+          "section": "Risk thresholds (fraction of window remaining)",
+          "helper": "When fraction-of-window-remaining drops below these, the badge flips. Defaults: high=0.30, medium=0.60.",
+          "high": {
+            "label": "High threshold"
+          },
+          "medium": {
+            "label": "Medium threshold"
+          }
+        },
+        "isActive": {
+          "label": "Active"
+        }
+      },
+      "errors": {
+        "invalidSteps": "Milestone steps must be ascending positive integers (e.g. 1, 5, 25, 50).",
+        "invalidWindowDays": "Window days must be a positive integer.",
+        "partnerSourceRequired": "Pick a partner source first."
       }
     }
   },

@@ -1428,7 +1428,8 @@ export type ReconciliationCategory =
   | 'partner_active_not_in_crm'
   | 'partner_date_mismatch'
   | 'partner_dft_mismatch'
-  | 'partner_trips_mismatch';
+  | 'partner_trips_mismatch'
+  | 'commission_risk';
 
 export type ReconciliationSeverity = 'info' | 'warning';
 
@@ -1472,4 +1473,74 @@ export interface ReconciliationOpenReviewInput {
 export interface ReconciliationOpenReviewResult {
   reviewId: string;
   alreadyOpen: boolean;
+}
+
+/**
+ * Phase D4 — D4.7: milestone shapes.
+ */
+export type MilestoneAnchor = 'partner_active_date' | 'partner_dft_date' | 'first_seen_in_partner';
+
+export type MilestoneRisk = 'low' | 'medium' | 'high' | 'expired' | 'completed' | 'unknown';
+
+export interface MilestoneConfigRow {
+  id: string;
+  partnerSourceId: string;
+  partnerSource: { id: string; displayName: string; partnerCode: string } | null;
+  code: string;
+  displayName: string;
+  windowDays: number;
+  milestoneSteps: number[];
+  anchor: string;
+  riskThresholds: { high: number; medium: number } | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MilestoneConfigsListResponse {
+  items: MilestoneConfigRow[];
+  total: number;
+}
+
+export interface CreateMilestoneConfigInput {
+  partnerSourceId: string;
+  code: string;
+  displayName: string;
+  windowDays: number;
+  milestoneSteps: number[];
+  anchor: MilestoneAnchor;
+  riskThresholds?: { high: number; medium: number };
+  isActive?: boolean;
+}
+
+export type UpdateMilestoneConfigInput = Partial<
+  Omit<CreateMilestoneConfigInput, 'partnerSourceId'>
+>;
+
+export interface MilestoneProgressProjection {
+  partnerSourceId: string;
+  partnerSourceName: string;
+  configId: string;
+  configCode: string;
+  displayName: string;
+  anchor: string;
+  anchorAt: string | null;
+  windowDays: number;
+  windowEndsAt: string | null;
+  daysLeft: number | null;
+  tripCount: number | null;
+  targetTrips: number;
+  milestoneSteps: number[];
+  currentMilestone: number | null;
+  nextMilestone: number | null;
+  progressPct: number;
+  risk: MilestoneRisk;
+  needsPush: boolean;
+  reason: string | null;
+}
+
+export interface LeadMilestoneProgressResult {
+  leadId: string;
+  phone: string | null;
+  projections: MilestoneProgressProjection[];
 }

@@ -6,6 +6,7 @@ import { LeadReviewService } from '../crm/lead-review.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { AuditService } from '../audit/audit.service';
+import { PartnerMilestoneProgressService } from './partner-milestone-progress.service';
 
 /**
  * Phase D4 — D4.6: PartnerReconciliationService.
@@ -68,6 +69,7 @@ export class PartnerReconciliationService {
     private readonly audit: AuditService,
     private readonly leadReviews: LeadReviewService,
     private readonly scopeContext: ScopeContextService,
+    private readonly milestones: PartnerMilestoneProgressService,
   ) {}
 
   /**
@@ -172,6 +174,12 @@ export class PartnerReconciliationService {
       all.push(...missing);
     }
 
+    // 3. D4.7 commission_risk — derive at-risk milestone rows
+    // from active milestone configs. NO milestone config →
+    // empty result for this category (no fake risk).
+    const riskItems = await this.computeCommissionRisk(filters, scopeWhere);
+    all.push(...riskItems);
+
     // Apply category filter + counts + final cap.
     const countsAll = countByCategory(all);
     const filtered = filters.category ? all.filter((i) => i.category === filters.category) : all;
@@ -264,7 +272,18 @@ export class PartnerReconciliationService {
     userClaims: ScopeUserClaims,
   ): Promise<{ reviewId: string; alreadyOpen: boolean }> {
     const tenantId = requireTenantId();
-    if (!RECONCILIATION_CATEGORIES.has(input.category)) {
+    if (input.category === 'commission_risk') {
+      // commission_risk is an export-only category in D4.7 — there
+      // is no LeadReview reason mapped to it, so we refuse the
+      // promotion explicitly. Operators surface commission risk
+      // via the milestone progress card and the dedicated
+      // commission CSV.
+      throw new BadRequestException({
+        code: 'partner.reconciliation.not_promotable',
+        message: 'commission_risk cannot be promoted to a TL Review row.',
+      });
+    }
+    if (!(RECONCILIATION_CATEGORIES as Set<string>).has(input.category)) {
       throw new BadRequestException({
         code: 'partner.reconciliation.invalid_category',
         message: `Unknown reconciliation category: ${input.category}`,
@@ -307,9 +326,12 @@ export class PartnerReconciliationService {
       ...(input.notes && { notes: input.notes }),
     } as Prisma.InputJsonValue;
 
+    // Type narrowing — `commission_risk` was rejected above, so
+    // by here `input.category` is one of the LeadReview-mapped
+    // reasons. Cast through the LeadReview reason union.
     const result = await this.leadReviews.raiseReview({
       leadId: input.leadId,
-      reason: input.category,
+      reason: input.category as Exclude<typeof input.category, 'commission_risk'>,
       reasonPayload,
       actorUserId: input.actorUserId,
     });
@@ -538,6 +560,58 @@ export class PartnerReconciliationService {
     }
     return out;
   }
+
+  /**
+   * D4.7 — derive `commission_risk` items from active milestone
+   * configs. Uses `PartnerMilestoneProgressService.listAllProgress`
+   * with the `onlyAtRisk` flag (returns rows with risk in
+   * {`high`, `expired`, `medium`}; we filter to `high`/`expired`
+   * here since `medium` is too quiet for the reconciliation
+   * report). Returns an empty array when no config exists — never
+   * fakes risk per the locked product decision.
+   */
+  private async computeCommissionRisk(
+    filters: ReconciliationFilters,
+    _scopeWhere: Prisma.LeadWhereInput | null,
+  ): Promise<ReconciliationItem[]> {
+    const rows = await this.milestones.listAllProgress({
+      ...(filters.partnerSourceId && { partnerSourceId: filters.partnerSourceId }),
+      onlyAtRisk: true,
+    });
+    const out: ReconciliationItem[] = [];
+    for (const row of rows) {
+      const projection = row.projection;
+      // Only surface high / expired in the reconciliation report.
+      // `medium` is informational and clutters the "needs action"
+      // surface; operators see medium via the dedicated milestone
+      // progress card on lead detail.
+      if (projection.risk !== 'high' && projection.risk !== 'expired') continue;
+      out.push({
+        category: 'commission_risk',
+        partnerSourceId: projection.partnerSourceId,
+        partnerSourceName: projection.partnerSourceName,
+        leadId: null,
+        captainId: null,
+        contactId: null,
+        phone: row.phone,
+        crmName: row.crmName,
+        crmStage: row.crmStage,
+        crmLifecycleState: null,
+        crmActiveDate: null,
+        crmDftDate: null,
+        crmTripCount: null,
+        partnerStatus: null,
+        partnerActiveDate: null,
+        partnerDftDate: null,
+        partnerTripCount: projection.tripCount,
+        lastSyncAt: projection.windowEndsAt ? new Date(projection.windowEndsAt) : null,
+        severity: projection.risk === 'expired' ? 'warning' : 'warning',
+        recommendedAction:
+          projection.risk === 'expired' ? 'commission_window_expired' : 'commission_push_needed',
+      });
+    }
+    return out;
+  }
 }
 
 // ─── helpers ────────────────────────────────────────────────────────
@@ -597,6 +671,7 @@ function emptyCounts(): Record<ReconciliationCategory, number> {
     partner_date_mismatch: 0,
     partner_dft_mismatch: 0,
     partner_trips_mismatch: 0,
+    commission_risk: 0,
   };
 }
 
@@ -608,6 +683,13 @@ function countByCategory(items: ReconciliationItem[]): Record<ReconciliationCate
 
 // ─── shapes ─────────────────────────────────────────────────────────
 
+/**
+ * Categories that can be promoted into the TL Review Queue. The
+ * larger `ReconciliationCategory` union includes `commission_risk`,
+ * which is read-only / export-only — there's no LeadReview reason
+ * mapped to it, and the controller's open-review Zod enum
+ * deliberately excludes it.
+ */
 export const RECONCILIATION_CATEGORIES = new Set([
   'partner_missing',
   'partner_active_not_in_crm',
@@ -620,7 +702,8 @@ export type ReconciliationCategory =
   | 'partner_active_not_in_crm'
   | 'partner_date_mismatch'
   | 'partner_dft_mismatch'
-  | 'partner_trips_mismatch';
+  | 'partner_trips_mismatch'
+  | 'commission_risk';
 
 export type ReconciliationSeverity = 'info' | 'warning';
 
