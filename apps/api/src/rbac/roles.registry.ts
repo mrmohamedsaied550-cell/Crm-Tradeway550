@@ -88,6 +88,21 @@ const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
   'whatsapp.conversation.assign',
   'whatsapp.conversation.reopen',
   'whatsapp.review.read',
+  // Phase D4 — D4.1: Partner Data Hub. Conservative TL grants —
+  // read partner sources / verification, run manual syncs, apply
+  // controlled merges with attached evidence, and view the
+  // reconciliation report. RESOLVING reconciliation discrepancies
+  // and editing partner sources / milestone configs stays Ops+.
+  // Sales / activation / driving agents intentionally hold NONE
+  // of these in D4.1; D4.4 will revisit whether agents should
+  // see the read-only PartnerData card on their own leads via a
+  // separate `partner.verification.read` grant.
+  'partner.source.read',
+  'partner.sync.run',
+  'partner.verification.read',
+  'partner.merge.write',
+  'partner.evidence.write',
+  'partner.reconciliation.read',
 ];
 
 export const ROLE_DEFINITIONS = [
@@ -161,6 +176,21 @@ export const ROLE_DEFINITIONS = [
       'captain.document.write',
       'captain.document.review',
       'captain.trip.write',
+      // Phase D4 — D4.1: Ops Manager owns partner-source admin,
+      // milestone configs, and reconciliation resolution. Read /
+      // sync / merge / evidence are inherited from TL_EXTRAS at
+      // the role-template level via super_admin auto-bypass + the
+      // matching codes are listed here explicitly so removing TL
+      // status doesn't accidentally revoke Ops capabilities.
+      'partner.source.read',
+      'partner.source.write',
+      'partner.sync.run',
+      'partner.verification.read',
+      'partner.merge.write',
+      'partner.evidence.write',
+      'partner.reconciliation.read',
+      'partner.reconciliation.resolve',
+      'partner.milestone.write',
     ],
   },
   {
@@ -222,6 +252,19 @@ export const ROLE_DEFINITIONS = [
       'captain.document.write',
       'captain.document.review',
       'captain.trip.write',
+      // Phase D4 — D4.1: Account Manager owns the same partner
+      // surface as Ops (mirrors the rest of this role bundle). Read
+      // / sync / merge / evidence are listed explicitly so the
+      // grants survive any future TL_EXTRAS reshuffle.
+      'partner.source.read',
+      'partner.source.write',
+      'partner.sync.run',
+      'partner.verification.read',
+      'partner.merge.write',
+      'partner.evidence.write',
+      'partner.reconciliation.read',
+      'partner.reconciliation.resolve',
+      'partner.milestone.write',
     ],
   },
   {

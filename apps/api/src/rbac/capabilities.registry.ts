@@ -211,6 +211,50 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'distribution.write',
     description: 'Create / update / delete distribution rules and agent capacities',
   },
+
+  // Phase D4 — D4.1: Partner Data Hub. Capabilities are registered
+  // now so later D4.x chunks (D4.2 admin, D4.3 sync engine, D4.4
+  // verification card, D4.5 controlled merge, D4.6 reconciliation,
+  // D4.7 milestones) can gate themselves without a per-chunk
+  // capability migration. Default grants live in roles.registry.ts
+  // — D4.1 ships conservative defaults: TL+ for source.read /
+  // sync.run / verification.read / merge.write / evidence.write /
+  // reconciliation.read; Ops / Account Manager (and super_admin
+  // auto-bypass) for source.write / milestone.write /
+  // reconciliation.resolve. Sales / activation / driving agents
+  // hold NONE today; D4.4 will reconsider whether agents should
+  // hold partner.verification.read for the read-only PartnerData
+  // card on their own leads.
+  { code: 'partner.source.read', description: 'View partner sources + sync history' },
+  {
+    code: 'partner.source.write',
+    description: 'Create / update / delete partner sources and field mappings',
+  },
+  { code: 'partner.sync.run', description: 'Trigger a manual partner sync' },
+  {
+    code: 'partner.verification.read',
+    description: 'View partner verification on leads / captains',
+  },
+  {
+    code: 'partner.merge.write',
+    description: 'Apply controlled merge of selected partner fields into a lead / captain',
+  },
+  {
+    code: 'partner.evidence.write',
+    description: 'Attach approval evidence (partner record / screenshot / note) to a lead',
+  },
+  {
+    code: 'partner.reconciliation.read',
+    description: 'View partner reconciliation reports and discrepancy queue',
+  },
+  {
+    code: 'partner.reconciliation.resolve',
+    description: 'Acknowledge / resolve partner reconciliation discrepancies',
+  },
+  {
+    code: 'partner.milestone.write',
+    description: 'Create / update / delete partner milestone configurations',
+  },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];
