@@ -1161,3 +1161,124 @@ export interface EscalationRulesConfig {
   };
   defaultHandoverMode: EscalationHandoverMode;
 }
+
+/**
+ * Phase D4 — D4.2: Partner Data Hub admin shapes.
+ *
+ * The API NEVER returns raw credentials — only the safe metadata
+ * fields below. The plaintext credentials live exclusively in the
+ * Create / Update bodies and are encrypted server-side.
+ */
+export type PartnerAdapter = 'google_sheets' | 'manual_upload';
+export type PartnerScheduleKind = 'manual' | 'cron';
+export type PartnerTabMode = 'fixed' | 'new_per_period';
+
+export type PartnerTabDiscoveryRule =
+  | { kind: 'name_pattern'; pattern: string }
+  | { kind: 'most_recently_modified' };
+
+export interface PartnerSourceRow {
+  id: string;
+  partnerCode: string;
+  displayName: string;
+  adapter: string;
+  companyId: string | null;
+  countryId: string | null;
+  scheduleKind: string;
+  cronSpec: string | null;
+  tabMode: string;
+  fixedTabName: string | null;
+  tabDiscoveryRule: PartnerTabDiscoveryRule | null;
+  hasCredentials: boolean;
+  lastTestedAt: string | null;
+  connectionStatus: string | null;
+  lastSyncAt: string | null;
+  lastSyncStatus: string | null;
+  credentialUpdatedAt: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerSourcesListResponse {
+  items: PartnerSourceRow[];
+  total: number;
+}
+
+export interface GoogleSheetsCredentialsInput {
+  serviceAccountEmail: string;
+  privateKey: string;
+  sheetId: string;
+}
+
+export type PartnerCredentialsInput = GoogleSheetsCredentialsInput | Record<string, unknown>;
+
+export interface CreatePartnerSourceInput {
+  partnerCode: string;
+  displayName: string;
+  adapter: PartnerAdapter;
+  companyId?: string | null;
+  countryId?: string | null;
+  scheduleKind?: PartnerScheduleKind;
+  cronSpec?: string | null;
+  tabMode?: PartnerTabMode;
+  fixedTabName?: string | null;
+  tabDiscoveryRule?: PartnerTabDiscoveryRule | null;
+  isActive?: boolean;
+  credentials?: PartnerCredentialsInput | null;
+}
+
+export type UpdatePartnerSourceInput = Partial<CreatePartnerSourceInput>;
+
+export interface PartnerTestConnectionResult {
+  status: 'stubbed';
+  message: string;
+  configIssues: string[];
+}
+
+export type PartnerTargetField =
+  | 'phone'
+  | 'name'
+  | 'partner_status'
+  | 'partner_active_date'
+  | 'partner_dft_date'
+  | 'trip_count'
+  | 'last_trip_at';
+
+export type PartnerTransformKind = 'passthrough' | 'parse_date' | 'to_e164' | 'lowercase';
+
+export interface PartnerMappingRow {
+  id: string;
+  partnerSourceId: string;
+  sourceColumn: string;
+  targetField: string;
+  transformKind: string | null;
+  transformArgs: Record<string, unknown> | null;
+  isRequired: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePartnerMappingInput {
+  sourceColumn: string;
+  targetField: PartnerTargetField;
+  transformKind?: PartnerTransformKind;
+  transformArgs?: Record<string, unknown>;
+  isRequired?: boolean;
+  displayOrder?: number;
+}
+
+export interface UpdatePartnerMappingInput {
+  sourceColumn?: string;
+  targetField?: PartnerTargetField;
+  transformKind?: PartnerTransformKind | null;
+  transformArgs?: Record<string, unknown> | null;
+  isRequired?: boolean;
+  displayOrder?: number;
+}
+
+export interface PartnerMappingReadiness {
+  phoneMapped: boolean;
+  missingTargets: string[];
+}

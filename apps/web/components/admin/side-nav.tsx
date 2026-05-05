@@ -23,6 +23,7 @@ import {
   Megaphone,
   Calendar,
   Database,
+  Network,
   BarChart3,
   Settings,
   Route,
@@ -60,7 +61,8 @@ interface NavItem {
     | 'distribution'
     | 'lostReasons'
     | 'roles'
-    | 'backup';
+    | 'backup'
+    | 'partnerSources';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -130,6 +132,16 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'metaLeadSources',
     icon: Megaphone,
     cap: 'meta.leadsource.read',
+  },
+  // Phase D4 — D4.2: Partner Data Hub admin (sources + mappings).
+  // Visible to TL+ via `partner.source.read`. Configuration only —
+  // sync engine, snapshots, verification card, merge, milestones
+  // ship in D4.3 — D4.7.
+  {
+    href: '/admin/partner-sources',
+    labelKey: 'partnerSources',
+    icon: Network,
+    cap: 'partner.source.read',
   },
   // PL-4 — Calendar lives at /agent/calendar but is useful to managers
   // too; we link to the same surface from the admin sidebar so TLs and

@@ -58,6 +58,15 @@ import type {
   LeadReviewsListResponse,
   NeedsAttentionResponse,
   EscalationRulesConfig,
+  PartnerSourceRow,
+  PartnerSourcesListResponse,
+  CreatePartnerSourceInput,
+  UpdatePartnerSourceInput,
+  PartnerTestConnectionResult,
+  PartnerMappingRow,
+  CreatePartnerMappingInput,
+  UpdatePartnerMappingInput,
+  PartnerMappingReadiness,
   RoleScopeRow,
   RoleSummary,
   RotationHistoryResponse,
@@ -1574,6 +1583,65 @@ export const tenantSettingsApi = {
 export const agentWorkspaceApi = {
   needsAttention: (): Promise<NeedsAttentionResponse> =>
     apiFetch<NeedsAttentionResponse>('/agent/needs-attention'),
+};
+
+/**
+ * Phase D4 — D4.2: Partner Data Hub admin client.
+ *
+ * Configuration only — no sync, no Google Sheets calls. The
+ * `credentials` field flows ONLY through Create / Update bodies;
+ * responses never carry plaintext or ciphertext credentials, only
+ * `hasCredentials` / `lastTestedAt` / `connectionStatus`.
+ */
+export const partnerSourcesApi = {
+  list: (
+    query: {
+      companyId?: string;
+      countryId?: string;
+      partnerCode?: string;
+      isActive?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PartnerSourcesListResponse> =>
+    apiFetch<PartnerSourcesListResponse>('/partner-sources', { query }),
+  get: (id: string): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`),
+  create: (body: CreatePartnerSourceInput): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>('/partner-sources', { method: 'POST', body }),
+  update: (id: string, body: UpdatePartnerSourceInput): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'PATCH', body }),
+  disable: (id: string): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'DELETE' }),
+  testConnection: (id: string): Promise<PartnerTestConnectionResult> =>
+    apiFetch<PartnerTestConnectionResult>(`/partner-sources/${id}/test-connection`, {
+      method: 'POST',
+    }),
+};
+
+export const partnerMappingsApi = {
+  list: (sourceId: string): Promise<PartnerMappingRow[]> =>
+    apiFetch<PartnerMappingRow[]>(`/partner-sources/${sourceId}/mappings`),
+  readiness: (sourceId: string): Promise<PartnerMappingReadiness> =>
+    apiFetch<PartnerMappingReadiness>(`/partner-sources/${sourceId}/mappings/readiness`),
+  create: (sourceId: string, body: CreatePartnerMappingInput): Promise<PartnerMappingRow> =>
+    apiFetch<PartnerMappingRow>(`/partner-sources/${sourceId}/mappings`, {
+      method: 'POST',
+      body,
+    }),
+  update: (
+    sourceId: string,
+    mappingId: string,
+    body: UpdatePartnerMappingInput,
+  ): Promise<PartnerMappingRow> =>
+    apiFetch<PartnerMappingRow>(`/partner-sources/${sourceId}/mappings/${mappingId}`, {
+      method: 'PATCH',
+      body,
+    }),
+  remove: (sourceId: string, mappingId: string): Promise<void> =>
+    apiFetch<void>(`/partner-sources/${sourceId}/mappings/${mappingId}`, {
+      method: 'DELETE',
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

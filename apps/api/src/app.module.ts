@@ -28,6 +28,9 @@ import { DistributionModule } from './distribution/distribution.module';
 // Phase D2 — D2.2: duplicate / reactivation engine. Behind the
 // LEAD_ATTEMPTS_V2 flag; no existing create path invokes it yet.
 import { DuplicatesModule } from './duplicates/duplicates.module';
+// Phase D4 — D4.2: Partner Data Hub configuration. Behind the
+// D4_PARTNER_HUB_V1 flag; no sync engine yet, just admin CRUD.
+import { PartnerModule } from './partner/partner.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -70,6 +73,7 @@ import { buildLoggerConfig } from './common/logger';
     BackupModule,
     DistributionModule,
     DuplicatesModule,
+    PartnerModule,
     HealthModule,
   ],
   providers: [

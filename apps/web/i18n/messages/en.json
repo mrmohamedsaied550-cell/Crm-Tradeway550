@@ -51,6 +51,7 @@
       "leadReviews": "Lead Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
+      "partnerSources": "Partner Sources",
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
@@ -1889,6 +1890,222 @@
         "title": "Reset to defaults",
         "body": "All escalation rules will revert to the platform-wide defaults (notify, notify+tag, rotate-or-review, raise review). This is logged in the audit trail.",
         "cta": "Reset to defaults"
+      }
+    },
+    "partnerSources": {
+      "title": "Partner Sources",
+      "subtitle": "Configure external partner data feeds (Uber, inDrive, DiDi, …) used to verify activation and DFT claims.",
+      "newCta": "Add partner source",
+      "newTitle": "New partner source",
+      "newSubtitle": "Pick a partner, an adapter, and a schedule. Mappings are configured after the source is created.",
+      "detailTitle": "Partner source",
+      "detailSubtitle": "Adapter, schedule, credentials, and column mappings.",
+      "backCta": "Back",
+      "openCta": "Open",
+      "loading": "Loading partner source…",
+      "notFound": "Partner source not found.",
+      "emptyTitle": "No partner sources configured yet.",
+      "emptyBody": "Add a partner data feed to start verifying activation and DFT claims against external systems of record.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner sources.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment. Configuration is read-only until the operator enables it.",
+      "lastSync": "Last sync",
+      "lastSyncNever": "Never synced",
+      "connectionStatusLabel": "Connection",
+      "testConnectionCta": "Test connection",
+      "disableCta": "Disable",
+      "badges": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "credentials": {
+        "configured": "Credentials configured",
+        "notConfigured": "Credentials not configured"
+      },
+      "adapters": {
+        "google_sheets": "Google Sheets",
+        "manual_upload": "Manual upload"
+      },
+      "schedules": {
+        "manual": "Manual sync",
+        "cron": "Scheduled"
+      },
+      "tabModes": {
+        "fixed": "Fixed tab",
+        "new_per_period": "New tab per period"
+      },
+      "connectionStatuses": {
+        "untested": "Untested",
+        "ok": "Connected",
+        "auth_failed": "Auth failed",
+        "sheet_not_found": "Sheet not found",
+        "unknown": "Unknown",
+        "stubbed": "Stubbed"
+      },
+      "testConnection": {
+        "stubTitle": "Connection test",
+        "noIssues": "Configuration shape looks valid."
+      },
+      "disableConfirm": {
+        "title": "Disable partner source",
+        "body": "Disabling stops scheduled syncs and hides this source from verification surfaces. History (snapshots, mappings) is preserved.",
+        "cta": "Disable",
+        "cancel": "Cancel"
+      },
+      "form": {
+        "readOnlyBanner": "You can view this source but cannot edit it.",
+        "createdToast": "Partner source created.",
+        "savedToast": "Partner source saved.",
+        "disabledToast": "Partner source disabled.",
+        "scopeHint": "Leave Company / Country empty for a tenant-wide source.",
+        "sections": {
+          "identity": "Identity",
+          "adapter": "Adapter & credentials",
+          "schedule": "Schedule & tabs"
+        },
+        "displayName": {
+          "label": "Display name",
+          "helper": "What operators will see in lists and reports."
+        },
+        "partnerCode": {
+          "label": "Partner",
+          "helper": "Which platform this feed comes from.",
+          "placeholder": "Pick a partner…",
+          "options": {
+            "uber": "Uber",
+            "indrive": "inDrive",
+            "didi": "DiDi",
+            "other": "Other"
+          }
+        },
+        "company": {
+          "label": "Company",
+          "helper": "Optional. Limits this source to a single company.",
+          "any": "Any company"
+        },
+        "country": {
+          "label": "Country",
+          "helper": "Optional. Limits this source to a single country.",
+          "any": "Any country"
+        },
+        "isActive": {
+          "label": "Active"
+        },
+        "adapter": {
+          "label": "Adapter",
+          "helper": "How CRM reads from the partner feed.",
+          "options": {
+            "google_sheets": "Google Sheets",
+            "manual_upload": "Manual upload (CSV)"
+          },
+          "manualUploadNotice": "Manual upload sources don't need stored credentials. The operator uploads a CSV per sync."
+        },
+        "credentials": {
+          "privacyHelper": "Credentials are encrypted server-side and never returned to the browser. Replacing them rotates the stored envelope.",
+          "updatedAt": "Last rotated",
+          "replaceCta": "Replace credentials",
+          "cancelReplace": "Keep current credentials",
+          "eraseCta": "Erase credentials",
+          "erasedToast": "Credentials erased.",
+          "serviceAccountEmail": {
+            "label": "Service account email"
+          },
+          "privateKey": {
+            "label": "Private key (PEM)",
+            "helper": "Paste the full PEM block including BEGIN / END lines.",
+            "placeholder": "Paste the full PEM block here"
+          },
+          "sheetId": {
+            "label": "Sheet ID",
+            "helper": "The long alphanumeric id from the sheet URL."
+          }
+        },
+        "schedule": {
+          "kind": {
+            "label": "Sync schedule",
+            "options": {
+              "manual": "Manual only",
+              "cron": "Scheduled (cron)"
+            }
+          },
+          "cronSpec": {
+            "label": "Cron expression",
+            "helper": "Standard 5-field crontab. Example: \"0 11 * * *\" runs every day at 11:00."
+          }
+        },
+        "tabMode": {
+          "label": "Tab mode",
+          "helper": "Does the partner overwrite the same tab every sync, or publish a new one per period?",
+          "options": {
+            "fixed": "Fixed tab",
+            "new_per_period": "New tab per period"
+          }
+        },
+        "fixedTabName": {
+          "label": "Fixed tab name",
+          "helper": "Exact tab name the adapter should read every sync."
+        },
+        "tabDiscovery": {
+          "kind": {
+            "label": "Tab discovery rule",
+            "helper": "How the adapter finds the latest tab.",
+            "options": {
+              "name_pattern": "Match by name pattern",
+              "most_recently_modified": "Most recently modified"
+            }
+          },
+          "pattern": {
+            "label": "Name pattern",
+            "helper": "Use \"YYYY-MM-DD\" placeholders. Example: \"Activations YYYY-MM-DD\"."
+          }
+        }
+      },
+      "mappings": {
+        "title": "Column mappings",
+        "subtitle": "Connect partner sheet columns to CRM fields. Phone is required before sync runs.",
+        "phoneRequiredWarning": "Phone mapping is required before syncing.",
+        "empty": "No mappings yet. Add at least the phone column to get started.",
+        "rowSummary": "from \"{column}\" · {transform}",
+        "badges": {
+          "required": "Required",
+          "phone": "Join key"
+        },
+        "targetFields": {
+          "phone": "Phone",
+          "name": "Name",
+          "partner_status": "Partner status",
+          "partner_active_date": "Partner active date",
+          "partner_dft_date": "Partner DFT date",
+          "trip_count": "Trips count",
+          "last_trip_at": "Last trip"
+        },
+        "transformKinds": {
+          "passthrough": "No transform",
+          "parse_date": "Parse as date",
+          "to_e164": "Normalise phone (E.164)",
+          "lowercase": "Lowercase"
+        },
+        "addRow": {
+          "title": "Add a mapping",
+          "cta": "Add mapping",
+          "targetField": {
+            "label": "CRM field"
+          },
+          "sourceColumn": {
+            "label": "Partner column",
+            "helper": "Verbatim column header from the partner sheet."
+          },
+          "transformKind": {
+            "label": "Transform",
+            "helper": "Apply at snapshot-write time."
+          },
+          "displayOrder": {
+            "label": "Display order"
+          },
+          "isRequired": {
+            "label": "Required (skip rows missing this column)"
+          }
+        }
       }
     }
   },
