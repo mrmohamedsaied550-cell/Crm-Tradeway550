@@ -505,6 +505,34 @@
             "created": "Lead created in stage {stage}",
             "updated": "Lead profile updated"
           }
+        },
+        "attempts": {
+          "title": "Attempts history",
+          "loadFailed": "Couldn't load attempts.",
+          "loading": "Loading attempts…",
+          "attemptN": "Attempt {n} of {total}",
+          "explainBody": "This person has appeared on the funnel before. Read the timeline below before contacting them.",
+          "attemptLabel": "Attempt #{n}",
+          "currentBadge": "Current attempt",
+          "outOfScope": "{n} previous attempts are outside your access.",
+          "openCta": "Open attempt",
+          "unassigned": "Unassigned",
+          "lostReasonLine": "Lost: {reason}",
+          "sourceLine": "Source: {source}",
+          "badge": "Attempt {n}",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          },
+          "rule": {
+            "reactivate_lost_aged_out": "Reactivated after Lost cool-off",
+            "reactivate_no_answer_aged_out": "Reactivated after No Answer cool-off",
+            "manual_override": "Manual override",
+            "sent_to_review": "Sent to review",
+            "unknown": "Reactivated"
+          }
         }
       },
       "drawer": {
@@ -1372,6 +1400,9 @@
           "source": "Source",
           "status": "Status",
           "assignedAt": "Assigned at"
+        },
+        "attempts": {
+          "count": "{n} attempts on this contact"
         }
       },
       "addNote": {

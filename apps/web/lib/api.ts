@@ -25,6 +25,7 @@ import {
 import type {
   AdminUser,
   AgentCapacityRow,
+  AttemptHistoryResult,
   Captain,
   CaptainDocument,
   CaptainStatus,
@@ -727,6 +728,14 @@ export const leadsApi = {
    */
   routingLog: (id: string): Promise<LeadRoutingLogRow[]> =>
     apiFetch<LeadRoutingLogRow[]>(`/leads/${id}/routing-log`),
+  /**
+   * Phase D2 — D2.5: list every attempt for the contact behind this
+   * lead, scope-filtered. The response carries `outOfScopeCount` so
+   * the UI can surface "N previous attempts are outside your access."
+   * without leaking any of those attempts' fields.
+   */
+  attempts: (id: string): Promise<AttemptHistoryResult> =>
+    apiFetch<AttemptHistoryResult>(`/leads/${id}/attempts`),
   addActivity: (
     id: string,
     input: {

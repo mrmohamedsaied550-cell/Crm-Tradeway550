@@ -30,6 +30,7 @@ import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
+import { AttemptsHistoryCard } from '@/components/admin/lead-detail/attempts-history-card';
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
@@ -787,6 +788,11 @@ export default function LeadDetailPage(): JSX.Element {
             label={tDetail('attribution.label')}
             emptyLabel={tDetail('attribution.empty')}
           />
+
+          {/* Phase D2 — D2.5: returning-lead context. Renders nothing
+              for first-attempt rows; surfaces the attempt timeline +
+              out-of-scope hint for multi-attempt cases. */}
+          <AttemptsHistoryCard leadId={lead.id} />
 
           {/* Captain card — only when converted */}
           {isConverted ? (

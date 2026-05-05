@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
+import { AttemptBadge } from '@/components/admin/lead-detail/attempt-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -742,6 +743,9 @@ export default function LeadsPage(): JSX.Element {
               />
             ) : null}
             <span className="font-medium">{r.name}</span>
+            {/* D2.5 — small returning-lead chip when attemptIndex > 1.
+                Hidden for first-attempt rows so the list stays quiet. */}
+            <AttemptBadge attemptIndex={r.attemptIndex ?? 1} />
           </span>
         </FieldGated>
       ),

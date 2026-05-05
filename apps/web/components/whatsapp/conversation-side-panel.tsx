@@ -7,6 +7,7 @@ import { hasCapability } from '@/lib/auth';
 import type { WhatsAppConversation } from '@/lib/api-types';
 
 import { AddNoteModal } from './add-note-modal';
+import { ContactAttemptsHint } from './contact-attempts-hint';
 import { ContactCard } from './contact-card';
 import { LeadCard } from './lead-card';
 import { OwnershipCard } from './ownership-card';
@@ -70,6 +71,11 @@ export function ConversationSidePanel({
         onAddNote={() => setAddNoteOpen(true)}
         canAddNote={canAddNote && Boolean(conversation.leadId)}
       />
+
+      {/* D2.5 — supplementary "N attempts on this contact" hint.
+          Renders only when the linked lead has multi-attempt
+          history; silent on first-attempt and out-of-scope cases. */}
+      {conversation.leadId ? <ContactAttemptsHint leadId={conversation.leadId} /> : null}
 
       <OwnershipCard conversation={conversation} />
 

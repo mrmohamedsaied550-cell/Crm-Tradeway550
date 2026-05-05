@@ -335,6 +335,16 @@ export interface Lead {
   createdAt: string;
   updatedAt: string;
   captain?: Pick<Captain, 'id' | 'onboardingStatus'> | null;
+  /**
+   * Phase D2 — D2.1: multi-attempt fields. Defaults to `1` for first
+   * attempts and every legacy row; reactivation cycles (D2.3 onwards)
+   * bump it. Optional in the typed surface so older API responses
+   * that pre-date D2.1 still parse cleanly.
+   */
+  attemptIndex?: number;
+  previousLeadId?: string | null;
+  reactivatedAt?: string | null;
+  reactivationRule?: string | null;
 }
 
 export interface LeadActivity {
@@ -887,4 +897,40 @@ export interface LeadRoutingLogRow {
   excludedReasons: Record<string, DistributionExclusionReason>;
   decidedAt: string;
   requestId: string | null;
+}
+
+/**
+ * Phase D2 — D2.5: enriched attempt row returned by
+ * `leadsApi.attempts(id)`. Stage / lostReason / assignedTo are
+ * pre-joined for display; the UI reads them straight from the row
+ * without follow-up fetches.
+ */
+export interface AttemptHistoryRow {
+  id: string;
+  attemptIndex: number;
+  lifecycleState: string;
+  source: string;
+  assignedToId: string | null;
+  reactivatedAt: string | null;
+  reactivationRule: string | null;
+  previousLeadId: string | null;
+  primaryConversationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  stage: { code: string; name: string } | null;
+  lostReason: { code: string; labelEn: string; labelAr: string } | null;
+  assignedTo: { id: string; name: string } | null;
+}
+
+/**
+ * Response of GET /leads/:id/attempts. `outOfScopeCount` is the
+ * count of attempts the operator's role can't see; the UI surfaces
+ * it as a single "N previous attempts are outside your access."
+ * line at the bottom of the timeline.
+ */
+export interface AttemptHistoryResult {
+  attempts: AttemptHistoryRow[];
+  totalAttempts: number;
+  outOfScopeCount: number;
+  currentLeadId: string;
 }

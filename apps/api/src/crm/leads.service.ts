@@ -36,6 +36,29 @@ import type {
 } from './leads.dto';
 
 /**
+ * Phase D2 — D2.5: enriched attempt row returned by
+ * `listAttemptsForLeadInScope(...)`. Stage / lostReason / assignedTo
+ * are joined for display; raw IDs are preserved for the UI to
+ * deep-link without an extra round-trip.
+ */
+export interface AttemptHistoryRow {
+  id: string;
+  attemptIndex: number;
+  lifecycleState: string;
+  source: string;
+  assignedToId: string | null;
+  reactivatedAt: Date | null;
+  reactivationRule: string | null;
+  previousLeadId: string | null;
+  primaryConversationId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  stage: { code: string; name: string } | null;
+  lostReason: { code: string; labelEn: string; labelAr: string } | null;
+  assignedTo: { id: string; name: string } | null;
+}
+
+/**
  * Lead lifecycle.
  *
  * Every read/write goes through `prisma.withTenant(...)` so the database's
@@ -713,6 +736,121 @@ export class LeadsService {
     }
     // Phase C — C4: strip denied fields before returning.
     return this.applyLeadFieldFilter(userClaims, lead);
+  }
+
+  /**
+   * Phase D2 — D2.5: list every attempt for the contact behind this
+   * lead, scope-filtered against the calling user's role.
+   *
+   *   1. Validate the user can see THIS lead (calls
+   *      `findByIdInScopeOrThrow`; throws 404 otherwise — same
+   *      contract as the rest of the lead-detail surface).
+   *   2. Read the lead's `contactId`. Legacy rows that pre-date C10B-1
+   *      (and very rare manual-create rows that never got a contact)
+   *      have `contactId === null`; in that case we return the
+   *      single-row history with `totalAttempts = 1`.
+   *   3. Count ALL attempts in the same (tenant, contact) regardless
+   *      of scope (RLS still pins it to this tenant). The total
+   *      drives the "N previous attempts are outside your access"
+   *      hint when the visible list is shorter than the count.
+   *   4. List attempts the user CAN see, with the joins the UI
+   *      needs (stage / lostReason / assignedTo).
+   *
+   * Returns `{ attempts, totalAttempts, outOfScopeCount, currentLeadId }`.
+   * `attempts` is ordered by `attemptIndex DESC` (newest first); the
+   * UI marks `currentLeadId` as the one the operator is viewing.
+   */
+  async listAttemptsForLeadInScope(
+    leadId: string,
+    userClaims: ScopeUserClaims,
+  ): Promise<{
+    attempts: AttemptHistoryRow[];
+    totalAttempts: number;
+    outOfScopeCount: number;
+    currentLeadId: string;
+  }> {
+    const tenantId = requireTenantId();
+    // 1. Visibility gate. Throws 404 if out of scope.
+    const lead = await this.findByIdInScopeOrThrow(leadId, userClaims);
+    const contactId = lead.contactId;
+
+    // 2. No contact → single-row history.
+    if (!contactId) {
+      return this.prisma.withTenant(tenantId, async (tx) => {
+        const single = await this.fetchAttemptsInScope(tx, {
+          tenantId,
+          contactId: null,
+          leadId,
+          scopeWhere: null,
+        });
+        return {
+          attempts: single.attempts,
+          totalAttempts: single.attempts.length,
+          outOfScopeCount: 0,
+          currentLeadId: leadId,
+        };
+      });
+    }
+
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const totalAttempts = await tx.lead.count({
+        where: { tenantId, contactId },
+      });
+      const visible = await this.fetchAttemptsInScope(tx, {
+        tenantId,
+        contactId,
+        leadId: null,
+        scopeWhere,
+      });
+      return {
+        attempts: visible.attempts,
+        totalAttempts,
+        outOfScopeCount: Math.max(0, totalAttempts - visible.attempts.length),
+        currentLeadId: leadId,
+      };
+    });
+  }
+
+  /** Helper for `listAttemptsForLeadInScope` — runs inside the
+   *  caller's tx and returns the enriched attempts array.
+   *  When `contactId` is null, fetches the single `leadId` row. */
+  private async fetchAttemptsInScope(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      contactId: string | null;
+      leadId: string | null;
+      scopeWhere: Prisma.LeadWhereInput | null;
+    },
+  ): Promise<{ attempts: AttemptHistoryRow[] }> {
+    const baseWhere: Prisma.LeadWhereInput = input.contactId
+      ? { tenantId: input.tenantId, contactId: input.contactId }
+      : { tenantId: input.tenantId, id: input.leadId! };
+    const where: Prisma.LeadWhereInput = input.scopeWhere
+      ? { AND: [baseWhere, input.scopeWhere] }
+      : baseWhere;
+    const rows = await tx.lead.findMany({
+      where,
+      orderBy: { attemptIndex: 'desc' },
+      select: {
+        id: true,
+        attemptIndex: true,
+        lifecycleState: true,
+        source: true,
+        assignedToId: true,
+        reactivatedAt: true,
+        reactivationRule: true,
+        previousLeadId: true,
+        primaryConversationId: true,
+        createdAt: true,
+        updatedAt: true,
+        stage: { select: { code: true, name: true } },
+        lostReason: { select: { code: true, labelEn: true, labelAr: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
+    });
+    return { attempts: rows };
   }
 
   /**

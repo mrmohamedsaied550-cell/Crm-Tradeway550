@@ -505,6 +505,34 @@
             "created": "تم إنشاء العميل المحتمل في مرحلة {stage}",
             "updated": "تم تحديث ملف العميل المحتمل"
           }
+        },
+        "attempts": {
+          "title": "سجل المحاولات",
+          "loadFailed": "تعذّر تحميل سجل المحاولات.",
+          "loading": "جارٍ تحميل سجل المحاولات…",
+          "attemptN": "المحاولة {n} من {total}",
+          "explainBody": "هذا الشخص ظهر في القمع من قبل. اقرأ السجل التالي قبل التواصل معه.",
+          "attemptLabel": "المحاولة #{n}",
+          "currentBadge": "المحاولة الحالية",
+          "outOfScope": "{n} محاولات سابقة خارج صلاحياتك.",
+          "openCta": "فتح المحاولة",
+          "unassigned": "غير مُسنَدة",
+          "lostReasonLine": "السبب: {reason}",
+          "sourceLine": "المصدر: {source}",
+          "badge": "محاولة {n}",
+          "lifecycle": {
+            "open": "مفتوح",
+            "won": "محقَّق",
+            "lost": "خاسر",
+            "archived": "مؤرشف"
+          },
+          "rule": {
+            "reactivate_lost_aged_out": "إعادة تفعيل بعد مدة الليد المفقود",
+            "reactivate_no_answer_aged_out": "إعادة تفعيل بعد مدة عدم الرد",
+            "manual_override": "تجاوز يدوي",
+            "sent_to_review": "تم إرساله للمراجعة",
+            "unknown": "تمت إعادة التفعيل"
+          }
         }
       },
       "drawer": {
@@ -1372,6 +1400,9 @@
           "source": "مصدر التعيين",
           "status": "الحالة",
           "assignedAt": "تاريخ الإسناد"
+        },
+        "attempts": {
+          "count": "{n} محاولات لهذا العميل"
         }
       },
       "addNote": {

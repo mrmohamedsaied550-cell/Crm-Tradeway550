@@ -218,6 +218,25 @@ export class LeadsController {
     );
   }
 
+  /**
+   * Phase D2 — D2.5: list every attempt for the contact behind this
+   * lead, scope-filtered against the calling user. Powers the lead-
+   * detail "Attempts history" card and the WhatsApp side-panel
+   * "N attempts on this contact" line.
+   *
+   * Capability: `lead.read`. Same scope contract as the rest of the
+   * lead-detail surface — out-of-scope predecessors are NOT leaked;
+   * the response carries a `outOfScopeCount` so the UI can surface
+   * "N previous attempts are outside your access." without
+   * disclosing any of those attempts' fields.
+   */
+  @Get('leads/:id/attempts')
+  @RequireCapability('lead.read')
+  @ApiOperation({ summary: 'List every scoped attempt for the contact behind this lead' })
+  attempts(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.listAttemptsForLeadInScope(id, claimsToScope(user));
+  }
+
   @Get('leads/:id/activities')
   @RequireCapability('lead.read')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
