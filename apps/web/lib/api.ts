@@ -52,8 +52,19 @@ import type {
   FieldCatalogueEntry,
   RoleDetail,
   RoleFieldPermissionRow,
+  LeadReviewReason,
+  LeadReviewResolution,
+  LeadReviewRow,
+  LeadReviewsListResponse,
+  NeedsAttentionResponse,
+  EscalationRulesConfig,
   RoleScopeRow,
   RoleSummary,
+  RotationHistoryResponse,
+  RotationOutcome,
+  HandoverMode,
+  SetStageStatusResponse,
+  StageStatusesResponse,
   SlaStatus,
   BonusAccrual,
   BonusAccrualStatus,
@@ -745,6 +756,50 @@ export const leadsApi = {
    */
   reactivate: (id: string): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> =>
     apiFetch(`/leads/${id}/reactivate`, { method: 'POST' }),
+  /**
+   * Phase D3 — D3.3: stage-specific status surface.
+   *
+   * `getStageStatuses` reads `{ stage, currentStatus, allowedStatuses,
+   * history }` for the lead's CURRENT stage. The `allowedStatuses`
+   * carries `{ code, label, labelAr }` objects so the picker doesn't
+   * have to retranslate; `[]` means the stage has no catalogue
+   * configured and the picker shows the "no statuses configured"
+   * hint.
+   *
+   * `setStageStatus` records a new status. Server validates
+   * `status` against the stage's catalogue and rejects with
+   * `lead.stage.status.invalid` on a mismatch.
+   */
+  getStageStatuses: (id: string): Promise<StageStatusesResponse> =>
+    apiFetch<StageStatusesResponse>(`/leads/${id}/stage-statuses`),
+  setStageStatus: (
+    id: string,
+    input: { status: string; notes?: string },
+  ): Promise<SetStageStatusResponse> =>
+    apiFetch<SetStageStatusResponse>(`/leads/${id}/stage-status`, {
+      method: 'POST',
+      body: input,
+    }),
+  /**
+   * Phase D3 — D3.4: lead rotation surface.
+   *
+   * `rotate` writes a `LeadRotationLog` row + `LeadActivity` +
+   * `lead.rotated` audit verb in one tx. Returns the outcome,
+   * including how many follow-ups were cancelled (Clean Transfer
+   * only).
+   *
+   * `getRotations` returns history with sensitive fields
+   * (fromUser / toUser / actor / notes) stripped by the server
+   * when the caller lacks `lead.write`. The `canSeeOwners` flag
+   * lets the UI render neutral copy without second-guessing.
+   */
+  rotate: (
+    id: string,
+    input: { handoverMode: HandoverMode; toUserId?: string; reasonCode?: string; notes?: string },
+  ): Promise<RotationOutcome> =>
+    apiFetch<RotationOutcome>(`/leads/${id}/rotate`, { method: 'POST', body: input }),
+  getRotations: (id: string): Promise<RotationHistoryResponse> =>
+    apiFetch<RotationHistoryResponse>(`/leads/${id}/rotations`),
   addActivity: (
     id: string,
     input: {
@@ -1067,6 +1122,35 @@ export const reviewsApi = {
       `/whatsapp/reviews/${id}/resolve`,
       { method: 'POST', body },
     ),
+};
+
+/**
+ * Phase D3 — D3.6: TL Review Queue (consumes /lead-reviews).
+ *
+ * Mirrors the WhatsApp reviews API shape — list / count / get / resolve.
+ * Reasons + resolutions are server-validated; the UI just passes the
+ * literal codes through.
+ */
+export const leadReviewsApi = {
+  list: (
+    query: {
+      resolved?: boolean;
+      reason?: LeadReviewReason;
+      assignedToMe?: boolean;
+      leadId?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<LeadReviewsListResponse> =>
+    apiFetch<LeadReviewsListResponse>('/lead-reviews', { query }),
+  count: (): Promise<{ unresolved: number }> =>
+    apiFetch<{ unresolved: number }>('/lead-reviews/count'),
+  get: (id: string): Promise<LeadReviewRow> => apiFetch<LeadReviewRow>(`/lead-reviews/${id}`),
+  resolve: (
+    id: string,
+    body: { resolution: LeadReviewResolution; notes?: string },
+  ): Promise<{ id: string; resolution: LeadReviewResolution; childReviewId?: string }> =>
+    apiFetch(`/lead-reviews/${id}/resolve`, { method: 'POST', body }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -1467,6 +1551,29 @@ export const tenantSettingsApi = {
       method: 'PATCH',
       body: input,
     }),
+  /** D3.7 — read the per-tenant SLA escalation policy. */
+  getEscalationRules: (): Promise<EscalationRulesConfig> =>
+    apiFetch<EscalationRulesConfig>('/tenant/settings/escalation-rules'),
+  /** D3.7 — write the per-tenant SLA escalation policy. Full object
+   *  (no partial PATCH) so the server-side audit can compute a
+   *  meaningful before/after diff. */
+  updateEscalationRules: (input: EscalationRulesConfig): Promise<EscalationRulesConfig> =>
+    apiFetch<EscalationRulesConfig>('/tenant/settings/escalation-rules', {
+      method: 'PATCH',
+      body: input,
+    }),
+};
+
+/**
+ * Phase D3 — D3.7: agent-workspace "Needs attention now" feed.
+ *
+ * Compact, sanitised endpoint for the calling agent. Returns three
+ * lists; the workspace renders them as separate cards. Capability:
+ * `lead.read` — every operational role already holds it.
+ */
+export const agentWorkspaceApi = {
+  needsAttention: (): Promise<NeedsAttentionResponse> =>
+    apiFetch<NeedsAttentionResponse>('/agent/needs-attention'),
 };
 
 // ───────────────────────────────────────────────────────────────────────

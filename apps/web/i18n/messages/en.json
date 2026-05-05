@@ -48,6 +48,7 @@
       "competitions": "Competitions",
       "whatsapp": "WhatsApp",
       "whatsappReviews": "WA Reviews",
+      "leadReviews": "Lead Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
       "calendar": "Calendar",
@@ -493,10 +494,16 @@
             "assignment": "Assignment",
             "auto_assignment": "Auto-assignment",
             "sla_breach": "SLA breach",
+            "sla_threshold_crossed": "SLA threshold",
+            "stage_status_changed": "Stage status changed",
+            "rotation": "Lead rotated",
             "system": "System"
           },
           "summary": {
             "stageChange": "Moved from {from} to {to}",
+            "stageStatusChanged": "Stage status changed",
+            "stageStatusChangedTo": "Stage status: {status}",
+            "rotation": "Lead rotated to a different owner",
             "assigned": "Assigned to {user}",
             "unassigned": "Unassigned",
             "reassigned": "Reassigned from {from} to {to}",
@@ -546,6 +553,75 @@
           "successToast": "New attempt created.",
           "errorAlreadyOpen": "This lead is still open. Reactivation is reserved for closed (won / lost / archived) leads.",
           "errorForbidden": "You don't have permission to reactivate leads."
+        },
+        "stageStatus": {
+          "title": "Stage status",
+          "forStage": "For stage \"{stage}\"",
+          "none": "Not set",
+          "noCatalogue": "No statuses configured for this stage.",
+          "pickLabel": "Pick a status",
+          "notesLabel": "Notes (optional)",
+          "notesHint": "Up to 1000 characters. Visible to your TL on the timeline.",
+          "saveCta": "Save status",
+          "saved": "Stage status saved.",
+          "invalidStatus": "That status is not configured for this stage. Refresh and try again.",
+          "requiredOnExit": "Pick a status for this stage before moving the lead."
+        },
+        "rotate": {
+          "action": "Rotate",
+          "title": "Rotate this lead",
+          "body": "This will change the owner of {name} and write an audit log. Operational history is preserved server-side.",
+          "currentOwner": "Current owner: {name}",
+          "currentOwnerNone": "This lead is currently unassigned.",
+          "warning": "Rotation is recorded in the audit log. Visibility of previous owners follows the role and scope rules of the receiving agent.",
+          "confirm": "Rotate",
+          "successToast": "Lead rotated.",
+          "errorDisabled": "Rotation is disabled in this environment.",
+          "errorSameOwner": "That user is already the current owner.",
+          "errorInvalidTarget": "Pick a different active user as the target.",
+          "errorNoEligible": "No eligible agent was found by the route engine. Pick a target manually.",
+          "errorForbidden": "You don't have permission to rotate this lead.",
+          "loadFailed": "Couldn't load rotation history.",
+          "targetLabel": "Send to",
+          "targetHint": "Leave empty to let the route engine pick the next owner.",
+          "targetAuto": "Auto via route engine",
+          "reasonLabel": "Reason code (optional)",
+          "reasonHint": "Stable tag for reporting (e.g. capacity_balance, sla_t150_breach).",
+          "notesLabel": "Notes (optional)",
+          "notesHint": "Up to 1000 characters. Summary Transfer surfaces this to the new owner.",
+          "handoverMode": {
+            "legend": "Handover mode",
+            "full": {
+              "title": "Full Transfer",
+              "help": "Operational history is preserved. Visibility still follows permissions."
+            },
+            "summary": {
+              "title": "Summary Transfer",
+              "help": "New owner sees the summary you write — not the prior transcript."
+            },
+            "clean": {
+              "title": "Clean Transfer",
+              "help": "New owner starts fresh. Pending follow-ups owned by the prior agent are cancelled."
+            }
+          },
+          "historyTitle": "Rotation history",
+          "historyRedacted": "Handled previously ({count} rotations)",
+          "fromTo": "Rotated {from} → {to}",
+          "toOnly": "Assigned to {to}",
+          "actorLine": "By {actor}",
+          "reasonLine": "Reason: {reason}",
+          "mode": {
+            "full": "Full",
+            "summary": "Summary",
+            "clean": "Clean"
+          },
+          "trigger": {
+            "manual_tl": "Manual",
+            "manual_ops": "Manual (Ops)",
+            "sla_breach": "SLA breach",
+            "agent_unavailable": "Agent unavailable",
+            "capacity_balance": "Capacity balance"
+          }
         }
       },
       "drawer": {
@@ -910,6 +986,83 @@
         }
       }
     },
+    "leadReviews": {
+      "title": "Lead Review Queue",
+      "subtitle": "Leads that need TL or Ops attention — repeated SLA breaches, escalations, manual flags.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "Your role can't view the TL Review Queue. Ask an admin to grant lead.review.read.",
+      "filterLabel": "Filter:",
+      "tabs": {
+        "active": "Active",
+        "resolved": "Resolved"
+      },
+      "chips": {
+        "all": "All reasons"
+      },
+      "emptyActiveTitle": "Inbox zero",
+      "emptyActiveBody": "There are no open lead reviews in your scope right now.",
+      "emptyResolvedTitle": "No resolved reviews yet",
+      "emptyResolvedBody": "Resolved reviews from your scope will land here.",
+      "notesPrefix": "Notes",
+      "reason": {
+        "sla_breach_repeat": "Repeated SLA breach",
+        "rotation_failed": "Rotation did not solve the issue",
+        "manual_tl_review": "Manual TL review",
+        "bottleneck_flagged": "Bottleneck detected",
+        "escalated_by_tl": "Escalated by TL"
+      },
+      "reasonExplain": {
+        "sla_breach_repeat": "This lead breached its SLA twice within the policy window. Decide whether to rotate again, keep with the current owner, or escalate.",
+        "rotation_failed": "A previous rotation did not solve the issue — the new owner also missed the SLA. Decide what to do next.",
+        "manual_tl_review": "A team leader flagged this lead for review.",
+        "bottleneck_flagged": "This lead has been stuck in the same stage for too long.",
+        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected."
+      },
+      "resolution": {
+        "rotated": "Rotated",
+        "kept_owner": "Kept owner",
+        "escalated": "Escalated",
+        "dismissed": "Dismissed"
+      },
+      "actions": {
+        "rotate": "Open lead to rotate",
+        "markRotated": "Mark rotated",
+        "keepOwner": "Keep current owner",
+        "escalate": "Escalate",
+        "dismiss": "Dismiss"
+      },
+      "resolve": {
+        "title": {
+          "rotated": "Confirm rotation",
+          "kept_owner": "Keep current owner",
+          "escalated": "Escalate to Ops",
+          "dismissed": "Dismiss this review"
+        },
+        "body": {
+          "rotated": "Mark this review as rotated. Use this AFTER you've already triggered the rotation from the lead detail page.",
+          "kept_owner": "Keep the current owner on this lead. Notes are required so an auditor can later understand the decision.",
+          "escalated": "Escalate to Operations / Account Manager. A new escalated_by_tl review will be created in the Ops queue automatically.",
+          "dismissed": "Dismiss this review without action. Notes are required so the queue stays auditable."
+        },
+        "confirm": {
+          "rotated": "Mark rotated",
+          "kept_owner": "Keep owner",
+          "escalated": "Escalate",
+          "dismissed": "Dismiss"
+        },
+        "toast": {
+          "rotated": "Review marked as rotated.",
+          "kept_owner": "Keeping current owner.",
+          "escalated": "Escalated to Operations.",
+          "dismissed": "Review dismissed."
+        },
+        "notesLabel": "Notes (optional)",
+        "notesLabelRequired": "Notes",
+        "notesHint": "Up to 1000 characters. Visible on the audit trail and the lead's timeline.",
+        "errorNotesRequired": "Notes are required for this resolution.",
+        "errorAlreadyResolved": "This review has already been resolved by someone else."
+      }
+    },
     "whatsappTemplates": {
       "title": "WhatsApp templates",
       "subtitle": "Meta-approved templates the agent picker uses to start or re-open conversations.",
@@ -1205,7 +1358,16 @@
         "lead.duplicate_decision": "Duplicate decisions",
         "lead.reactivated": "Manual reactivations",
         "tenant.duplicate_rules.update": "Duplicate-rule changes",
-        "whatsapp.review.resolved": "Review resolutions"
+        "whatsapp.review.resolved": "Review resolutions",
+        "lead.rotated": "Lead rotations",
+        "lead.review.raised": "Review raised",
+        "lead.review.resolved": "Review resolved",
+        "lead.sla.review_pending": "SLA review pending",
+        "tenant.escalation_rules.update": "Escalation-rule changes",
+        "followup.create": "Follow-up created",
+        "followup.complete": "Follow-up completed",
+        "followup.snooze": "Follow-up snoozed",
+        "followup.delete": "Follow-up deleted"
       }
     },
     "reports": {
@@ -1594,6 +1756,11 @@
         "label": "Reactivate No Answer leads after (days)",
         "helper": "No Answer leads can return sooner because they were not a confirmed rejection."
       },
+      "noAnswerCodes": {
+        "label": "Lost reasons treated as No Answer",
+        "helper": "These lost reasons are treated as No Answer for faster reactivation. Pick the codes that should follow the shorter cool-off window.",
+        "empty": "No lost reasons configured yet — add them in the Lost Reasons admin page."
+      },
       "captain": {
         "label": "Active captains always go to review",
         "helper": "Active captains may be asking for support, not trying to register again.",
@@ -1634,6 +1801,93 @@
       "confirmReset": {
         "title": "Reset to defaults",
         "body": "All duplicate / reactivation rules will revert to the platform-wide defaults. This is logged in the audit trail.",
+        "cta": "Reset to defaults"
+      }
+    },
+    "escalationRules": {
+      "title": "SLA escalation rules",
+      "subtitle": "How the engine reacts when a lead crosses each SLA threshold (75%, 100%, 150%, 200% of the SLA window).",
+      "loadFailed": "Couldn't load escalation rules.",
+      "saveFailed": "Couldn't save escalation rules.",
+      "saved": "Escalation rules updated.",
+      "saveCta": "Save changes",
+      "resetCta": "Reset to defaults",
+      "noAccess": "You don't have access to tenant settings.",
+      "readOnlyBanner": "You can view these rules but cannot edit them.",
+      "thresholds": {
+        "t75": {
+          "label": "75% of SLA · early warning",
+          "helper": "The lead is close to the response deadline. Use a soft reminder so the agent can still react in time."
+        },
+        "t100": {
+          "label": "100% of SLA · SLA reached",
+          "helper": "The response window has run out. The team lead should know and the lead is at risk."
+        },
+        "t150": {
+          "label": "150% of SLA · rotate or review",
+          "helper": "The lead is heavily delayed. Rotate to another agent on the first breach; raise a TL review on a repeat within the configured window."
+        },
+        "t200": {
+          "label": "200% of SLA · high escalation",
+          "helper": "The lead is severely overdue. Always raise a TL review so an operator decides what happens next."
+        }
+      },
+      "actions": {
+        "notify_only": {
+          "label": "Notify the agent",
+          "helper": "Send a soft reminder. No state change, no tag."
+        },
+        "notify_and_tag": {
+          "label": "Notify and tag at risk",
+          "helper": "Notify the agent and TL, mark the lead 'at risk'."
+        },
+        "rotate": {
+          "label": "Rotate to another agent",
+          "helper": "Auto-rotate via the distribution engine using the default handover mode."
+        },
+        "rotate_or_review": {
+          "label": "Rotate first time, raise review on repeat",
+          "helper": "Rotate on the first breach in the policy window; raise a TL review on a second breach within the same window."
+        },
+        "raise_review": {
+          "label": "Raise a TL review",
+          "helper": "Always queue a TL review. No automatic rotation."
+        }
+      },
+      "rotateOnFirst": {
+        "label": "Rotate on the first breach",
+        "helper": "When off, the first breach raises a review without rotating."
+      },
+      "reviewOnRepeatWithinHours": {
+        "label": "Repeat window (hours)",
+        "helper": "How long after a rotation a second breach should escalate to a review. 1–168 hours."
+      },
+      "handoverMode": {
+        "section": "Default handover mode",
+        "intro": "How agent ownership and history pass to the new agent when the engine rotates a lead.",
+        "options": {
+          "full": {
+            "label": "Full handover",
+            "helper": "Carry the full activity history. Best for continuity."
+          },
+          "summary": {
+            "label": "Summary handover",
+            "helper": "Add a handover summary note instead of the full history."
+          },
+          "clean": {
+            "label": "Clean handover",
+            "helper": "Cancel the prior agent's pending follow-ups; the new agent starts fresh."
+          }
+        }
+      },
+      "confirmSave": {
+        "title": "Apply escalation rules",
+        "body": "These rules affect SLA rotation and the review queue. The SLA scheduler will follow the new policy on its next tick.",
+        "cta": "Apply rules"
+      },
+      "confirmReset": {
+        "title": "Reset to defaults",
+        "body": "All escalation rules will revert to the platform-wide defaults (notify, notify+tag, rotate-or-review, raise review). This is logged in the audit trail.",
         "cta": "Reset to defaults"
       }
     }
@@ -1722,6 +1976,24 @@
           "visit": "Visit",
           "other": "Other"
         }
+      }
+    },
+    "needsAttention": {
+      "title": "Needs attention now",
+      "subtitle": "Urgent leads picked from rotation, SLA, and review queues.",
+      "empty": "Nothing urgent right now.",
+      "open": "Open",
+      "rotatedToMe": {
+        "title": "Recently assigned",
+        "reason": "Recently assigned to you"
+      },
+      "atRiskSla": {
+        "title": "SLA overdue",
+        "reason": "SLA overdue"
+      },
+      "openReviews": {
+        "title": "Reviews",
+        "reason": "Review needed"
       }
     },
     "followUpBell": {

@@ -70,6 +70,33 @@ export const ACTIVITY_TYPES = [
   // C11: emitted by SlaService.runReassignmentForBreaches when a lead's
   // SLA expires before the assignee responds.
   'sla_breach',
+  // Phase D3 — D3.2: emitted by SlaService.recomputeThreshold when the
+  // ladder bucket changes (ok ↔ t75 ↔ t100 ↔ t150 ↔ t200). Distinct
+  // from `sla_breach` because the legacy binary breach path is still
+  // wired and we don't want to double-stamp the timeline. Inert when
+  // `D3_ENGINE_V1` resolves false.
+  'sla_threshold_crossed',
+  // Phase D3 — D3.3: emitted by LeadStageStatusService.setStatus
+  // when an agent records a stage-specific status (call disposition
+  // / docs-pending sub-state / etc.). Inert when `D3_ENGINE_V1`
+  // resolves false (frontend hides the picker; the activity type
+  // remains in the registry so the audit table accepts it if a
+  // tenant flips the flag mid-window).
+  'stage_status_changed',
+  // Phase D3 — D3.4: emitted by RotationService.rotateLead — once
+  // per rotation, alongside the structured `LeadRotationLog` row +
+  // `lead.rotated` audit verb. Sales agents see a sanitised
+  // payload (no from/to user names, no sensitive notes); TL+ see
+  // the full chain. Inert when `D3_ENGINE_V1` resolves false.
+  'rotation',
+  // Phase D3 — D3.6: emitted by LeadReviewService.raiseReview /
+  // resolveReview — once per queue-row state transition. The
+  // dedicated audit verbs `lead.review.raised` /
+  // `lead.review.resolved` carry the dashboard-friendly handle;
+  // these timeline entries surface the same event on the lead's
+  // own activity feed. Inert when `D3_ENGINE_V1` resolves false.
+  'lead_review_raised',
+  'lead_review_resolved',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

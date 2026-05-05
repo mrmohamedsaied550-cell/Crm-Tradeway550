@@ -51,6 +51,7 @@ interface NavItem {
     | 'whatsapp'
     | 'whatsappReviews'
     | 'whatsappTemplates'
+    | 'leadReviews'
     | 'metaLeadSources'
     | 'reports'
     | 'audit'
@@ -106,6 +107,16 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'whatsappReviews',
     icon: ShieldQuestion,
     cap: 'whatsapp.review.read',
+  },
+  // Phase D3 — D3.6: TL Review Queue (lead reviews). Distinct from
+  // WhatsApp Reviews — same proven D1.5 UX pattern but a separate
+  // model + page. Visible only to roles with `lead.review.read`
+  // (TLs / ops_manager / account_manager / super_admin).
+  {
+    href: '/admin/lead-reviews',
+    labelKey: 'leadReviews',
+    icon: ShieldQuestion,
+    cap: 'lead.review.read',
   },
   {
     href: '/admin/whatsapp/templates',

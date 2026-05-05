@@ -80,6 +80,12 @@ model Tenant {
   whatsAppConversationReviews WhatsAppConversationReview[]
   /// Phase D2 — D2.1: append-only duplicate-decision audit log.
   duplicateDecisionLogs       DuplicateDecisionLog[]
+  /// Phase D3 — D3.3: per-(lead × stage) status history.
+  leadStageStatuses           LeadStageStatus[]
+  /// Phase D3 — D3.4: per-lead rotation history.
+  leadRotationLogs            LeadRotationLog[]
+  /// Phase D3 — D3.6: TL Review Queue rows.
+  leadReviews                 LeadReview[]
 
   @@map("tenants")
 }
@@ -355,6 +361,17 @@ model User {
   /// Phase C — C10B-1: WhatsApp conversations currently assigned to
   /// this user. Set by the inbound router or manual handover.
   whatsappConversations       WhatsAppConversation[] @relation("WhatsAppConversationAssignee")
+  /// Phase D3 — D3.3: stage-status rows authored by this user. Empty
+  /// until D3.3 wires the agent picker.
+  authoredStageStatuses       LeadStageStatus[]      @relation("LeadStageStatusAuthor")
+  /// Phase D3 — D3.4: rotation-log back-relations. Empty until the
+  /// engine ships in D3.4.
+  rotatedFromLogs             LeadRotationLog[]      @relation("LeadRotationLogFromUser")
+  rotatedToLogs               LeadRotationLog[]      @relation("LeadRotationLogToUser")
+  triggeredRotations          LeadRotationLog[]      @relation("LeadRotationLogActor")
+  /// Phase D3 — D3.6: TL Review Queue back-relations.
+  assignedLeadReviews         LeadReview[]           @relation("LeadReviewAssignedTl")
+  resolvedLeadReviews         LeadReview[]           @relation("LeadReviewResolver")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -465,10 +482,46 @@ model PipelineStage {
   /// stages and on terminal stages that are neither (rare; admin can
   /// configure later via Pipeline Builder).
   terminalKind String?  @map("terminal_kind")
+
+  /// Phase D3 — D3.1: per-stage SLA override.
+  /// When NULL, the SLA budget falls back to `tenant_settings.slaMinutes`
+  /// (the legacy tenant-wide default — preserved bit-for-bit so
+  /// existing tenants see no behaviour change). When set, this value
+  /// wins. The threshold engine (D3.2) reads
+  /// `stage.slaMinutes ?? tenantSlaMinutes` on every recompute.
+  /// `slaBusinessHoursOnly` is the seam for future country-holiday-
+  /// aware budgets — D3.1 ships the column only; the engine treats it
+  /// as `false` regardless until the calendar service lands.
+  /// `autoActions` is the seam for future entry/exit hooks (notify,
+  /// reassign team, set tag) the Pipeline Builder will configure;
+  /// D3.1 ships the column only — no consumer reads it yet.
+  slaMinutes           Int?     @map("sla_minutes")
+  slaBusinessHoursOnly Boolean  @default(false) @map("sla_business_hours_only")
+  autoActions          Json?    @map("auto_actions")
+
+  /// Phase D3 — D3.3: stage-specific status catalogue.
+  /// `allowedStatuses` is a JSONB array of `{ code, label, labelAr }`
+  /// objects defining the operational sub-states an agent can record
+  /// inside this stage (e.g. for "First Contact": Interested /
+  /// No Answer / Wrong Number / Call Later). NULL or empty = no
+  /// statuses configured for the stage; the picker renders a hint
+  /// instead of a disabled dropdown. Validated at the service layer
+  /// — see `LeadStageStatusService`.
+  /// `requireStatusOnExit` is enforced ONLY under D3_ENGINE_V1=true:
+  /// when leaving a stage with this flag set, the agent must have
+  /// recorded at least one status row for the (lead, stage) since
+  /// the stage was entered. Flag-off = inert (existing moveStage
+  /// behaviour byte-identical).
+  allowedStatuses      Json?    @map("allowed_statuses")
+  requireStatusOnExit  Boolean  @default(false) @map("require_status_on_exit")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  leads Lead[]
+  leads         Lead[]
+  /// Phase D3 — D3.3: every status row recorded against this stage.
+  /// Empty until D3.3 wires the agent picker.
+  stageStatuses LeadStageStatus[]
 
   @@unique([pipelineId, code])
   @@unique([pipelineId, order])
@@ -530,6 +583,55 @@ model Lead {
   slaDueAt       DateTime? @map("sla_due_at") @db.Timestamptz(6)
   slaStatus      String    @default("active") @map("sla_status")
   lastResponseAt DateTime? @map("last_response_at") @db.Timestamptz(6)
+
+  /// Phase D3 — D3.1: SLA threshold tracking.
+  /// `slaThreshold` records WHICH ladder bucket the lead currently sits
+  /// in:
+  ///   'ok'    — ratio (elapsed/budget) < 0.75
+  ///   't75'   — 0.75 ≤ ratio < 1.00 (soft reminder)
+  ///   't100'  — 1.00 ≤ ratio < 1.50 (warning, tag at-risk)
+  ///   't150'  — 1.50 ≤ ratio < 2.00 (escalation; first occurrence
+  ///             auto-rotates per tenant policy, second occurrence
+  ///             within 24h raises a TL Review Queue item instead)
+  ///   't200'  — ratio ≥ 2.00 (high escalation; raises TL review)
+  /// Defaults to 'ok' for every existing row at migration time and
+  /// for every newly-created lead. The engine (D3.2) recomputes the
+  /// bucket on every scheduler tick + on every stage move / response.
+  /// `slaThresholdAt` records WHEN the current bucket was entered —
+  /// drives the audit trail and the 24-hour repeat-window check for
+  /// t150 escalations.
+  /// `lastRotatedAt` mirrors the most recent LeadRotationLog row's
+  /// timestamp for the lead. Denormalised so list queries can filter
+  /// "rotated in the last 24h" without joining; populated when the
+  /// rotation engine (D3.4) writes a rotation log. NULL until then.
+  /// All three columns are inert in D3.1 — no service reads or
+  /// writes them yet. Wired in D3.2 (threshold engine) and D3.4
+  /// (rotation engine).
+  slaThreshold    String    @default("ok") @map("sla_threshold")
+  slaThresholdAt  DateTime? @map("sla_threshold_at") @db.Timestamptz(6)
+  lastRotatedAt   DateTime? @map("last_rotated_at") @db.Timestamptz(6)
+
+  /// Phase D3 — D3.3: denormalised pointer to the latest
+  /// LeadStageStatus row for the lead's CURRENT stage. NULL when
+  /// the agent hasn't recorded a status yet on this stage attempt.
+  /// Cleared by `LeadsService.moveStage` when the stage changes
+  /// (under D3_ENGINE_V1=true) so a stale status from the previous
+  /// stage doesn't bleed into the new one. ON DELETE SET NULL so a
+  /// hard-deleted history row never cascades into the lead.
+  currentStageStatusId String?           @map("current_stage_status_id") @db.Uuid
+  currentStageStatus   LeadStageStatus?  @relation("LeadCurrentStageStatus", fields: [currentStageStatusId], references: [id], onDelete: SetNull)
+  /// Back-relation for every LeadStageStatus row historically
+  /// written for this lead (across stages and attempts).
+  stageStatuses        LeadStageStatus[] @relation("LeadStageStatusHistory")
+  /// Phase D3 — D3.4: append-only rotation-history rows for the lead.
+  /// Sales agents see a redacted view (no from/to user names);
+  /// TL+ see the full from/to chain. Visibility gate lives in
+  /// `RotationService`. Empty until D3.4's first rotation lands.
+  rotationLogs         LeadRotationLog[]
+  /// Phase D3 — D3.6: TL Review Queue rows raised for this lead.
+  /// Most leads have zero. SLA breach repeats / rotation failures /
+  /// manual TL flags create rows here for ops/TL action.
+  reviews              LeadReview[]
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -656,7 +758,227 @@ model Lead {
   // by attempt number" without a sort — supports the future Attempts
   // History card on the lead detail page.
   @@index([tenantId, contactId, attemptIndex])
+  // Phase D3 — D3.1: hot path for the future threshold scheduler.
+  // The recompute query is `WHERE tenant=? AND slaThreshold IN
+  // ('ok','t75','t100','t150') AND slaDueAt IS NOT NULL`. The
+  // composite index lets the scanner skip leads that are already
+  // at 't200' (terminal threshold; nothing more for the engine to
+  // do until the lead transitions out of 'open') and lets the UI
+  // chip-filter "leads at t150 or worse" return without a sort.
+  // Inert in D3.1 — no scanner reads it yet.
+  @@index([tenantId, slaThreshold, slaDueAt])
   @@map("leads")
+}
+
+/// Phase D3 — D3.3: per-(lead × stage) status history.
+///
+/// Each row records ONE status the agent picked for a lead inside a
+/// particular pipeline stage during a particular attempt — e.g. for
+/// the "First Contact" stage: `status = 'no_answer'` after a missed
+/// call. The latest row for a lead is denormalised onto
+/// `Lead.currentStageStatusId` for cheap reads; the full history
+/// stays here so reports / TL coaching dashboards can ask "how many
+/// times did this lead hit no_answer before being lost?".
+///
+/// Status STRING is validated at the service layer against
+/// `PipelineStage.allowedStatuses`. Storing it as TEXT (not an enum)
+/// lets each tenant configure its own catalogue per stage without
+/// schema migrations.
+///
+/// `attemptIndex` mirrors `Lead.attemptIndex` at write time so the
+/// status row is forensically tied to the attempt it belonged to —
+/// critical when a lead is reactivated (D2) and a fresh attempt's
+/// status history must not leak into the predecessor's report.
+///
+/// FORCE RLS on `tenant_id`. ON DELETE CASCADE for tenant + lead;
+/// ON DELETE SET NULL for the user (so disabling an agent doesn't
+/// destroy their status-history audit trail).
+model LeadStageStatus {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @map("tenant_id") @db.Uuid
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId       String  @map("lead_id") @db.Uuid
+  lead         Lead    @relation("LeadStageStatusHistory", fields: [leadId], references: [id], onDelete: Cascade)
+  stageId      String  @map("stage_id") @db.Uuid
+  stage        PipelineStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  /// Stable code from `PipelineStage.allowedStatuses[].code`. Free
+  /// string at the column level; validated at the service.
+  status       String
+  /// Snapshot of `Lead.attemptIndex` when this status was recorded.
+  /// Lets reports filter "statuses for this attempt only".
+  attemptIndex Int     @map("attempt_index")
+  /// Author. NULL for system-driven future paths (none today).
+  setByUserId  String? @map("set_by_user_id") @db.Uuid
+  setBy        User?   @relation("LeadStageStatusAuthor", fields: [setByUserId], references: [id], onDelete: SetNull)
+  /// Optional free-text note the agent supplied alongside the status.
+  notes        String?
+
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Inverse relation pointing back from Lead.currentStageStatusId.
+  currentForLeads Lead[] @relation("LeadCurrentStageStatus")
+
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  @@index([tenantId, stageId, status])
+  @@map("lead_stage_statuses")
+}
+
+/// Phase D3 — D3.4: append-only lead-rotation history.
+///
+/// Each row records ONE rotation — the moment a lead's owner changed,
+/// the trigger (SLA breach, manual TL action, capacity-balance,
+/// agent-unavailable), the handover mode (full / summary / clean),
+/// and forensic context (reason code, free-text notes, optional
+/// payload snapshot). Distinct from `LeadActivity { type: 'rotation' }`
+/// — the activity row is the human-facing timeline entry, this
+/// table is the structured query surface for "rotated to me in the
+/// last 24h" agent-workspace banners and TL coaching dashboards.
+///
+/// Visibility:
+///   The full `(fromUser, toUser, reasonCode, notes, payload)` set is
+///   server-authoritative. The read endpoint redacts those fields
+///   for callers that lack `lead.write` (D2.6 pattern; future
+///   `lead.previous_owner.read` capability will replace it). The
+///   table itself never deletes rows — the redaction happens at the
+///   service-response layer.
+///
+/// `attemptIndex` snapshots `Lead.attemptIndex` so a rotation that
+/// happened on attempt #2 doesn't get silently re-attributed to a
+/// later attempt's report.
+///
+/// FORCE RLS on tenant_id (matches every other tenant-scoped table
+/// in the schema).
+model LeadRotationLog {
+  id            String  @id @default(uuid()) @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId        String  @map("lead_id") @db.Uuid
+  lead          Lead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Owner of the lead BEFORE the rotation. NULL when the lead was
+  /// unassigned at rotation time (rare but possible — e.g. SLA
+  /// breach on a lead the route engine had previously failed to
+  /// place). SetNull on user delete so disabling an agent never
+  /// destroys the audit trail.
+  fromUserId    String? @map("from_user_id") @db.Uuid
+  fromUser      User?   @relation("LeadRotationLogFromUser", fields: [fromUserId], references: [id], onDelete: SetNull)
+  /// Owner AFTER the rotation. NULL when the route engine had no
+  /// eligible agent and the lead was left unassigned (the activity
+  /// row + log still record the attempt). SetNull on user delete.
+  toUserId      String? @map("to_user_id") @db.Uuid
+  toUser        User?   @relation("LeadRotationLogToUser", fields: [toUserId], references: [id], onDelete: SetNull)
+  /// Free-text trigger code. Today: `sla_breach` | `manual_tl` |
+  /// `manual_ops` | `agent_unavailable` | `capacity_balance`. Stored
+  /// as TEXT (not enum) so future triggers don't need a migration.
+  trigger       String
+  /// Handover mode chosen at rotation time. `full` | `summary` |
+  /// `clean`. Drives the new owner's view + the activity payload
+  /// shape (see RotationService).
+  handoverMode  String  @map("handover_mode")
+  /// Optional stable code categorising the rotation (e.g.
+  /// `sla_t150_breach`, `tl_capacity_balance`). Distinct from
+  /// `trigger` — `trigger` is "what fired this", `reasonCode` is
+  /// "what tag should the dashboard group it under".
+  reasonCode    String? @map("reason_code")
+  /// Free-text TL/Ops note. For Summary Transfer this is shown to
+  /// the new owner; for Full / Clean it's TL+-only.
+  notes         String?
+  /// Forensic snapshot — anything the engine wants to preserve
+  /// (matched rule id, eligibility filter results, etc.). Optional.
+  payload       Json?
+  /// Snapshot of `Lead.attemptIndex` at rotation time.
+  attemptIndex  Int     @map("attempt_index")
+  /// Actor — the user who triggered the rotation. NULL when the
+  /// scheduler (system) initiated it.
+  actorUserId   String? @map("actor_user_id") @db.Uuid
+  actor         User?   @relation("LeadRotationLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Per-lead history (newest first) — drives the lead-detail card.
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  // "rotated to me in the last 24h" — drives the agent-workspace
+  // banner D3.7 ships.
+  @@index([tenantId, toUserId, createdAt(sort: Desc)])
+  // Per-trigger reporting (Ops dashboards, breach analytics).
+  @@index([tenantId, trigger, createdAt(sort: Desc)])
+  @@map("lead_rotation_logs")
+}
+
+/// Phase D3 — D3.6: TL Review Queue.
+///
+/// Each row is ONE review item — surfaced to a TL (or Ops / Account
+/// Manager) for human action. Mirrors `WhatsAppConversationReview`'s
+/// shape (proven D1.5 pattern) but stays a SEPARATE model:
+/// conversation reviews are conversation-anchored 1:1; lead reviews
+/// can stack multiple per lead lifecycle.
+///
+/// Reasons (free-string column; service validates):
+///   - `sla_breach_repeat`   — second t150 SLA breach within the
+///                              policy window. Raised by D3.5.
+///   - `rotation_failed`     — D3.7+ heuristic for "rotated and the
+///                              new owner also missed it within X".
+///   - `manual_tl_review`    — TL flagged this lead for review.
+///   - `bottleneck_flagged`  — system detected a stuck-in-stage
+///                              cohort (D3.7+).
+///   - `escalated_by_tl`     — child review created when a TL
+///                              resolves a parent review with
+///                              `escalated`.
+///
+/// Resolutions (free-string column; service validates):
+///   - `rotated`     — TL acted via the rotation engine; the
+///                      review row is closed once the rotation
+///                      succeeded.
+///   - `kept_owner`  — TL decided current owner stays. Notes
+///                      required (TL accountability).
+///   - `escalated`   — pushes to Account Manager. A new
+///                      `escalated_by_tl` review is created with
+///                      `assignedTlId = NULL` so Ops queue picks
+///                      it up.
+///   - `dismissed`   — false positive. Notes required.
+///
+/// `assignedTlId` defaults at raise time to the lead's team's
+/// `team_leader_id`; NULL when the team has no TL or when the
+/// caller didn't provide a target. Ops / Account Manager queues
+/// surface NULL-assigned rows for triage.
+///
+/// FORCE RLS on tenant_id (matches every other tenant-scoped
+/// table). Per-row visibility (sales agents must NOT see this
+/// table at all) is enforced at the service / capability layer.
+model LeadReview {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId          String    @map("lead_id") @db.Uuid
+  lead            Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  /// Stable code; service validates against the known reason set.
+  reason          String
+  /// Forensic context — what produced this review row. Schema-free
+  /// JSON so each reason can carry whatever its raiser knows
+  /// (recent rotation id, breach count, prior assignee, …).
+  reasonPayload   Json?     @map("reason_payload")
+  /// TL the row is assigned to. NULL = Ops queue (no TL on the
+  /// lead's team, or escalated upward).
+  assignedTlId    String?   @map("assigned_tl_id") @db.Uuid
+  assignedTl      User?     @relation("LeadReviewAssignedTl", fields: [assignedTlId], references: [id], onDelete: SetNull)
+  /// Resolution state. NULL while the row is open.
+  resolution      String?
+  resolvedById    String?   @map("resolved_by_id") @db.Uuid
+  resolvedBy      User?     @relation("LeadReviewResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+  /// TL/Ops free-text rationale for the resolution. Required when
+  /// resolution is `kept_owner` or `dismissed` (TL accountability);
+  /// service enforces.
+  resolutionNotes String?   @map("resolution_notes")
+
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // TL queue: "open reviews assigned to me, newest first".
+  @@index([tenantId, assignedTlId, resolvedAt, createdAt(sort: Desc)])
+  // Per-lead history (lead detail card surfaces it later).
+  @@index([tenantId, leadId])
+  // Reason-chip count queries (tenant-wide reporting).
+  @@index([tenantId, reason, resolvedAt])
+  @@map("lead_reviews")
 }
 
 /// Captain — a Lead converted to an active driver.
@@ -1784,6 +2106,26 @@ model TenantSettings {
   /// schema + service that reads / writes it. Older rows stay
   /// NULL on UPDATE; no behavior change.
   duplicateRules    Json?    @map("duplicate_rules")
+
+  /// Phase D3 — D3.5: per-tenant SLA escalation policy (JSONB seam).
+  /// Shape:
+  /// {
+  ///   "thresholds": {
+  ///     "t75":  { "action": "notify_only" },
+  ///     "t100": { "action": "notify_and_tag" },
+  ///     "t150": {
+  ///       "action": "rotate_or_review",
+  ///       "rotateOnFirst": true,
+  ///       "reviewOnRepeatWithinHours": 24
+  ///     },
+  ///     "t200": { "action": "raise_review" }
+  ///   },
+  ///   "defaultHandoverMode": "full"
+  /// }
+  /// NULL = use the locked product defaults (DEFAULT_ESCALATION_RULES
+  /// in escalation-rules.dto.ts). No admin UI ships in D3.5 — the
+  /// column is service-only until D3.7 polish adds the editor panel.
+  escalationRules   Json?    @map("escalation_rules")
 
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

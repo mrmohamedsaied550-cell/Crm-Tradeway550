@@ -360,3 +360,31 @@ export const BulkDeleteSchema = z
   })
   .strict();
 export type BulkDeleteDto = z.infer<typeof BulkDeleteSchema>;
+
+/**
+ * Phase D3 — D3.4: body for `POST /leads/:id/rotate`.
+ *
+ * `handoverMode` is the visibility / data-carry contract for the
+ * rotation:
+ *   • `full`    — operational context preserved server-side; sales-
+ *                 agent visibility still gated by D2.6 rules.
+ *   • `summary` — TL provides a short note; new owner sees the gist,
+ *                 not the transcript.
+ *   • `clean`   — new owner starts fresh; pending follow-ups assigned
+ *                 to the prior owner are cancelled with a forensic
+ *                 marker.
+ *
+ * `toUserId` is optional — when omitted, the route engine picks a
+ * new owner (excluding the current one). `reasonCode` is a stable
+ * tag that lets dashboards group rotations (e.g. `sla_t150_breach`,
+ * `tl_capacity_balance`); `notes` is free-text the TL writes.
+ */
+export const RotateLeadSchema = z
+  .object({
+    handoverMode: z.enum(['full', 'summary', 'clean'] as const),
+    toUserId: z.string().uuid().optional(),
+    reasonCode: z.string().trim().min(1).max(64).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  })
+  .strict();
+export type RotateLeadDto = z.infer<typeof RotateLeadSchema>;

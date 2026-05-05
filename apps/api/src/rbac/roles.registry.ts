@@ -54,6 +54,11 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'lead.activity.write',
   'lead.stage.move',
   'lead.assign',
+  // Phase D3 — D3.3: agents (sales / activation / driving) record
+  // stage-specific statuses (call dispositions etc.) on the leads
+  // they handle. TLs inherit via AGENT_ACTIONS; ops_manager /
+  // account_manager get it explicitly in their role bundles below.
+  'lead.stage.status.write',
   'followup.write',
   'followup.complete',
   'whatsapp.message.send',
@@ -70,6 +75,13 @@ const TEAM_LEAD_EXTRAS: readonly CapabilityCode[] = [
   'lead.write',
   'lead.convert',
   'lead.import',
+  // Phase D3 — D3.4: TLs rotate leads inside their team scope. Ops /
+  // Account Manager get it via their explicit role bundles below.
+  'lead.rotate',
+  // Phase D3 — D3.6: TLs work the Review Queue. They see + resolve
+  // rows assigned to their team's TL slot (default raise target).
+  'lead.review.read',
+  'lead.review.resolve',
   'whatsapp.handover',
   // Phase C — C10B-4: TLs reassign + reopen + see the review queue
   // (resolution is admin-only — see ops_manager / account_manager).
@@ -110,6 +122,13 @@ export const ROLE_DEFINITIONS = [
       'lead.import',
       // Phase D2 — D2.2: manual reactivation override.
       'lead.reactivate',
+      // Phase D3 — D3.3: stage-status write surface (mirrors agents).
+      'lead.stage.status.write',
+      // Phase D3 — D3.4: rotate leads (cross-team scope for ops).
+      'lead.rotate',
+      // Phase D3 — D3.6: TL Review Queue (broad ops scope).
+      'lead.review.read',
+      'lead.review.resolve',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -165,6 +184,13 @@ export const ROLE_DEFINITIONS = [
       'lead.import',
       // Phase D2 — D2.2: manual reactivation override (mirrors ops_manager).
       'lead.reactivate',
+      // Phase D3 — D3.3: stage-status write surface (mirrors agents).
+      'lead.stage.status.write',
+      // Phase D3 — D3.4: rotate leads (mirrors ops_manager).
+      'lead.rotate',
+      // Phase D3 — D3.6: TL Review Queue (mirrors ops_manager).
+      'lead.review.read',
+      'lead.review.resolve',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',

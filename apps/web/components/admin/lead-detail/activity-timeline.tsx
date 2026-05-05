@@ -6,6 +6,8 @@ import {
   CalendarPlus,
   Check,
   Clock,
+  Gauge,
+  ListChecks,
   Phone,
   Settings,
   StickyNote,
@@ -59,6 +61,23 @@ function activityTone(type: LeadActivityType): Tone {
     case 'note':
     case 'call':
       return 'healthy';
+    // Phase D3 — D3.2: threshold transitions render as warning by
+    // default. Per-bucket tone (info for t75 / warning for t100 /
+    // breach for t150+) is D3.7 polish — keeping it simple here so
+    // D3.2 stays a backend-heavy commit.
+    case 'sla_threshold_crossed':
+      return 'warning';
+    // Phase D3 — D3.3: stage-status changes are operational notes,
+    // not breaches — neutral info tone matches the "what just
+    // happened in this stage" framing.
+    case 'stage_status_changed':
+      return 'info';
+    // Phase D3 — D3.4: rotation events render as warning so they
+    // stand out from regular assignments — a rotation carries more
+    // operational weight (audit row, log entry, possible follow-up
+    // cancellation) than a manual `assignment`.
+    case 'rotation':
+      return 'warning';
     default:
       return 'neutral';
   }
@@ -71,6 +90,17 @@ const ACTIVITY_ICON: Record<LeadActivityType, React.ComponentType<{ className?: 
   assignment: UserPlus,
   auto_assignment: Users,
   sla_breach: TriangleAlert,
+  // Phase D3 — D3.2: dial-style icon distinguishes threshold-crossed
+  // events from full breaches. The full ladder visual lands in D3.7.
+  sla_threshold_crossed: Gauge,
+  // Phase D3 — D3.3: ListChecks icon mirrors the picker's header
+  // icon so the timeline event reads as "the agent ticked off a
+  // status in the stage's catalogue".
+  stage_status_changed: ListChecks,
+  // Phase D3 — D3.4: arrow icon mirrors the rotate CTA + the
+  // history-card header icon — same visual language across the
+  // surface.
+  rotation: ArrowRightLeft,
   system: Settings,
 };
 
@@ -90,6 +120,9 @@ interface PayloadShape {
   strategy?: string;
   captainId?: string;
   reason?: string;
+  /** Phase D3 — D3.3: stage_status_changed payload. */
+  fromStatus?: string | null;
+  toStatus?: string;
 }
 
 function readPayload(raw: Record<string, unknown> | null): PayloadShape {
@@ -104,6 +137,9 @@ function readPayload(raw: Record<string, unknown> | null): PayloadShape {
   if (typeof raw['strategy'] === 'string') out.strategy = raw['strategy'];
   if (typeof raw['captainId'] === 'string') out.captainId = raw['captainId'];
   if (typeof raw['reason'] === 'string') out.reason = raw['reason'];
+  if (typeof raw['fromStatus'] === 'string' || raw['fromStatus'] === null)
+    out.fromStatus = raw['fromStatus'] as string | null;
+  if (typeof raw['toStatus'] === 'string') out.toStatus = raw['toStatus'];
   return out;
 }
 
@@ -388,6 +424,24 @@ function pickSummary(
         });
       case 'sla_breach':
         return tDetail('activity.summary.slaBreach');
+      // Phase D3 — D3.3: stage_status_changed summary. The payload's
+      // `toStatus` is a code; agents see the activity row's `body`
+      // (which already carries the human label the picker used) so
+      // the summary line is short — "Stage status changed: <code>".
+      // Full per-status localised summary lands in D3.7 polish.
+      case 'stage_status_changed':
+        return payload.toStatus
+          ? tDetail('activity.summary.stageStatusChangedTo', { status: payload.toStatus })
+          : tDetail('activity.summary.stageStatusChanged');
+      // Phase D3 — D3.4: rotation summary. The activity payload
+      // carries `fromUserId / toUserId` even for sales-agent
+      // viewers because the activity row itself is unsanitised
+      // (the dedicated rotation-history endpoint handles
+      // visibility). Sales-agent UI surfaces ought to render the
+      // neutral copy; the timeline text stays generic — no actor
+      // names appear here.
+      case 'rotation':
+        return tDetail('activity.summary.rotation');
       case 'system':
         if (payload.captainId) return tDetail('activity.summary.converted');
         return null;

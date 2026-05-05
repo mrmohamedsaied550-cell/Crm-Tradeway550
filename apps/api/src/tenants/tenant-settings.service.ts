@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import {
+  DEFAULT_ESCALATION_RULES,
+  EscalationRulesSchema,
+  parseEscalationRulesJson,
+  type EscalationRulesConfig,
+} from '../crm/escalation-rules.dto';
 import { getSlaMinutes } from '../crm/sla.config';
 import {
   DEFAULT_DUPLICATE_RULES,
@@ -306,6 +312,95 @@ export class TenantSettingsService {
       });
 
       return after;
+    });
+  }
+
+  /**
+   * Phase D3 — D3.7: read the per-tenant SLA escalation policy.
+   *
+   * Returns a fully-populated config — NULL / malformed JSON falls
+   * back to `DEFAULT_ESCALATION_RULES`. This mirrors
+   * `getDuplicateRules` so the admin panel never has to merge with
+   * defaults itself.
+   */
+  async getEscalationRules(): Promise<EscalationRulesConfig> {
+    const tenantId = requireTenantId();
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.tenantSettings.findUnique({
+        where: { tenantId },
+        select: { escalationRules: true },
+      }),
+    );
+    if (!row) return { ...DEFAULT_ESCALATION_RULES };
+    return parseEscalationRulesJson(row.escalationRules ?? null);
+  }
+
+  /**
+   * Phase D3 — D3.7: write the per-tenant SLA escalation policy.
+   *
+   * Validates the full payload via `EscalationRulesSchema` (no
+   * partial PATCH — the editor saves the whole object so the audit
+   * before/after diff is honest). Audit row uses
+   * `tenant.escalation_rules.update` with `before`, `after`, and a
+   * field-level `changedFields` list.
+   *
+   * Capability gate lives at the controller layer
+   * (`tenant.settings.write`). The SLA scheduler reads the resolved
+   * policy via `EscalationPolicyService` on every tick — no cache,
+   * no scheduler restart needed when the operator saves.
+   */
+  async updateEscalationRules(
+    next: EscalationRulesConfig,
+    actorUserId: string | null,
+  ): Promise<EscalationRulesConfig> {
+    const tenantId = requireTenantId();
+    // Defence-in-depth: re-validate with the Zod schema so a hand-
+    // crafted DTO that bypasses the controller pipe still gets the
+    // same shape contract.
+    const parsed = EscalationRulesSchema.parse(next);
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const current = await tx.tenantSettings.findUnique({
+        where: { tenantId },
+        select: { escalationRules: true },
+      });
+      const before: EscalationRulesConfig = current
+        ? parseEscalationRulesJson(current.escalationRules ?? null)
+        : { ...DEFAULT_ESCALATION_RULES };
+
+      const changedFields: string[] = [];
+      if (before.defaultHandoverMode !== parsed.defaultHandoverMode) {
+        changedFields.push('defaultHandoverMode');
+      }
+      for (const k of ['t75', 't100', 't150', 't200'] as const) {
+        if (JSON.stringify(before.thresholds[k]) !== JSON.stringify(parsed.thresholds[k])) {
+          changedFields.push(`thresholds.${k}`);
+        }
+      }
+
+      await tx.tenantSettings.upsert({
+        where: { tenantId },
+        update: {
+          escalationRules: parsed as unknown as Prisma.InputJsonValue,
+        },
+        create: {
+          tenantId,
+          escalationRules: parsed as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'tenant.escalation_rules.update',
+        entityType: 'tenant_settings',
+        entityId: tenantId,
+        actorUserId,
+        payload: {
+          before,
+          after: parsed,
+          changedFields,
+        } as unknown as Prisma.InputJsonValue,
+      });
+
+      return parsed;
     });
   }
 

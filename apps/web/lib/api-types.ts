@@ -182,6 +182,22 @@ export type LeadActivityType =
   | 'assignment'
   | 'auto_assignment'
   | 'sla_breach'
+  // Phase D3 — D3.2: emitted by the SLA threshold engine when a lead
+  // crosses the ladder buckets (ok ↔ t75 ↔ t100 ↔ t150 ↔ t200). The
+  // backend records the row; D3.2 ships the type union + a minimal
+  // timeline label so the row renders without a raw enum leak. Full
+  // visual treatment (per-bucket tone, threshold ladder) lands in
+  // D3.7 polish.
+  | 'sla_threshold_crossed'
+  // Phase D3 — D3.3: emitted by LeadStageStatusService.setStatus
+  // when an agent records a stage-specific status (call disposition,
+  // docs-pending sub-state, …). Inert when D3_ENGINE_V1=false.
+  | 'stage_status_changed'
+  // Phase D3 — D3.4: emitted by RotationService.rotateLead alongside
+  // the structured `LeadRotationLog` row + `lead.rotated` audit verb.
+  // Sales agents see a sanitised summary (no from/to user names);
+  // TL+ see the full chain. Inert when D3_ENGINE_V1=false.
+  | 'rotation'
   | 'system';
 
 export type CaptainStatus = 'active' | 'inactive' | 'archived';
@@ -933,4 +949,215 @@ export interface AttemptHistoryResult {
   totalAttempts: number;
   outOfScopeCount: number;
   currentLeadId: string;
+}
+
+/**
+ * Phase D3 — D3.3: stage-specific status surface.
+ *
+ * `AllowedStatusEntry` is the per-stage catalogue entry — `code` is
+ * the stable machine value, `label` / `labelAr` are the display copy
+ * the picker + activity timeline render. Empty `allowedStatuses` on
+ * the response means the stage has no catalogue configured; the UI
+ * renders the "no statuses configured" hint.
+ *
+ * `StageStatusHistoryRow` mirrors what the service returns for both
+ * `currentStatus` (a single row, possibly null) and `history` (every
+ * status row recorded for the lead, newest first).
+ */
+export interface AllowedStatusEntry {
+  code: string;
+  label: string;
+  labelAr: string;
+}
+
+export interface StageStatusHistoryRow {
+  id: string;
+  stageId: string;
+  status: string;
+  attemptIndex: number;
+  notes: string | null;
+  createdAt: string;
+  setBy: { id: string; name: string } | null;
+  /** The stage the status was recorded against — included on history
+   *  rows because they may span multiple stages over a lead's life. */
+  stage?: { id: string; code: string; name: string };
+}
+
+export interface StageStatusesResponse {
+  leadId: string;
+  stage: { id: string; code: string; name: string };
+  currentStatus: StageStatusHistoryRow | null;
+  allowedStatuses: AllowedStatusEntry[];
+  history: StageStatusHistoryRow[];
+}
+
+export interface SetStageStatusResponse {
+  leadId: string;
+  previousStatus: string | null;
+  currentStatus: StageStatusHistoryRow;
+}
+
+/**
+ * Phase D3 — D3.4: lead rotation surfaces.
+ *
+ * `RotationOutcome` is the response from `POST /leads/:id/rotate`.
+ * `RotationHistoryRow` mirrors `GET /leads/:id/rotations`, with
+ * `fromUser` / `toUser` / `actor` / `notes` redacted to NULL by the
+ * server when the caller lacks `lead.write` (D2.6 visibility gate).
+ * The `canSeeOwners` boolean is the explicit signal so the UI
+ * doesn't have to second-guess null vs hidden.
+ */
+export type HandoverMode = 'full' | 'summary' | 'clean';
+export type RotationTrigger =
+  | 'manual_tl'
+  | 'manual_ops'
+  | 'sla_breach'
+  | 'agent_unavailable'
+  | 'capacity_balance';
+
+export interface RotationOutcome {
+  rotationId: string;
+  leadId: string;
+  fromUserId: string | null;
+  toUserId: string | null;
+  trigger: RotationTrigger;
+  handoverMode: HandoverMode;
+  attemptIndex: number;
+  cancelledFollowUpCount: number;
+}
+
+export interface RotationHistoryRow {
+  id: string;
+  trigger: string;
+  handoverMode: string;
+  reasonCode: string | null;
+  attemptIndex: number;
+  notes: string | null;
+  createdAt: string;
+  fromUser: { id: string; name: string } | null;
+  toUser: { id: string; name: string } | null;
+  actor: { id: string; name: string } | null;
+}
+
+export interface RotationHistoryResponse {
+  leadId: string;
+  /** When false, the server stripped fromUser / toUser / actor /
+   *  notes from every row. UI renders neutral copy. */
+  canSeeOwners: boolean;
+  rotations: RotationHistoryRow[];
+}
+
+/**
+ * Phase D3 — D3.6: TL Review Queue.
+ *
+ * Reasons, resolutions, and the row + paginated-response shapes the
+ * `/lead-reviews` endpoints return. Reason / resolution sets stay
+ * separate from `WhatsAppReviewReason` / `WhatsAppReviewResolution`
+ * — the two queues mirror each other's UX but never share data
+ * shape, so collapsing them would force an awkward middle layer.
+ */
+export type LeadReviewReason =
+  | 'sla_breach_repeat'
+  | 'rotation_failed'
+  | 'manual_tl_review'
+  | 'bottleneck_flagged'
+  | 'escalated_by_tl';
+
+export type LeadReviewResolution = 'rotated' | 'kept_owner' | 'escalated' | 'dismissed';
+
+export interface LeadReviewRow {
+  id: string;
+  leadId: string;
+  reason: LeadReviewReason;
+  reasonPayload: Record<string, unknown> | null;
+  assignedTlId: string | null;
+  resolution: LeadReviewResolution | null;
+  resolvedAt: string | null;
+  resolutionNotes: string | null;
+  createdAt: string;
+  assignedTl: { id: string; name: string } | null;
+  resolvedBy: { id: string; name: string } | null;
+  lead: {
+    id: string;
+    name: string;
+    phone: string;
+    slaThreshold: string;
+    stage: { code: string; name: string };
+    assignedTo: { id: string; name: string } | null;
+  };
+}
+
+export interface LeadReviewsListResponse {
+  items: LeadReviewRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Phase D3 — D3.7: agent-workspace "Needs attention now" payload.
+ *
+ * Three sanitised lists for the calling agent. NEVER carries
+ * previous-owner / actor names — the workspace surface intentionally
+ * redacts blame fields. The audit page (`/admin/audit`) is the place
+ * for full attribution; the workspace is operational, not forensic.
+ */
+export interface NeedsAttentionResponse {
+  rotatedToMe: Array<{
+    rotationId: string;
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    rotatedAt: string;
+  }>;
+  atRiskSla: Array<{
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    threshold: 't150' | 't200';
+    thresholdAt: string | null;
+  }>;
+  openReviews: Array<{
+    reviewId: string;
+    leadId: string;
+    leadName: string;
+    phone: string;
+    stage: { code: string; name: string };
+    reason: LeadReviewReason | string;
+    createdAt: string;
+  }>;
+}
+
+/**
+ * Phase D3 — D3.7: SLA escalation policy (per-tenant).
+ *
+ * Mirrors the backend Zod shape (`EscalationRulesSchema`). The
+ * editor at `/admin/tenant-settings` saves the full object; the
+ * service computes the diff for the audit row.
+ */
+export type EscalationAction =
+  | 'notify_only'
+  | 'notify_and_tag'
+  | 'rotate'
+  | 'rotate_or_review'
+  | 'raise_review';
+
+export type EscalationHandoverMode = 'full' | 'summary' | 'clean';
+
+export interface EscalationThresholdPolicy {
+  action: EscalationAction;
+  rotateOnFirst: boolean;
+  reviewOnRepeatWithinHours: number;
+}
+
+export interface EscalationRulesConfig {
+  thresholds: {
+    t75: EscalationThresholdPolicy;
+    t100: EscalationThresholdPolicy;
+    t150: EscalationThresholdPolicy;
+    t200: EscalationThresholdPolicy;
+  };
+  defaultHandoverMode: EscalationHandoverMode;
 }

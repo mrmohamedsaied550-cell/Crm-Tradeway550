@@ -6,23 +6,54 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
+import { AuditService } from '../audit/audit.service';
 import { AssignmentService } from './assignment.service';
 import { getSlaMinutes } from './sla.config';
+import { isD3EngineV1Enabled } from './d3-feature-flag';
+import { EscalationPolicyService } from './escalation-policy.service';
+import { LeadReviewService } from './lead-review.service';
+import { SlaThresholdsService, type SlaThreshold } from './sla-thresholds.service';
+import { RotationService } from './rotation.service';
+
+/**
+ * Phase D3 — D3.2: shape returned by `recomputeThreshold` when the
+ * threshold bucket changes. Returns NULL on no-op (paused / closed /
+ * already-on-this-bucket).
+ */
+export interface ThresholdTransition {
+  leadId: string;
+  from: SlaThreshold;
+  to: SlaThreshold;
+  ratio: number;
+  elapsedMinutes: number;
+  budgetMinutes: number;
+  slaDueAt: Date;
+}
 
 export type SlaStatus = 'active' | 'breached' | 'paused';
 
 export interface BreachReassignmentResult {
   leadId: string;
   /**
-   * `reassigned` — round-robin found a different eligible agent and the
-   * lead was updated.
+   * `reassigned`        — round-robin found a different eligible agent
+   *                        and the lead was updated.
    * `no_eligible_agent` — the picker returned null (e.g. only one agent
-   * in the tenant and it was excluded). Lead is marked breached but
-   * remains with the original assignee until a human intervenes.
+   *                        in the tenant and it was excluded). Lead is
+   *                        marked breached but remains with the original
+   *                        assignee until a human intervenes.
    * `unassigned_breached` — the lead had no assignee at all; we just
-   * mark the breach so dashboards can pick it up.
+   *                          mark the breach so dashboards can pick it
+   *                          up.
+   * `review_pending`    — Phase D3 — D3.5: the escalation policy
+   *                        decided this is a REPEAT breach within the
+   *                        tenant's `reviewOnRepeatWithinHours` window
+   *                        (default 24h). Auto-rotation is skipped on
+   *                        the repeat — the audit row carries the
+   *                        review-pending placeholder for D3.6 to
+   *                        materialise into a `LeadReview` row. Only
+   *                        emitted under `D3_ENGINE_V1=true`.
    */
-  outcome: 'reassigned' | 'no_eligible_agent' | 'unassigned_breached';
+  outcome: 'reassigned' | 'no_eligible_agent' | 'unassigned_breached' | 'review_pending';
   fromUserId: string | null;
   toUserId: string | null;
 }
@@ -65,7 +96,84 @@ export class SlaService {
      * AssignmentService — same behaviour as pre-cutover.
      */
     @Optional() private readonly distribution?: DistributionService,
+    /**
+     * Phase D3 — D3.2: pure threshold engine. @Optional so existing
+     * test harnesses that hand-construct SlaService without it keep
+     * compiling. When undefined, `recomputeThreshold` is a no-op
+     * (returns null) — the legacy binary breach path stays the
+     * only SLA behaviour. Production wiring (CrmModule) always
+     * provides it.
+     */
+    @Optional() private readonly thresholds?: SlaThresholdsService,
+    /**
+     * Phase D3 — D3.4: rotation engine. Optional so legacy test
+     * harnesses keep compiling. When wired AND D3_ENGINE_V1=true,
+     * SLA-breach reassignment routes through `RotationService`
+     * (writes a structured `LeadRotationLog` row + the `lead.rotated`
+     * audit verb in addition to the legacy `sla_breach` activity).
+     * When unwired or flag-off, the existing inline reassignment
+     * path runs unchanged.
+     */
+    @Optional() private readonly rotation?: RotationService,
+    /**
+     * Phase D3 — D3.5: escalation policy. Resolves the per-tenant
+     * action for each threshold (notify_only / notify_and_tag /
+     * rotate / rotate_or_review / raise_review). When wired AND
+     * D3_ENGINE_V1=true, the breach scanner consults this to
+     * decide rotate-vs-review on a t150 repeat. Optional so test
+     * harnesses keep compiling; the scanner falls back to
+     * "always rotate" when the dep is missing.
+     */
+    @Optional() private readonly escalationPolicy?: EscalationPolicyService,
+    /**
+     * Phase D3 — D3.5: audit writer. Used to record the
+     * `lead.sla.review_pending` placeholder when the t150 repeat
+     * detection rejects auto-rotation. Optional so test harnesses
+     * keep compiling.
+     */
+    @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D3 — D3.6: TL Review Queue. When wired AND the t150
+     * repeat detection fires, the SLA scanner additionally calls
+     * `LeadReviewService.raiseReview` so a TL/Ops can pick up the
+     * lead from the queue UI (mirrors the WhatsApp Review Queue
+     * D1.5 pattern). Idempotent on `(lead, reason, open)`. Optional
+     * so D3.5 test harnesses keep compiling without the new dep.
+     */
+    @Optional() private readonly leadReviews?: LeadReviewService,
   ) {}
+
+  /**
+   * Phase D3 — D3.4 seam for D3.5: route an SLA-breach reassignment
+   * through the rotation engine (when wired AND `D3_ENGINE_V1` is on).
+   * Currently UNUSED — `runReassignmentForBreaches` keeps the legacy
+   * inline path. D3.5 flips this seam to active by replacing the
+   * inline reassignment block in `runReassignmentForBreaches` with
+   * a call to this method.
+   *
+   * The method is intentionally tiny: a thin shim that asserts the
+   * dependency is wired and delegates to `RotationService.rotateLead`
+   * with `trigger: 'sla_breach'` and `handoverMode: 'full'` (the
+   * locked product default for SLA-driven auto-rotations). Returning
+   * the rotation outcome lets the caller fold it into its existing
+   * per-tenant log line.
+   */
+  async routeSlaBreachThroughRotation(input: {
+    leadId: string;
+    actorUserId: string | null;
+    reasonCode?: string;
+  }) {
+    if (!this.rotation) {
+      throw new Error('SlaService: RotationService not wired (D3.5 must inject it)');
+    }
+    return this.rotation.rotateLead({
+      leadId: input.leadId,
+      trigger: 'sla_breach',
+      handoverMode: 'full',
+      ...(input.reasonCode !== undefined && { reasonCode: input.reasonCode }),
+      actorUserId: input.actorUserId,
+    });
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // helpers used by LeadsService / CaptainsService inside their own tx
@@ -135,6 +243,213 @@ export class SlaService {
   }
 
   // ───────────────────────────────────────────────────────────────────────
+  // Phase D3 — D3.2: SLA threshold engine
+  //
+  // Pure read fallback for the per-stage / tenant-wide budget, plus a
+  // recompute method the scheduler tick (and future on-demand callers)
+  // use to keep `lead.sla_threshold` + `lead.sla_threshold_at` honest.
+  //
+  // Design choices:
+  //   - The pure math lives in SlaThresholdsService (no DB calls).
+  //     This file only persists the result + emits an activity row
+  //     on transitions.
+  //   - When the threshold doesn't change, `recomputeThreshold`
+  //     returns null and writes nothing — the scheduler can scan the
+  //     entire active fleet every minute without producing churn.
+  //   - When it DOES change, we update in a single tx: the lead row
+  //     (slaThreshold + slaThresholdAt) AND the LeadActivity. Either
+  //     both land or neither does — no audit drift if a partial commit
+  //     races a manual stage move.
+  //   - This method does NOT trigger rotation, escalation, notifications,
+  //     or any side effect beyond the activity row. Those land in
+  //     D3.4 / D3.5 behind the same `D3_ENGINE_V1` flag.
+  //   - Existing `slaStatus` semantics are preserved bit-for-bit. The
+  //     new threshold ladder coexists with the legacy binary breach;
+  //     they will be unified in a later D3 chunk once consumers have
+  //     migrated.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the effective SLA minutes for a stage, with tenant fallback.
+   *
+   *   stage.slaMinutes  ?? tenantSettings.slaMinutes
+   *
+   * NULL result if neither is configured — caller must treat that as
+   * "no SLA budget" (no threshold bucket can be assigned). Returns
+   * the budget as a number of minutes.
+   *
+   * Used by the threshold engine. Future D3 chunks will route the
+   * existing `resetForLead` callsites through this helper too so per-
+   * stage SLA is honoured at lead-create / stage-move time; D3.2
+   * leaves those callsites unchanged on purpose (legacy behaviour
+   * preserved for flag-off — see `D3_ENGINE_V1` in `d3-feature-flag.ts`).
+   */
+  async resolveSlaMinutesForStage(
+    tx: Prisma.TransactionClient,
+    stageId: string,
+  ): Promise<number | null> {
+    const tenantId = requireTenantId();
+    const stage = await tx.pipelineStage.findUnique({
+      where: { id: stageId },
+      select: { slaMinutes: true },
+    });
+    if (stage?.slaMinutes != null) return stage.slaMinutes;
+    if (this.tenantSettings) {
+      const settings = await this.tenantSettings.getForTenant(tenantId);
+      return settings.slaMinutes;
+    }
+    // Test harnesses without TenantSettingsService fall back to the
+    // env-default — same as `getEffectiveSlaMinutes`.
+    return getSlaMinutes();
+  }
+
+  /**
+   * Recompute the SLA threshold bucket for a single lead. No-op (returns
+   * null) when:
+   *   - The threshold engine isn't wired (`thresholds` undefined).
+   *   - The lead is non-'open' (terminal / archived).
+   *   - The lead's `slaStatus` is 'paused' or 'breached' — paused has no
+   *     timer; breached is handled by the legacy binary path and we
+   *     don't want to double-emit transitions on top of it.
+   *   - The lead has no `slaDueAt` (paused with cleared due-at).
+   *   - The computed bucket equals the lead's current `sla_threshold`.
+   *
+   * On a real transition: updates `lead.sla_threshold` and
+   * `lead.sla_threshold_at` and appends ONE `LeadActivity` row of
+   * type `sla_threshold_crossed` carrying `{from, to, ratio,
+   * budgetMinutes, elapsedMinutes, slaDueAt}` in its payload. Returns
+   * the transition for the caller to fold into batch-summary logs.
+   */
+  async recomputeThreshold(
+    tx: Prisma.TransactionClient,
+    leadId: string,
+    now: Date = new Date(),
+  ): Promise<ThresholdTransition | null> {
+    if (!this.thresholds) return null;
+    const tenantId = requireTenantId();
+    const lead = await tx.lead.findUnique({
+      where: { id: leadId },
+      select: {
+        id: true,
+        slaDueAt: true,
+        slaStatus: true,
+        slaThreshold: true,
+        lifecycleState: true,
+        stage: { select: { id: true, slaMinutes: true, isTerminal: true } },
+      },
+    });
+    if (!lead) return null;
+    if (lead.lifecycleState !== 'open') return null;
+    if (lead.stage.isTerminal) return null;
+    if (lead.slaStatus !== 'active') return null;
+    if (!lead.slaDueAt) return null;
+
+    const budgetMinutes = await this.resolveSlaMinutesForStage(tx, lead.stage.id);
+    const result = this.thresholds.computeBucket({
+      slaDueAt: lead.slaDueAt,
+      budgetMinutes,
+      now,
+    });
+    if (result.noOp) return null;
+
+    const fromBucket = (lead.slaThreshold ?? 'ok') as SlaThreshold;
+    const toBucket = result.threshold;
+    if (fromBucket === toBucket) return null;
+
+    await tx.lead.update({
+      where: { id: leadId },
+      data: { slaThreshold: toBucket, slaThresholdAt: now },
+    });
+    await tx.leadActivity.create({
+      data: {
+        tenantId,
+        leadId,
+        type: 'sla_threshold_crossed',
+        actionSource: 'system',
+        body: `SLA threshold ${fromBucket} → ${toBucket}`,
+        payload: {
+          event: 'sla_threshold_crossed',
+          from: fromBucket,
+          to: toBucket,
+          ratio: result.ratio,
+          budgetMinutes: result.budgetMinutes,
+          elapsedMinutes: result.elapsedMinutes,
+          slaDueAt: lead.slaDueAt.toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      leadId,
+      from: fromBucket,
+      to: toBucket,
+      ratio: result.ratio,
+      elapsedMinutes: result.elapsedMinutes,
+      budgetMinutes: result.budgetMinutes,
+      slaDueAt: lead.slaDueAt,
+    };
+  }
+
+  /**
+   * Tenant-wide threshold sweep. Iterates every open lead with an
+   * active SLA timer in batches (default 200) and recomputes its
+   * threshold under a single shared `now`. Returns the list of
+   * actual transitions for the scheduler's per-tenant log line.
+   *
+   * Each lead is recomputed in its own transaction so a single bad
+   * row cannot block the rest of the tenant's sweep — same isolation
+   * pattern as `runReassignmentForBreaches`.
+   *
+   * Caller is responsible for the feature-flag check and the tenant
+   * context — this method assumes both are already in place.
+   */
+  async runThresholdRecomputeForTenant(
+    now: Date = new Date(),
+    options: { batchSize?: number } = {},
+  ): Promise<ThresholdTransition[]> {
+    if (!this.thresholds) return [];
+    const tenantId = requireTenantId();
+    const batchSize = options.batchSize ?? 200;
+
+    // Hot-path query backed by the `(tenant, sla_threshold, sla_due_at)`
+    // index added in D3.1. We deliberately skip 't200' rows — once a
+    // lead has crossed the highest threshold there's nothing more for
+    // this engine to do until the lead transitions out of 'open' (at
+    // which point the lifecycle filter would skip it anyway).
+    const candidates = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.lead.findMany({
+        where: {
+          slaStatus: 'active',
+          slaDueAt: { not: null, lte: now },
+          lifecycleState: 'open',
+          stage: { isTerminal: false },
+          slaThreshold: { in: ['ok', 't75', 't100', 't150'] },
+        },
+        select: { id: true },
+        take: batchSize * 50, // hard cap so a runaway tenant can't starve siblings
+        orderBy: { slaDueAt: 'asc' },
+      }),
+    );
+
+    const transitions: ThresholdTransition[] = [];
+    for (const cand of candidates) {
+      try {
+        const t = await this.prisma.withTenant(tenantId, (tx) =>
+          this.recomputeThreshold(tx, cand.id, now),
+        );
+        if (t) transitions.push(t);
+      } catch (err) {
+        // Per-row failure shouldn't kill the sweep. Log and continue.
+        this.logger.warn(`sla.recomputeThreshold ${cand.id} failed: ${(err as Error).name}`);
+      }
+    }
+    if (transitions.length > 0) {
+      this.logger.log(`sla.thresholds: ${transitions.length} transition(s) for tenant ${tenantId}`);
+    }
+    return transitions;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
   // breach detection + reassignment
   // ───────────────────────────────────────────────────────────────────────
 
@@ -179,7 +494,39 @@ export class SlaService {
     const breaches = await this.findBreachedLeads(now);
     const results: BreachReassignmentResult[] = [];
 
+    // Phase D3 — D3.5: capture flag + rotation availability ONCE per
+    // run so a mid-run env-var flip can't race the per-breach loop
+    // into a mixed state. Per-iteration code consults `useD3Path`
+    // which is stable for the duration of this call.
+    const useD3Path = isD3EngineV1Enabled() && Boolean(this.rotation);
+
     for (const breach of breaches) {
+      if (useD3Path) {
+        const result = await this.runD3BreachIteration(
+          tenantId,
+          breach.id,
+          actorUserId,
+          now,
+          slaMinutes,
+        );
+        if (result) {
+          results.push(result);
+          if (this.realtime && result.outcome === 'reassigned' && result.toUserId) {
+            try {
+              this.realtime.emitToUser(tenantId, result.toUserId, {
+                type: 'lead.assigned',
+                leadId: result.leadId,
+                toUserId: result.toUserId,
+                fromUserId: result.fromUserId,
+                reason: 'sla_breach',
+              });
+            } catch {
+              /* swallowed — best-effort push */
+            }
+          }
+        }
+        continue;
+      }
       const result = await this.prisma.withTenant(tenantId, async (tx) => {
         // Re-read inside the transaction to avoid double-processing if
         // another worker has already touched this lead.
@@ -396,5 +743,284 @@ export class SlaService {
       this.logger.log(`SLA scan: ${results.length} breach(es) processed`);
     }
     return results;
+  }
+
+  /**
+   * Phase D3 — D3.5: per-breach iteration body when `D3_ENGINE_V1`
+   * is on AND `RotationService` is wired.
+   *
+   * Two-stage flow (each stage is its own short tx):
+   *
+   *   STAGE A: record the breach.
+   *     - Re-read the lead (defensive against race).
+   *     - Skip if no longer breached / terminal / paused.
+   *     - Write the legacy `sla_breach` `LeadActivity` row + flip
+   *       `slaStatus = 'breached'`. Preserves backwards-compatible
+   *       timeline rendering for existing UI.
+   *
+   *   STAGE B: act on the breach.
+   *     - Look at the escalation policy for the t150 bucket (or the
+   *       defaults). If the action is `rotate_or_review`, query the
+   *       rotation log for a prior `sla_breach` rotation on this
+   *       lead within the policy's `reviewOnRepeatWithinHours`
+   *       window. A match => REVIEW PENDING (placeholder audit;
+   *       D3.6 materialises a `LeadReview` row from this signal).
+   *     - Otherwise rotate via `RotationService.rotateLead` with
+   *       `trigger: 'sla_breach'` and the policy's
+   *       `defaultHandoverMode` (locked default = `full`).
+   *     - On rotation success: reset SLA on the new owner + bump
+   *       `lastAssignedAt` (round-robin clock) + send notifications.
+   *     - On rotation failure (`lead.rotate.no_eligible_agent`):
+   *       leave breached, notify the prior owner.
+   *
+   * Returns the same `BreachReassignmentResult` shape as the
+   * legacy path (with `outcome: 'review_pending'` added in D3.5).
+   */
+  private async runD3BreachIteration(
+    tenantId: string,
+    leadId: string,
+    actorUserId: string | null,
+    now: Date,
+    slaMinutes: number,
+  ): Promise<BreachReassignmentResult | null> {
+    // STAGE A — record the breach + extract context.
+    const ctx = await this.prisma.withTenant(tenantId, async (tx) => {
+      const fresh = await tx.lead.findUnique({
+        where: { id: leadId },
+        select: {
+          id: true,
+          assignedToId: true,
+          slaStatus: true,
+          slaDueAt: true,
+          stage: { select: { isTerminal: true } },
+        },
+      });
+      if (!fresh) return null;
+      if (fresh.stage.isTerminal || fresh.slaStatus !== 'active') return null;
+      if (!fresh.slaDueAt || fresh.slaDueAt.getTime() > now.getTime()) return null;
+
+      const fromUserId = fresh.assignedToId;
+      const overdueByMs = now.getTime() - fresh.slaDueAt.getTime();
+
+      // Backwards-compatible breach activity — same shape as the
+      // legacy path so existing timeline / audit consumers keep
+      // rendering this row identically.
+      await tx.leadActivity.create({
+        data: {
+          tenantId,
+          leadId: fresh.id,
+          type: 'sla_breach',
+          body: `SLA breached (${Math.round(overdueByMs / 60000)} min overdue)`,
+          payload: {
+            event: 'sla_breach',
+            dueAt: fresh.slaDueAt.toISOString(),
+            detectedAt: now.toISOString(),
+            priorAssigneeId: fromUserId,
+          } as Prisma.InputJsonValue,
+          createdById: actorUserId,
+        },
+      });
+      await tx.lead.update({ where: { id: fresh.id }, data: { slaStatus: 'breached' } });
+      return { fromUserId, slaDueAtIso: fresh.slaDueAt.toISOString() };
+    });
+    if (!ctx) return null;
+
+    const { fromUserId } = ctx;
+
+    if (fromUserId === null) {
+      return {
+        leadId,
+        outcome: 'unassigned_breached' as const,
+        fromUserId: null,
+        toUserId: null,
+      };
+    }
+
+    // STAGE B-1: resolve the t150 policy + repeat-window check.
+    const policy = this.escalationPolicy ? await this.escalationPolicy.getPolicy() : null;
+    const t150 = policy?.thresholds.t150 ?? {
+      action: 'rotate_or_review' as const,
+      rotateOnFirst: true,
+      reviewOnRepeatWithinHours: 24,
+    };
+    const handoverMode = policy?.defaultHandoverMode ?? 'full';
+
+    let isRepeat = false;
+    if (t150.action === 'rotate_or_review') {
+      const since = new Date(now.getTime() - t150.reviewOnRepeatWithinHours * 60 * 60 * 1000);
+      const recentRotation = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.leadRotationLog.findFirst({
+          where: {
+            tenantId,
+            leadId,
+            trigger: 'sla_breach',
+            createdAt: { gte: since },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, createdAt: true },
+        }),
+      );
+      isRepeat = recentRotation !== null;
+      if (isRepeat) {
+        // Repeat-within-window — do NOT rotate again. Materialise a
+        // LeadReview row (D3.6) so a TL / Ops can act on it from the
+        // queue. The legacy `lead.sla.review_pending` audit row is
+        // ALSO emitted as the dashboard handle so existing audit-page
+        // chip filters keep working without a code change. D3.6's
+        // `lead.review.raised` audit row is the structured handle for
+        // the queue page itself.
+        if (this.leadReviews) {
+          await this.leadReviews.raiseReview({
+            leadId,
+            reason: 'sla_breach_repeat',
+            reasonPayload: {
+              recentRotationId: recentRotation!.id,
+              recentRotationAt: recentRotation!.createdAt.toISOString(),
+              windowHours: t150.reviewOnRepeatWithinHours,
+              priorAssigneeId: fromUserId,
+            } as Prisma.InputJsonValue,
+            actorUserId: null,
+          });
+        }
+        if (this.audit) {
+          await this.audit.writeForTenant(tenantId, {
+            action: 'lead.sla.review_pending',
+            entityType: 'lead',
+            entityId: leadId,
+            actorUserId: null,
+            payload: {
+              reason: 'sla_t150_repeat',
+              recentRotationId: recentRotation!.id,
+              recentRotationAt: recentRotation!.createdAt.toISOString(),
+              windowHours: t150.reviewOnRepeatWithinHours,
+              priorAssigneeId: fromUserId,
+            } as unknown as Prisma.InputJsonValue,
+          });
+        }
+        if (this.notifications) {
+          await this.prisma.withTenant(tenantId, (tx) =>
+            this.notifications!.createInTx(tx, tenantId, {
+              recipientUserId: fromUserId,
+              kind: 'sla.breach',
+              title: 'Lead pending TL review (SLA breach repeat)',
+              body: `This lead has breached SLA twice in ${t150.reviewOnRepeatWithinHours}h.`,
+              payload: { leadId, mode: 'review_pending' },
+            }),
+          );
+        }
+        return {
+          leadId,
+          outcome: 'review_pending' as const,
+          fromUserId,
+          toUserId: null,
+        };
+      }
+    } else if (t150.action !== 'rotate') {
+      // Policy is `notify_only` / `notify_and_tag` / `raise_review`.
+      // For D3.5, treat anything that isn't an explicit rotate as a
+      // notify-only path on the legacy SLA-breach surface; the lead
+      // stays with the prior owner. D3.6 will fold these into the
+      // LeadReview pipeline for `raise_review`.
+      if (this.notifications) {
+        await this.prisma.withTenant(tenantId, (tx) =>
+          this.notifications!.createInTx(tx, tenantId, {
+            recipientUserId: fromUserId,
+            kind: 'sla.breach',
+            title: 'Your lead breached SLA',
+            body: `Please respond.`,
+            payload: { leadId, mode: 'no_eligible_agent' },
+          }),
+        );
+      }
+      return {
+        leadId,
+        outcome: 'no_eligible_agent' as const,
+        fromUserId,
+        toUserId: null,
+      };
+    }
+
+    // STAGE B-2: rotate.
+    let rotationOutcome: { fromUserId: string | null; toUserId: string | null } | null = null;
+    try {
+      const out = await this.rotation!.rotateLead({
+        leadId,
+        trigger: 'sla_breach',
+        handoverMode,
+        reasonCode: 'sla_breach',
+        actorUserId: null,
+      });
+      rotationOutcome = { fromUserId: out.fromUserId, toUserId: out.toUserId };
+    } catch (err) {
+      // Common case: `lead.rotate.no_eligible_agent`. Leave breached;
+      // bell the prior owner.
+      const errCode =
+        err && typeof err === 'object' && 'getResponse' in err
+          ? (((err as { getResponse: () => unknown }).getResponse() as Record<string, unknown>)?.[
+              'code'
+            ] as string | undefined)
+          : undefined;
+      if (errCode === 'lead.rotate.no_eligible_agent') {
+        if (this.notifications) {
+          await this.prisma.withTenant(tenantId, (tx) =>
+            this.notifications!.createInTx(tx, tenantId, {
+              recipientUserId: fromUserId,
+              kind: 'sla.breach',
+              title: 'Your lead breached SLA',
+              body: `No reassignee available — please respond.`,
+              payload: { leadId, mode: 'no_eligible_agent' },
+            }),
+          );
+        }
+        return {
+          leadId,
+          outcome: 'no_eligible_agent' as const,
+          fromUserId,
+          toUserId: null,
+        };
+      }
+      throw err;
+    }
+
+    // STAGE B-3: rotation succeeded — reset SLA + bump round-robin
+    // clock + notifications.
+    const pickedId = rotationOutcome!.toUserId;
+    if (pickedId) {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            slaStatus: 'active',
+            slaDueAt: this.computeDueAt(now, slaMinutes),
+          },
+        });
+        await tx.user.update({
+          where: { id: pickedId },
+          data: { lastAssignedAt: now },
+        });
+        if (this.notifications) {
+          await this.notifications.createInTx(tx, tenantId, {
+            recipientUserId: pickedId,
+            kind: 'sla.breach',
+            title: 'Lead reassigned to you (SLA breach)',
+            body: `You picked up a breached lead from another agent.`,
+            payload: { leadId, fromUserId, mode: 'reassigned' },
+          });
+          await this.notifications.createInTx(tx, tenantId, {
+            recipientUserId: fromUserId,
+            kind: 'sla.breach',
+            title: 'Your lead was reassigned (SLA breach)',
+            body: `It was past its response window.`,
+            payload: { leadId, toUserId: pickedId, mode: 'reassigned' },
+          });
+        }
+      });
+    }
+    return {
+      leadId,
+      outcome: 'reassigned' as const,
+      fromUserId,
+      toUserId: pickedId,
+    };
   }
 }

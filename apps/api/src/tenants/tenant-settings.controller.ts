@@ -2,6 +2,7 @@ import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
 
+import { EscalationRulesSchema } from '../crm/escalation-rules.dto';
 import { DuplicateRulesSchema } from '../duplicates/duplicate-rules.dto';
 import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
@@ -13,6 +14,7 @@ import { TenantSettingsService } from './tenant-settings.service';
 
 class UpdateTenantSettingsDto extends createZodDto(UpdateTenantSettingsSchema) {}
 class UpdateDuplicateRulesDto extends createZodDto(DuplicateRulesSchema) {}
+class UpdateEscalationRulesDto extends createZodDto(EscalationRulesSchema) {}
 
 /**
  * /api/v1/tenant/settings (P2-08)
@@ -70,5 +72,32 @@ export class TenantSettingsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.settings.updateDuplicateRules(body, user.sub);
+  }
+
+  /**
+   * Phase D3 — D3.7: per-tenant SLA escalation rules.
+   *
+   * Reads piggy-back on `tenant.settings.read` (TLs that already see
+   * SLA / dial-code can also see the policy in read-only mode).
+   * Writes go through `tenant.settings.write` — no dedicated
+   * capability today; we reuse the existing tenant-write gate to
+   * keep the role grants simple. The locked role matrix already
+   * maps Ops Manager / Account Manager to that capability.
+   */
+  @Get('escalation-rules')
+  @RequireCapability('tenant.settings.read')
+  @ApiOperation({ summary: 'Read the SLA escalation rules for the active tenant' })
+  getEscalationRules() {
+    return this.settings.getEscalationRules();
+  }
+
+  @Patch('escalation-rules')
+  @RequireCapability('tenant.settings.write')
+  @ApiOperation({ summary: 'Update the SLA escalation rules for the active tenant' })
+  updateEscalationRules(
+    @Body() body: UpdateEscalationRulesDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.settings.updateEscalationRules(body, user.sub);
   }
 }

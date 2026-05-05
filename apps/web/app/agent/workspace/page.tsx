@@ -25,13 +25,15 @@ import { Notice } from '@/components/ui/notice';
 import { FieldGated } from '@/components/ui/field-gated';
 import { useToast } from '@/components/ui/toast';
 import { NextActionCell } from '@/components/admin/next-action-cell';
+import { NeedsAttentionSection } from '@/components/agent/needs-attention-section';
 import { SnoozeModal } from '@/components/agent/snooze-modal';
-import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
+import { agentWorkspaceApi, ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
 import type {
   FollowUpActionType,
   Lead,
   LeadFollowUp,
   LeadStageCode,
+  NeedsAttentionResponse,
   PipelineStage,
   SlaStatus,
 } from '@/lib/api-types';
@@ -115,6 +117,10 @@ export default function AgentWorkspacePage(): JSX.Element {
   const [followUps, setFollowUps] = useState<LeadFollowUp[]>([]);
   const [overdue, setOverdue] = useState<Lead[]>([]);
   const [dueToday, setDueToday] = useState<Lead[]>([]);
+  // Phase D3 — D3.7: "Needs attention now" feed (rotated-to-me /
+  // SLA at-risk / open reviews). One read endpoint, three small
+  // lists. Sanitised — no previous-owner names.
+  const [needsAttention, setNeedsAttention] = useState<NeedsAttentionResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -145,19 +151,26 @@ export default function AgentWorkspacePage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      const [page, st, mine, ovd, today, summary] = await Promise.all([
+      const [page, st, mine, ovd, today, summary, attention] = await Promise.all([
         leadsApi.list({ assignedToId: meId, limit: 200 }),
         pipelineApi.listStages(),
         followUpsApi.mine({ status: 'pending', limit: 100 }),
         leadsApi.overdue(),
         leadsApi.dueToday(),
         followUpsApi.meSummary(),
+        // D3.7 — never block the worklist on this; if it fails (e.g.
+        // a tenant with no D3 data yet) fall back to an empty payload
+        // so the worklist still renders.
+        agentWorkspaceApi
+          .needsAttention()
+          .catch(() => ({ rotatedToMe: [], atRiskSla: [], openReviews: [] })),
       ]);
       setRows(page.items);
       setStages(st);
       setFollowUps(mine);
       setOverdue(ovd);
       setDueToday(today);
+      setNeedsAttention(attention);
       // Phase A — A7: page-load toast for overdue follow-ups. Fires
       // exactly once per mount, even if the user triggers re-fetches.
       if (!overdueToastShownRef.current && summary.overdueCount > 0) {
@@ -452,6 +465,19 @@ export default function AgentWorkspacePage(): JSX.Element {
             </Button>
           </div>
         </Notice>
+      ) : null}
+
+      {/* Phase D3 — D3.7: Needs attention now. Renders above the
+          two C37 sections so urgent operational signals (SLA at
+          risk / new rotation / open review) sit at the top of the
+          page. Hidden when no signals exist via internal empty
+          state inside the component. */}
+      {needsAttention &&
+      needsAttention.rotatedToMe.length +
+        needsAttention.atRiskSla.length +
+        needsAttention.openReviews.length >
+        0 ? (
+        <NeedsAttentionSection data={needsAttention} />
       ) : null}
 
       {/* C37 — Overdue Leads (red) */}

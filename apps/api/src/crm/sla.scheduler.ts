@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
+import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { SlaService } from './sla.service';
 
 /**
@@ -68,6 +69,11 @@ export class SlaSchedulerService {
   async runOnce(now: Date = new Date()): Promise<{
     tenantsScanned: number;
     breachesProcessed: number;
+    /** Phase D3 — D3.2: number of threshold transitions written
+     *  across all tenants in this tick. Always 0 when D3_ENGINE_V1
+     *  is off — the threshold pass is skipped entirely in that
+     *  case so legacy behaviour is byte-identical. */
+    thresholdTransitions: number;
     failures: number;
   }> {
     const tenants = await this.prisma.tenant.findMany({
@@ -75,15 +81,36 @@ export class SlaSchedulerService {
       select: { id: true, code: true },
     });
 
+    // Phase D3 — D3.2: capture the flag value ONCE per tick so a
+    // mid-tick env-var flip can't race the per-tenant loop into a
+    // mixed state (some tenants threshold-scanned, others not).
+    const d3Enabled = isD3EngineV1Enabled();
+
     let breachesProcessed = 0;
+    let thresholdTransitions = 0;
     let failures = 0;
     for (const tenant of tenants) {
       try {
-        const results = await tenantContext.run(
+        await tenantContext.run(
           { tenantId: tenant.id, tenantCode: tenant.code, source: 'system' },
-          () => this.sla.runReassignmentForBreaches(null, now),
+          async () => {
+            // 1. Legacy breach scanner — UNCHANGED. Runs every tick
+            //    regardless of the D3 flag so existing customers
+            //    keep current behaviour byte-for-byte under flag-off.
+            const breaches = await this.sla.runReassignmentForBreaches(null, now);
+            breachesProcessed += breaches.length;
+
+            // 2. D3.2 threshold pass — gated on `D3_ENGINE_V1`. Runs
+            //    AFTER the breach scan so any reassignment-driven
+            //    SLA reset is reflected in the threshold result the
+            //    same tick (rather than emitting a stale transition
+            //    for a row whose SLA window just got bumped).
+            if (d3Enabled) {
+              const transitions = await this.sla.runThresholdRecomputeForTenant(now);
+              thresholdTransitions += transitions.length;
+            }
+          },
         );
-        breachesProcessed += results.length;
       } catch (err) {
         failures += 1;
         // Don't echo the full error message — keep tenants from
@@ -91,11 +118,16 @@ export class SlaSchedulerService {
         this.logger.error(`sla.runOnce: tenant ${tenant.code} failed: ${(err as Error).name}`);
       }
     }
-    if (breachesProcessed > 0 || failures > 0) {
+    if (breachesProcessed > 0 || thresholdTransitions > 0 || failures > 0) {
       this.logger.log(
-        `sla.runOnce: tenants=${tenants.length} breaches=${breachesProcessed} failures=${failures}`,
+        `sla.runOnce: tenants=${tenants.length} breaches=${breachesProcessed} thresholds=${thresholdTransitions} failures=${failures}`,
       );
     }
-    return { tenantsScanned: tenants.length, breachesProcessed, failures };
+    return {
+      tenantsScanned: tenants.length,
+      breachesProcessed,
+      thresholdTransitions,
+      failures,
+    };
   }
 }
