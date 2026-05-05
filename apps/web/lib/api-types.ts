@@ -1061,7 +1061,15 @@ export type LeadReviewReason =
   | 'rotation_failed'
   | 'manual_tl_review'
   | 'bottleneck_flagged'
-  | 'escalated_by_tl';
+  | 'escalated_by_tl'
+  // Phase D4 — D4.6: partner-reconciliation discrepancies promoted
+  // into the TL Review Queue. The `reasonPayload` carries
+  // `{ partnerSourceId, partnerRecordId?, category, notes? }`.
+  | 'partner_missing'
+  | 'partner_active_not_in_crm'
+  | 'partner_date_mismatch'
+  | 'partner_dft_mismatch'
+  | 'partner_trips_mismatch';
 
 export type LeadReviewResolution = 'rotated' | 'kept_owner' | 'escalated' | 'dismissed';
 
@@ -1160,4 +1168,405 @@ export interface EscalationRulesConfig {
     t200: EscalationThresholdPolicy;
   };
   defaultHandoverMode: EscalationHandoverMode;
+}
+
+/**
+ * Phase D4 — D4.2: Partner Data Hub admin shapes.
+ *
+ * The API NEVER returns raw credentials — only the safe metadata
+ * fields below. The plaintext credentials live exclusively in the
+ * Create / Update bodies and are encrypted server-side.
+ */
+export type PartnerAdapter = 'google_sheets' | 'manual_upload';
+export type PartnerScheduleKind = 'manual' | 'cron';
+export type PartnerTabMode = 'fixed' | 'new_per_period';
+
+export type PartnerTabDiscoveryRule =
+  | { kind: 'name_pattern'; pattern: string }
+  | { kind: 'most_recently_modified' };
+
+export interface PartnerSourceRow {
+  id: string;
+  partnerCode: string;
+  displayName: string;
+  adapter: string;
+  companyId: string | null;
+  countryId: string | null;
+  scheduleKind: string;
+  cronSpec: string | null;
+  tabMode: string;
+  fixedTabName: string | null;
+  tabDiscoveryRule: PartnerTabDiscoveryRule | null;
+  hasCredentials: boolean;
+  lastTestedAt: string | null;
+  connectionStatus: string | null;
+  lastSyncAt: string | null;
+  lastSyncStatus: string | null;
+  credentialUpdatedAt: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PartnerSourcesListResponse {
+  items: PartnerSourceRow[];
+  total: number;
+}
+
+export interface GoogleSheetsCredentialsInput {
+  serviceAccountEmail: string;
+  privateKey: string;
+  sheetId: string;
+}
+
+export type PartnerCredentialsInput = GoogleSheetsCredentialsInput | Record<string, unknown>;
+
+export interface CreatePartnerSourceInput {
+  partnerCode: string;
+  displayName: string;
+  adapter: PartnerAdapter;
+  companyId?: string | null;
+  countryId?: string | null;
+  scheduleKind?: PartnerScheduleKind;
+  cronSpec?: string | null;
+  tabMode?: PartnerTabMode;
+  fixedTabName?: string | null;
+  tabDiscoveryRule?: PartnerTabDiscoveryRule | null;
+  isActive?: boolean;
+  credentials?: PartnerCredentialsInput | null;
+}
+
+export type UpdatePartnerSourceInput = Partial<CreatePartnerSourceInput>;
+
+export interface PartnerTestConnectionResult {
+  status: 'stubbed';
+  message: string;
+  configIssues: string[];
+}
+
+export type PartnerTargetField =
+  | 'phone'
+  | 'name'
+  | 'partner_status'
+  | 'partner_active_date'
+  | 'partner_dft_date'
+  | 'trip_count'
+  | 'last_trip_at';
+
+export type PartnerTransformKind = 'passthrough' | 'parse_date' | 'to_e164' | 'lowercase';
+
+export interface PartnerMappingRow {
+  id: string;
+  partnerSourceId: string;
+  sourceColumn: string;
+  targetField: string;
+  transformKind: string | null;
+  transformArgs: Record<string, unknown> | null;
+  isRequired: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePartnerMappingInput {
+  sourceColumn: string;
+  targetField: PartnerTargetField;
+  transformKind?: PartnerTransformKind;
+  transformArgs?: Record<string, unknown>;
+  isRequired?: boolean;
+  displayOrder?: number;
+}
+
+export interface UpdatePartnerMappingInput {
+  sourceColumn?: string;
+  targetField?: PartnerTargetField;
+  transformKind?: PartnerTransformKind | null;
+  transformArgs?: Record<string, unknown> | null;
+  isRequired?: boolean;
+  displayOrder?: number;
+}
+
+export interface PartnerMappingReadiness {
+  phoneMapped: boolean;
+  missingTargets: string[];
+}
+
+/**
+ * Phase D4 — D4.3: snapshot + sync result shapes.
+ */
+export interface PartnerSnapshotRow {
+  id: string;
+  partnerSourceId: string;
+  partnerSource: { id: string; displayName: string; partnerCode: string } | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  rowsTotal: number;
+  rowsImported: number;
+  rowsSkipped: number;
+  rowsError: number;
+  sourceMetadata: Record<string, unknown> | null;
+  triggeredBy: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface PartnerSnapshotsListResponse {
+  items: PartnerSnapshotRow[];
+  total: number;
+}
+
+export interface PartnerSnapshotRecordRow {
+  id: string;
+  phone: string | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  tripCount: number | null;
+  lastTripAt: string | null;
+  contactResolved: boolean;
+  createdAt: string;
+}
+
+export interface PartnerSnapshotRecordsResponse {
+  items: PartnerSnapshotRecordRow[];
+  total: number;
+}
+
+export interface PartnerSyncRunResult {
+  wasSkipped: boolean;
+  reason?: string;
+  snapshotId?: string;
+  status?: 'success' | 'partial' | 'failed';
+  total?: number;
+  imported?: number;
+  skipped?: number;
+  errors?: number;
+  resolvedTabName?: string | null;
+}
+
+/**
+ * Real adapter probe result (D4.3). Status values include
+ * `'not_wired'` for the Google Sheets seam.
+ */
+export interface PartnerConnectionTestResult {
+  status: string;
+  message: string;
+  tabs?: Array<{ name: string; modifiedAt: string | null }>;
+}
+
+/**
+ * Phase D4 — D4.4: per-source verification projection.
+ */
+export type PartnerVerificationStatus =
+  | 'not_found'
+  | 'matched'
+  | 'crm_active_partner_missing'
+  | 'partner_active_crm_not_active'
+  | 'date_mismatch'
+  | 'dft_mismatch'
+  | 'trips_mismatch';
+
+export interface PartnerVerificationProjection {
+  partnerSourceId: string;
+  partnerSourceName: string;
+  partnerCode: string;
+  lastSyncAt: string | null;
+  snapshotId: string | null;
+  recordId: string | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  tripCount: number | null;
+  lastTripAt: string | null;
+  verificationStatus: PartnerVerificationStatus;
+  warnings: string[];
+}
+
+export interface PartnerVerificationResult {
+  leadId: string;
+  phone: string | null;
+  hasCaptain: boolean;
+  projections: PartnerVerificationProjection[];
+}
+
+/**
+ * Phase D4 — D4.5: controlled-merge shapes.
+ */
+export type PartnerMergeableField = 'active_date' | 'dft_date';
+
+export interface PartnerMergeRequest {
+  partnerSourceId: string;
+  fields: PartnerMergeableField[];
+  evidenceNote?: string;
+}
+
+export interface PartnerMergeResult {
+  leadId: string;
+  captainId: string;
+  partnerSourceId: string;
+  partnerSnapshotId: string;
+  partnerRecordId: string;
+  evidenceId: string;
+  activityId: string;
+  changedFields: PartnerMergeableField[];
+  before: Record<string, string | null>;
+  after: Record<string, string | null>;
+}
+
+export interface LeadEvidenceRow {
+  id: string;
+  leadId: string;
+  kind: string;
+  partnerRecordId: string | null;
+  partnerSnapshotId: string | null;
+  storageRef: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  notes: string | null;
+  capturedBy: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+/**
+ * Phase D4 — D4.8: evidence-only attach. Pins a partner snapshot
+ * record to a lead WITHOUT mutating Captain or any CRM column.
+ * Capability: `partner.evidence.write`.
+ */
+export interface PartnerAttachEvidenceRequest {
+  partnerSourceId: string;
+  partnerRecordId?: string;
+  partnerSnapshotId?: string;
+  notes?: string;
+}
+
+export interface PartnerAttachEvidenceResult {
+  evidenceId: string;
+  partnerRecordId: string;
+  partnerSnapshotId: string;
+}
+
+/**
+ * Phase D4 — D4.6: partner reconciliation shapes.
+ */
+export type ReconciliationCategory =
+  | 'partner_missing'
+  | 'partner_active_not_in_crm'
+  | 'partner_date_mismatch'
+  | 'partner_dft_mismatch'
+  | 'partner_trips_mismatch'
+  | 'commission_risk';
+
+export type ReconciliationSeverity = 'info' | 'warning';
+
+export interface ReconciliationItem {
+  category: ReconciliationCategory;
+  partnerSourceId: string;
+  partnerSourceName: string;
+  leadId: string | null;
+  captainId: string | null;
+  contactId: string | null;
+  phone: string;
+  crmName: string | null;
+  crmStage: string | null;
+  crmLifecycleState: string | null;
+  crmActiveDate: string | null;
+  crmDftDate: string | null;
+  crmTripCount: number | null;
+  partnerStatus: string | null;
+  partnerActiveDate: string | null;
+  partnerDftDate: string | null;
+  partnerTripCount: number | null;
+  lastSyncAt: string | null;
+  severity: ReconciliationSeverity;
+  recommendedAction: string;
+}
+
+export interface ReconciliationResult {
+  items: ReconciliationItem[];
+  counts: Record<ReconciliationCategory, number>;
+  generatedAt: string;
+}
+
+export interface ReconciliationOpenReviewInput {
+  category: ReconciliationCategory;
+  leadId: string;
+  partnerSourceId: string;
+  partnerRecordId?: string;
+  notes?: string;
+}
+
+export interface ReconciliationOpenReviewResult {
+  reviewId: string;
+  alreadyOpen: boolean;
+}
+
+/**
+ * Phase D4 — D4.7: milestone shapes.
+ */
+export type MilestoneAnchor = 'partner_active_date' | 'partner_dft_date' | 'first_seen_in_partner';
+
+export type MilestoneRisk = 'low' | 'medium' | 'high' | 'expired' | 'completed' | 'unknown';
+
+export interface MilestoneConfigRow {
+  id: string;
+  partnerSourceId: string;
+  partnerSource: { id: string; displayName: string; partnerCode: string } | null;
+  code: string;
+  displayName: string;
+  windowDays: number;
+  milestoneSteps: number[];
+  anchor: string;
+  riskThresholds: { high: number; medium: number } | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MilestoneConfigsListResponse {
+  items: MilestoneConfigRow[];
+  total: number;
+}
+
+export interface CreateMilestoneConfigInput {
+  partnerSourceId: string;
+  code: string;
+  displayName: string;
+  windowDays: number;
+  milestoneSteps: number[];
+  anchor: MilestoneAnchor;
+  riskThresholds?: { high: number; medium: number };
+  isActive?: boolean;
+}
+
+export type UpdateMilestoneConfigInput = Partial<
+  Omit<CreateMilestoneConfigInput, 'partnerSourceId'>
+>;
+
+export interface MilestoneProgressProjection {
+  partnerSourceId: string;
+  partnerSourceName: string;
+  configId: string;
+  configCode: string;
+  displayName: string;
+  anchor: string;
+  anchorAt: string | null;
+  windowDays: number;
+  windowEndsAt: string | null;
+  daysLeft: number | null;
+  tripCount: number | null;
+  targetTrips: number;
+  milestoneSteps: number[];
+  currentMilestone: number | null;
+  nextMilestone: number | null;
+  progressPct: number;
+  risk: MilestoneRisk;
+  needsPush: boolean;
+  reason: string | null;
+}
+
+export interface LeadMilestoneProgressResult {
+  leadId: string;
+  phone: string | null;
+  projections: MilestoneProgressProjection[];
 }

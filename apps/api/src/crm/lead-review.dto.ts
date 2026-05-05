@@ -16,6 +16,21 @@ export const LEAD_REVIEW_REASONS = [
   'manual_tl_review',
   'bottleneck_flagged',
   'escalated_by_tl',
+  // Phase D4 — D4.6: partner-reconciliation discrepancies promoted
+  // into the TL Review Queue. The reasonPayload carries
+  // `{ partnerSourceId, partnerRecordId?, category, partnerValues,
+  //   crmValues }` so the resolver can see what differs without
+  // chasing back to the snapshot table. Reasons here mirror the
+  // five reconciliation categories computed on-read by
+  // PartnerReconciliationService — categories that have no
+  // matching CRM data (e.g. `partner_active_not_in_crm` when the
+  // contact has no lead) cannot be promoted; the controller
+  // rejects those with `partner.reconciliation.no_lead`.
+  'partner_missing',
+  'partner_active_not_in_crm',
+  'partner_date_mismatch',
+  'partner_dft_mismatch',
+  'partner_trips_mismatch',
 ] as const;
 export const LeadReviewReasonSchema = z.enum(LEAD_REVIEW_REASONS);
 export type LeadReviewReason = z.infer<typeof LeadReviewReasonSchema>;

@@ -86,6 +86,13 @@ model Tenant {
   leadRotationLogs            LeadRotationLog[]
   /// Phase D3 — D3.6: TL Review Queue rows.
   leadReviews                 LeadReview[]
+  /// Phase D4 — D4.1: Partner Data Hub back-relations.
+  partnerSources              PartnerSource[]
+  partnerFieldMappings        PartnerFieldMapping[]
+  partnerSnapshots            PartnerSnapshot[]
+  partnerRecords              PartnerRecord[]
+  leadEvidence                LeadEvidence[]
+  partnerMilestoneConfigs     PartnerMilestoneConfig[]
 
   @@map("tenants")
 }
@@ -372,6 +379,10 @@ model User {
   /// Phase D3 — D3.6: TL Review Queue back-relations.
   assignedLeadReviews         LeadReview[]           @relation("LeadReviewAssignedTl")
   resolvedLeadReviews         LeadReview[]           @relation("LeadReviewResolver")
+  /// Phase D4 — D4.1: Partner Data Hub back-relations. Empty until
+  /// later D4.x chunks wire the sync engine, evidence flow, etc.
+  triggeredPartnerSnapshots   PartnerSnapshot[]      @relation("PartnerSnapshotTrigger")
+  capturedLeadEvidence        LeadEvidence[]         @relation("LeadEvidenceCapturer")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -715,6 +726,25 @@ model Lead {
   reactivatedBy    User?     @relation("LeadReactivator", fields: [reactivatedById], references: [id])
   reactivationRule String?   @map("reactivation_rule")
 
+  /// Phase D4 — D4.1: denormalised verification cache. Written by
+  /// D4.4's projection on relevant syncs so the lead-list "partner
+  /// status" / "verification" columns query one row instead of N
+  /// joins. Shape (D4.4 validates):
+  ///   {
+  ///     "<partnerSourceId>": {
+  ///       "found": true,
+  ///       "partnerStatus": "active",
+  ///       "partnerActiveDate": "2026-04-01",
+  ///       "partnerDftDate": "2026-04-03",
+  ///       "tripCount": 12,
+  ///       "lastTripAt": "2026-05-01T10:00:00Z",
+  ///       "lastSyncAt": "2026-05-04T11:00:00Z"
+  ///     }
+  ///   }
+  /// NULL until the contact appears in at least one matching
+  /// partner snapshot. D4.1 only reserves the column.
+  partnerVerificationCache Json? @map("partner_verification_cache")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -728,6 +758,9 @@ model Lead {
   /// resolved to creating / linking THIS lead points back here.
   /// Read-only side; the writer is DuplicateDecisionLog itself.
   duplicateDecisions    DuplicateDecisionLog[] @relation("DuplicateDecisionResultLead")
+  /// Phase D4 — D4.1: approval evidence rows attached to this lead.
+  /// Empty until D4.5 wires the controlled-merge / approval flow.
+  evidence              LeadEvidence[]
 
   // Phase D2 — D2.3: the lifelong @@unique([tenantId, phone]) was
   // dropped in favour of a PARTIAL UNIQUE INDEX scoped to OPEN
@@ -1027,6 +1060,16 @@ model Captain {
   firstTripAt DateTime? @map("first_trip_at") @db.Timestamptz(6)
   tripCount   Int       @default(0) @map("trip_count")
 
+  /// Phase D4 — D4.1: Date of First Trip. First-class operational
+  /// + commission/reporting field. Distinct from `firstTripAt` —
+  /// `firstTripAt` is derived from the CaptainTrip ledger (P2-09)
+  /// from real per-trip rows; `dftAt` is the operator-confirmed
+  /// "DFT achieved" date used by partner reconciliation and
+  /// commission windows. NEVER auto-overwritten from a partner
+  /// snapshot — writes flow through controlled merge / approval
+  /// only (D4.5). NULL until an operator confirms.
+  dftAt       DateTime? @map("dft_at") @db.Timestamptz(6)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1038,6 +1081,7 @@ model Captain {
   @@index([tenantId, status])
   @@index([tenantId, teamId])
   @@index([tenantId, firstTripAt])
+  @@index([tenantId, dftAt])
   @@map("captains")
 }
 
@@ -1182,6 +1226,8 @@ model Company {
   /// Phase C — C10B-1: WhatsApp conversations whose ownership chain
   /// resolves to this company.
   whatsappConversations WhatsAppConversation[]
+  /// Phase D4 — D4.1: partner sources scoped to this company.
+  partnerSources        PartnerSource[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -1221,6 +1267,8 @@ model Country {
   /// Phase C — C10B-1: WhatsApp conversations whose ownership chain
   /// resolves to this country.
   whatsappConversations WhatsAppConversation[]
+  /// Phase D4 — D4.1: partner sources scoped to this country.
+  partnerSources        PartnerSource[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.
@@ -1327,6 +1375,9 @@ model Contact {
   /// Phase D2 — D2.1: every duplicate-decision audit row that was
   /// evaluated for THIS contact. Empty until D2.3 starts writing.
   duplicateDecisions DuplicateDecisionLog[]
+  /// Phase D4 — D4.1: partner records resolved to this contact via
+  /// phone match at snapshot-write time. Empty until D4.3 syncs land.
+  partnerRecords     PartnerRecord[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, lastSeenAt])
@@ -2236,4 +2287,291 @@ model LeadRoutingLog {
   @@index([tenantId, leadId, decidedAt(sort: Desc)])
   @@index([tenantId, decidedAt(sort: Desc)])
   @@map("lead_routing_logs")
+}
+
+/// Phase D4 — D4.1: Partner Data Hub registry.
+///
+/// One row per external partner feed (Uber Egypt sheet, inDrive
+/// Egypt sheet, …). The `partner_code` is open-string so a new
+/// partner can be added without a schema change. Multiple rows
+/// per (tenant, partner_code, company, country) are allowed —
+/// useful when an operator runs a primary + backup feed for the
+/// same partner. D4.4's verification projection picks the most-
+/// recently-synced source when ambiguous.
+///
+/// Credentials clarification: `encryptedCredentials` stores cipher
+/// only. The envelope format is decided in D4.2 (key ref + iv +
+/// ciphertext + tag, encrypted with a server-side KEK). API
+/// responses NEVER return raw credentials — only safe metadata
+/// (`hasCredentials`, `lastTestedAt`, `connectionStatus`).
+model PartnerSource {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyId String? @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  countryId String? @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: Restrict)
+
+  /// Open-string partner identifier ('uber' / 'indrive' / 'didi' / 'other').
+  partnerCode  String @map("partner_code")
+  displayName  String @map("display_name")
+  /// Adapter discriminator ('google_sheets' / 'manual_upload' / future).
+  adapter      String
+
+  /// Schedule kind ('manual' | 'cron').
+  scheduleKind String @default("manual") @map("schedule_kind")
+  /// Standard 5-field crontab. NULL when scheduleKind='manual'.
+  cronSpec     String? @map("cron_spec")
+
+  /// Tab discovery mode ('fixed' | 'new_per_period').
+  tabMode           String  @default("fixed") @map("tab_mode")
+  fixedTabName      String? @map("fixed_tab_name")
+  /// JSON shape (D4.3 will validate):
+  ///   { "kind": "name_pattern", "pattern": "Activations YYYY-MM-DD" }
+  ///   { "kind": "most_recently_modified" }
+  tabDiscoveryRule  Json?   @map("tab_discovery_rule")
+
+  /// Cipher only. Never returned in API responses.
+  encryptedCredentials String?   @map("encrypted_credentials")
+  hasCredentials       Boolean   @default(false) @map("has_credentials")
+  lastTestedAt         DateTime? @map("last_tested_at") @db.Timestamptz(6)
+  /// Free-form result of the last connection probe ('ok' / 'auth_failed' /
+  /// 'sheet_not_found' / 'unknown'). Open string for forward compatibility.
+  connectionStatus     String?   @map("connection_status")
+
+  lastSyncAt     DateTime? @map("last_sync_at") @db.Timestamptz(6)
+  /// 'success' / 'partial' / 'failed' / 'running'.
+  lastSyncStatus String?   @map("last_sync_status")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  fieldMappings    PartnerFieldMapping[]
+  snapshots        PartnerSnapshot[]
+  records          PartnerRecord[]
+  milestoneConfigs PartnerMilestoneConfig[]
+
+  @@index([tenantId, companyId, countryId])
+  @@index([tenantId, partnerCode, isActive])
+  @@index([tenantId, isActive, scheduleKind])
+  @@map("partner_sources")
+}
+
+/// Phase D4 — D4.1: column-name → CRM-field mapping per partner source.
+///
+/// One row per (partnerSource, targetField). Service layer (D4.2)
+/// validates that `phone` is always mapped — without it the snapshot
+/// rows can't be joined back to a Contact. The UNIQUE constraint
+/// prevents two source columns being mapped to the same CRM field;
+/// re-mapping replaces the row.
+model PartnerFieldMapping {
+  id              String  @id @default(uuid()) @db.Uuid
+  tenantId        String  @map("tenant_id") @db.Uuid
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partnerSourceId String  @map("partner_source_id") @db.Uuid
+  partnerSource   PartnerSource @relation(fields: [partnerSourceId], references: [id], onDelete: Cascade)
+
+  /// Verbatim column name from the partner sheet.
+  sourceColumn String @map("source_column")
+  /// Closed enum at the service layer (D4.2):
+  ///   'phone' | 'name' | 'partner_status' | 'partner_active_date'
+  ///   | 'partner_dft_date' | 'trip_count' | 'last_trip_at'.
+  /// Stored as TEXT for forward compatibility.
+  targetField  String @map("target_field")
+  /// Optional transform on snapshot write. NULL = passthrough.
+  /// Valid values (D4.2): 'parse_date' / 'to_e164' / 'lowercase' /
+  /// 'passthrough'.
+  transformKind String? @map("transform_kind")
+  transformArgs Json?   @map("transform_args")
+  isRequired   Boolean @default(false) @map("is_required")
+  displayOrder Int     @default(0) @map("display_order")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([partnerSourceId, targetField])
+  @@index([tenantId, partnerSourceId])
+  @@map("partner_field_mappings")
+}
+
+/// Phase D4 — D4.1: one row per sync run (append-only).
+///
+/// Snapshot rows are NEVER mutated post-completion — they're the
+/// system-of-record audit trail. Status flips from 'running' to
+/// 'success' / 'partial' / 'failed' once the run finishes. Even
+/// failed runs are kept (with error counts) so an operator can
+/// diagnose what went wrong.
+model PartnerSnapshot {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partnerSourceId String   @map("partner_source_id") @db.Uuid
+  partnerSource   PartnerSource @relation(fields: [partnerSourceId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  /// 'running' | 'success' | 'partial' | 'failed'.
+  status      String    @default("running")
+
+  rowsTotal    Int @default(0) @map("rows_total")
+  rowsImported Int @default(0) @map("rows_imported")
+  rowsSkipped  Int @default(0) @map("rows_skipped")
+  rowsError    Int @default(0) @map("rows_error")
+
+  /// Adapter-supplied metadata (resolved tab name, run id, trigger
+  /// reason, ...). Opaque at the schema layer.
+  sourceMetadata Json? @map("source_metadata")
+
+  triggeredByUserId String? @map("triggered_by_user_id") @db.Uuid
+  triggeredBy       User?   @relation("PartnerSnapshotTrigger", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  records  PartnerRecord[]
+  evidence LeadEvidence[]
+
+  @@index([tenantId, partnerSourceId, startedAt(sort: Desc)])
+  @@index([tenantId, status])
+  @@map("partner_snapshots")
+}
+
+/// Phase D4 — D4.1: one row per row in a snapshot (append-only).
+///
+/// Typed columns mirror the closed-enum target fields from
+/// `PartnerFieldMapping`; `rawRow` keeps the verbatim source row so
+/// a future re-mapping can reprocess historical snapshots without
+/// re-fetching from the partner. The `(tenantId, partnerSourceId,
+/// phone)` index is the verification-projection hot path.
+///
+/// Trip-count clarification: `tripCount` is the partner's aggregate
+/// number per snapshot. It NEVER flows into `CaptainTrip` (which
+/// keeps its per-trip-row, stable-tripId contract from P2-09). D4.7
+/// milestone progress derives from this column directly.
+model PartnerRecord {
+  id              String  @id @default(uuid()) @db.Uuid
+  tenantId        String  @map("tenant_id") @db.Uuid
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  snapshotId      String  @map("snapshot_id") @db.Uuid
+  snapshot        PartnerSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  partnerSourceId String  @map("partner_source_id") @db.Uuid
+  partnerSource   PartnerSource @relation(fields: [partnerSourceId], references: [id], onDelete: Cascade)
+
+  /// Resolved at snapshot-write time when the row's phone matches a
+  /// Contact in the same tenant. NULL on miss — the row still lands
+  /// for `rawRow` audit but the verification projection never picks
+  /// it up.
+  contactId String?  @map("contact_id") @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// E.164-normalised. NULL only when the source row had no
+  /// parseable phone — the row still lands for `rawRow` audit.
+  phone String?
+
+  partnerStatus     String?   @map("partner_status")
+  partnerActiveDate DateTime? @map("partner_active_date") @db.Timestamptz(6)
+  partnerDftDate    DateTime? @map("partner_dft_date") @db.Timestamptz(6)
+  tripCount         Int?      @map("trip_count")
+  lastTripAt        DateTime? @map("last_trip_at") @db.Timestamptz(6)
+
+  /// Verbatim source row (every column, mapped or not). Forensic
+  /// floor for re-mapping.
+  rawRow Json @map("raw_row")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  evidence LeadEvidence[]
+
+  @@index([tenantId, partnerSourceId, phone])
+  @@index([tenantId, snapshotId])
+  @@index([tenantId, contactId])
+  @@index([tenantId, partnerSourceId, partnerStatus])
+  @@map("partner_records")
+}
+
+/// Phase D4 — D4.1: approval evidence anchor.
+///
+/// Mirrors the CaptainDocument storage-ref pattern (P2-09) — the
+/// CRM stores metadata only; the actual screenshot/file lives in
+/// the operator's S3/GCS. `kind` is one of 'partner_screenshot'
+/// (uploaded image), 'partner_record' (pointer to a snapshot row),
+/// or 'note' (free-text rationale).
+///
+/// Set-null on the partner FKs so a future archive of old snapshots
+/// doesn't cascade-delete the lead's evidence chain — the row keeps
+/// `kind` + `notes` + the file pointer even when the partner row
+/// is no longer queryable.
+model LeadEvidence {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId   String @map("lead_id") @db.Uuid
+  lead     Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// 'partner_screenshot' | 'partner_record' | 'note'.
+  kind String
+
+  partnerRecordId   String?          @map("partner_record_id") @db.Uuid
+  partnerRecord     PartnerRecord?   @relation(fields: [partnerRecordId], references: [id], onDelete: SetNull)
+  partnerSnapshotId String?          @map("partner_snapshot_id") @db.Uuid
+  partnerSnapshot   PartnerSnapshot? @relation(fields: [partnerSnapshotId], references: [id], onDelete: SetNull)
+
+  /// Storage-ref pattern from CaptainDocument (P2-09). NULL when
+  /// `kind` doesn't carry a file (e.g. 'partner_record' / 'note').
+  storageRef String? @map("storage_ref")
+  fileName   String? @map("file_name")
+  mimeType   String? @map("mime_type")
+  sizeBytes  Int?    @map("size_bytes")
+
+  notes String?
+
+  capturedByUserId String? @map("captured_by_user_id") @db.Uuid
+  capturedBy       User?   @relation("LeadEvidenceCapturer", fields: [capturedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  @@index([tenantId, partnerRecordId])
+  @@map("lead_evidence")
+}
+
+/// Phase D4 — D4.1: commission-window milestone configuration.
+///
+/// One or many configs per partner source. Defines the milestone
+/// ladder (e.g. [1, 5, 25, 50] trips) and the commission window
+/// (e.g. 30 days from the anchor). Risk thresholds are fractions
+/// of the window remaining at which the risk badge flips colour.
+///
+/// Read-only at the data layer — milestone PROGRESS is always
+/// derived (from `partner_records.trip_count` for the contact) and
+/// never persisted. CRM never auto-changes captain stage/status
+/// from milestone progress (locked product decision).
+model PartnerMilestoneConfig {
+  id              String @id @default(uuid()) @db.Uuid
+  tenantId        String @map("tenant_id") @db.Uuid
+  tenant          Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  partnerSourceId String @map("partner_source_id") @db.Uuid
+  partnerSource   PartnerSource @relation(fields: [partnerSourceId], references: [id], onDelete: Cascade)
+
+  /// Stable per-source code (e.g. 'commission_50_30').
+  code        String
+  displayName String @map("display_name")
+  windowDays  Int    @map("window_days")
+  /// Ascending int array, deduped (D4.7 validates).
+  milestoneSteps Json @map("milestone_steps")
+  /// 'partner_active_date' | 'partner_dft_date' | 'first_seen_in_partner'.
+  anchor String
+  /// Optional fraction-of-window-remaining thresholds for the risk
+  /// badge, e.g. { "high": 0.30, "medium": 0.60 }. NULL = use the
+  /// service-layer defaults from D4.7.
+  riskThresholds Json? @map("risk_thresholds")
+  isActive       Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([partnerSourceId, code])
+  @@index([tenantId, partnerSourceId, isActive])
+  @@map("partner_milestone_configs")
 }

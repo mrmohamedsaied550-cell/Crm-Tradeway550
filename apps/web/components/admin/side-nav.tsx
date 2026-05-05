@@ -23,6 +23,9 @@ import {
   Megaphone,
   Calendar,
   Database,
+  History,
+  Network,
+  ScanSearch,
   BarChart3,
   Settings,
   Route,
@@ -60,7 +63,11 @@ interface NavItem {
     | 'distribution'
     | 'lostReasons'
     | 'roles'
-    | 'backup';
+    | 'backup'
+    | 'partnerSources'
+    | 'partnerSnapshots'
+    | 'partnerReconciliation'
+    | 'partnerMilestones';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
    *  Captains / Pipeline are visible to anyone authenticated. */
@@ -130,6 +137,42 @@ const ITEMS: readonly NavItem[] = [
     labelKey: 'metaLeadSources',
     icon: Megaphone,
     cap: 'meta.leadsource.read',
+  },
+  // Phase D4 — D4.2: Partner Data Hub admin (sources + mappings).
+  // Visible to TL+ via `partner.source.read`. Configuration only —
+  // sync engine, snapshots, verification card, merge, milestones
+  // ship in D4.3 — D4.7.
+  {
+    href: '/admin/partner-sources',
+    labelKey: 'partnerSources',
+    icon: Network,
+    cap: 'partner.source.read',
+  },
+  // Phase D4 — D4.3: snapshot history (read-only). Same capability
+  // gate as partner sources — anyone who can configure can audit.
+  {
+    href: '/admin/partner-snapshots',
+    labelKey: 'partnerSnapshots',
+    icon: History,
+    cap: 'partner.source.read',
+  },
+  // Phase D4 — D4.6: reconciliation report. Visible with
+  // `partner.reconciliation.read` (TL+); the "Open as review"
+  // action gates separately on `partner.reconciliation.resolve`.
+  {
+    href: '/admin/partner-reconciliation',
+    labelKey: 'partnerReconciliation',
+    icon: ScanSearch,
+    cap: 'partner.reconciliation.read',
+  },
+  // Phase D4 — D4.7: milestone configs + commission CSVs. Read
+  // gated on `partner.verification.read` so a TL inspecting can
+  // see the configs; write actions on `partner.milestone.write`.
+  {
+    href: '/admin/partner-milestones',
+    labelKey: 'partnerMilestones',
+    icon: Flag,
+    cap: 'partner.verification.read',
   },
   // PL-4 — Calendar lives at /agent/calendar but is useful to managers
   // too; we link to the same surface from the admin sidebar so TLs and

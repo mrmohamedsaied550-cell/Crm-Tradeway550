@@ -58,6 +58,34 @@ import type {
   LeadReviewsListResponse,
   NeedsAttentionResponse,
   EscalationRulesConfig,
+  PartnerSourceRow,
+  PartnerSourcesListResponse,
+  CreatePartnerSourceInput,
+  UpdatePartnerSourceInput,
+  PartnerConnectionTestResult,
+  PartnerSnapshotRow,
+  PartnerSnapshotsListResponse,
+  PartnerSnapshotRecordsResponse,
+  PartnerSyncRunResult,
+  PartnerVerificationResult,
+  PartnerMergeRequest,
+  PartnerMergeResult,
+  PartnerAttachEvidenceRequest,
+  PartnerAttachEvidenceResult,
+  LeadEvidenceRow,
+  ReconciliationCategory,
+  ReconciliationResult,
+  ReconciliationOpenReviewInput,
+  ReconciliationOpenReviewResult,
+  MilestoneConfigRow,
+  MilestoneConfigsListResponse,
+  CreateMilestoneConfigInput,
+  UpdateMilestoneConfigInput,
+  LeadMilestoneProgressResult,
+  PartnerMappingRow,
+  CreatePartnerMappingInput,
+  UpdatePartnerMappingInput,
+  PartnerMappingReadiness,
   RoleScopeRow,
   RoleSummary,
   RotationHistoryResponse,
@@ -1574,6 +1602,240 @@ export const tenantSettingsApi = {
 export const agentWorkspaceApi = {
   needsAttention: (): Promise<NeedsAttentionResponse> =>
     apiFetch<NeedsAttentionResponse>('/agent/needs-attention'),
+};
+
+/**
+ * Phase D4 — D4.2: Partner Data Hub admin client.
+ *
+ * Configuration only — no sync, no Google Sheets calls. The
+ * `credentials` field flows ONLY through Create / Update bodies;
+ * responses never carry plaintext or ciphertext credentials, only
+ * `hasCredentials` / `lastTestedAt` / `connectionStatus`.
+ */
+export const partnerSourcesApi = {
+  list: (
+    query: {
+      companyId?: string;
+      countryId?: string;
+      partnerCode?: string;
+      isActive?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PartnerSourcesListResponse> =>
+    apiFetch<PartnerSourcesListResponse>('/partner-sources', { query }),
+  get: (id: string): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`),
+  create: (body: CreatePartnerSourceInput): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>('/partner-sources', { method: 'POST', body }),
+  update: (id: string, body: UpdatePartnerSourceInput): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'PATCH', body }),
+  disable: (id: string): Promise<PartnerSourceRow> =>
+    apiFetch<PartnerSourceRow>(`/partner-sources/${id}`, { method: 'DELETE' }),
+  testConnection: (id: string): Promise<PartnerConnectionTestResult> =>
+    apiFetch<PartnerConnectionTestResult>(`/partner-sources/${id}/test-connection`, {
+      method: 'POST',
+    }),
+  /** D4.3 — manual sync trigger (no upload). For Google Sheets
+   *  sources the adapter is currently a seam and the run will land
+   *  as `failed` with `partner.adapter.not_wired`. */
+  sync: (id: string): Promise<PartnerSyncRunResult> =>
+    apiFetch<PartnerSyncRunResult>(`/partner-sources/${id}/sync`, { method: 'POST' }),
+  /** D4.3 — manual upload sync. Source must have
+   *  `adapter='manual_upload'`. */
+  syncUpload: (id: string, csv: string): Promise<PartnerSyncRunResult> =>
+    apiFetch<PartnerSyncRunResult>(`/partner-sources/${id}/sync-upload`, {
+      method: 'POST',
+      body: { csv },
+    }),
+};
+
+/**
+ * Phase D4 — D4.4: PartnerVerification read-only client.
+ *
+ * Returns the projection per active partner source visible to the
+ * caller. `explicitCheck=true` audits the read as a deliberate
+ * "Check now" action; default page-load reads do NOT audit.
+ */
+export const partnerVerificationApi = {
+  forLead: (
+    leadId: string,
+    opts: { partnerSourceId?: string; explicitCheck?: boolean } = {},
+  ): Promise<PartnerVerificationResult> => {
+    const query: Record<string, string> = {};
+    if (opts.partnerSourceId) query['partnerSourceId'] = opts.partnerSourceId;
+    if (opts.explicitCheck) query['explicitCheck'] = '1';
+    return apiFetch<PartnerVerificationResult>(`/partner-verification/leads/${leadId}`, {
+      query,
+    });
+  },
+  /** D4.5 — controlled merge of selected partner fields into the
+   *  lead's captain. Capability: `partner.merge.write`. */
+  merge: (leadId: string, body: PartnerMergeRequest): Promise<PartnerMergeResult> =>
+    apiFetch<PartnerMergeResult>(`/partner-verification/leads/${leadId}/merge`, {
+      method: 'POST',
+      body,
+    }),
+  /** D4.5 — list partner evidence rows on a lead. */
+  evidence: (leadId: string): Promise<LeadEvidenceRow[]> =>
+    apiFetch<LeadEvidenceRow[]>(`/partner-verification/leads/${leadId}/evidence`),
+  /**
+   * D4.8 — evidence-only attach. Pins a partner snapshot record to
+   * a lead as `LeadEvidence` without mutating Captain / Lead /
+   * controlled-merge fields. Capability: `partner.evidence.write`.
+   */
+  attachEvidence: (
+    leadId: string,
+    body: PartnerAttachEvidenceRequest,
+  ): Promise<PartnerAttachEvidenceResult> =>
+    apiFetch<PartnerAttachEvidenceResult>(`/partner-verification/leads/${leadId}/evidence`, {
+      method: 'POST',
+      body,
+    }),
+};
+
+/**
+ * Phase D4 — D4.6: PartnerReconciliation client.
+ *
+ * Pure derived view over the partner snapshots + CRM rows. Read +
+ * CSV export gated on `partner.reconciliation.read`; promoting a
+ * discrepancy into the TL Review Queue gated on
+ * `partner.reconciliation.resolve`.
+ */
+export const partnerReconciliationApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      companyId?: string;
+      countryId?: string;
+      category?: ReconciliationCategory;
+      limit?: number;
+    } = {},
+  ): Promise<ReconciliationResult> =>
+    apiFetch<ReconciliationResult>('/partner/reconciliation', { query }),
+  /** Returns the absolute URL to the CSV endpoint with current
+   *  filters as query params — the frontend uses an `<a download>`
+   *  to trigger the browser's native CSV download flow. */
+  exportCsvUrl: (
+    query: {
+      partnerSourceId?: string;
+      companyId?: string;
+      countryId?: string;
+      category?: ReconciliationCategory;
+    } = {},
+  ): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    if (query.companyId) params.set('companyId', query.companyId);
+    if (query.countryId) params.set('countryId', query.countryId);
+    if (query.category) params.set('category', query.category);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reconciliation/export.csv${qs ? `?${qs}` : ''}`;
+  },
+  openReview: (input: ReconciliationOpenReviewInput): Promise<ReconciliationOpenReviewResult> =>
+    apiFetch<ReconciliationOpenReviewResult>(`/partner/reconciliation/open-review`, {
+      method: 'POST',
+      body: input,
+    }),
+};
+
+/**
+ * Phase D4 — D4.7: PartnerMilestoneConfigs admin client +
+ * progress + commission CSV exports.
+ */
+export const partnerMilestoneConfigsApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      isActive?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<MilestoneConfigsListResponse> =>
+    apiFetch<MilestoneConfigsListResponse>('/partner-milestone-configs', { query }),
+  get: (id: string): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`),
+  create: (body: CreateMilestoneConfigInput): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>('/partner-milestone-configs', { method: 'POST', body }),
+  update: (id: string, body: UpdateMilestoneConfigInput): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`, {
+      method: 'PATCH',
+      body,
+    }),
+  disable: (id: string): Promise<MilestoneConfigRow> =>
+    apiFetch<MilestoneConfigRow>(`/partner-milestone-configs/${id}`, { method: 'DELETE' }),
+};
+
+export const partnerMilestoneProgressApi = {
+  forLead: (leadId: string): Promise<LeadMilestoneProgressResult> =>
+    apiFetch<LeadMilestoneProgressResult>(`/partner/milestones/leads/${leadId}`),
+  /** Absolute URL for the commission CSV exports. Frontend uses
+   *  an `<a download>` to trigger the browser's native flow. */
+  progressCsvUrl: (query: { partnerSourceId?: string } = {}): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reports/commission-progress.csv${
+      qs ? `?${qs}` : ''
+    }`;
+  },
+  riskCsvUrl: (query: { partnerSourceId?: string } = {}): string => {
+    const params = new URLSearchParams();
+    if (query.partnerSourceId) params.set('partnerSourceId', query.partnerSourceId);
+    const qs = params.toString();
+    return `${API_BASE_URL}${API_VERSION_PREFIX}/partner/reports/commission-risk.csv${
+      qs ? `?${qs}` : ''
+    }`;
+  },
+};
+
+/**
+ * Phase D4 — D4.3: PartnerSnapshot read-only client.
+ */
+export const partnerSnapshotsApi = {
+  list: (
+    query: {
+      partnerSourceId?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<PartnerSnapshotsListResponse> =>
+    apiFetch<PartnerSnapshotsListResponse>('/partner-snapshots', { query }),
+  get: (id: string): Promise<PartnerSnapshotRow> =>
+    apiFetch<PartnerSnapshotRow>(`/partner-snapshots/${id}`),
+  records: (
+    id: string,
+    query: { limit?: number; offset?: number } = {},
+  ): Promise<PartnerSnapshotRecordsResponse> =>
+    apiFetch<PartnerSnapshotRecordsResponse>(`/partner-snapshots/${id}/records`, { query }),
+};
+
+export const partnerMappingsApi = {
+  list: (sourceId: string): Promise<PartnerMappingRow[]> =>
+    apiFetch<PartnerMappingRow[]>(`/partner-sources/${sourceId}/mappings`),
+  readiness: (sourceId: string): Promise<PartnerMappingReadiness> =>
+    apiFetch<PartnerMappingReadiness>(`/partner-sources/${sourceId}/mappings/readiness`),
+  create: (sourceId: string, body: CreatePartnerMappingInput): Promise<PartnerMappingRow> =>
+    apiFetch<PartnerMappingRow>(`/partner-sources/${sourceId}/mappings`, {
+      method: 'POST',
+      body,
+    }),
+  update: (
+    sourceId: string,
+    mappingId: string,
+    body: UpdatePartnerMappingInput,
+  ): Promise<PartnerMappingRow> =>
+    apiFetch<PartnerMappingRow>(`/partner-sources/${sourceId}/mappings/${mappingId}`, {
+      method: 'PATCH',
+      body,
+    }),
+  remove: (sourceId: string, mappingId: string): Promise<void> =>
+    apiFetch<void>(`/partner-sources/${sourceId}/mappings/${mappingId}`, {
+      method: 'DELETE',
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

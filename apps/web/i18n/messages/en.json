@@ -51,6 +51,10 @@
       "leadReviews": "Lead Reviews",
       "whatsappTemplates": "WA Templates",
       "metaLeadSources": "Meta Sources",
+      "partnerSources": "Partner Sources",
+      "partnerSnapshots": "Partner Snapshots",
+      "partnerReconciliation": "Partner Reconciliation",
+      "partnerMilestones": "Partner Milestones",
       "calendar": "Calendar",
       "reports": "Reports",
       "distribution": "Distribution",
@@ -108,7 +112,8 @@
       "retry": "Retry",
       "clearFilters": "Clear filters",
       "errorTitle": "Couldn't load data",
-      "select": "Select…"
+      "select": "Select…",
+      "refresh": "Refresh"
     },
     "companies": {
       "title": "Companies",
@@ -628,6 +633,50 @@
         "whatsapp": "WhatsApp",
         "openFullPage": "Open full page",
         "stageMoved": "Stage moved"
+      },
+      "convertDecision": {
+        "title": "Active / DFT / Convert decision",
+        "lead": "Lead",
+        "phone": "Phone",
+        "distinctionTitle": "Convert is the technical CRM action",
+        "distinctionBody": "Conversion creates or links the Captain row from this lead. It does NOT mark the captain as Active and it does NOT pull partner Active or DFT dates. Use Partner Data → Use partner Active/DFT to apply those values via the controlled merge after this step.",
+        "noPartnerAccess": "Partner verification is hidden by your role. The conversion will still proceed.",
+        "noPartnerData": "No partner data found for this lead yet. Conversion will still proceed; you can attach evidence later from Partner Data.",
+        "partnerSummaryHeader": "Partner verification summary",
+        "mergeRedirectHint": "Use “Use partner …” buttons on the Partner Data card to apply Active or DFT dates with audit. This modal does not change those values.",
+        "foundBadge": "Found",
+        "notFoundBadge": "Not found",
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "partnerTrips": "Partner trips",
+        "partnerNotFoundBody": "The partner snapshot has no record matching this contact's phone.",
+        "attachEvidenceLabel": "Attach partner snapshot as evidence",
+        "attachEvidenceHelper": "Pins the latest partner snapshot record to this lead as evidence. No CRM column is changed; no merge is performed.",
+        "evidenceSourceLabel": "Partner source for evidence",
+        "evidenceNoteLabel": "Evidence note (optional)",
+        "evidenceNoteHelper": "Short context the auditor should see (e.g. “Confirmed by phone before convert”). Up to 1000 characters.",
+        "evidenceNoRecord": "No partner record exists for this source. Evidence cannot be attached for this source — pick another source or uncheck the box.",
+        "confirmCta": "Convert",
+        "toastConvertedWithEvidence": "Lead converted and partner evidence attached.",
+        "toastConvertedEvidenceFailed": "Lead converted, but the evidence attach failed."
+      },
+      "evidenceCard": {
+        "title": "Evidence",
+        "loading": "Loading evidence…",
+        "featureDisabled": "Partner Data Hub is disabled in this environment.",
+        "emptyBody": "No partner evidence attached yet.",
+        "byLabel": "By",
+        "fileLabel": "File",
+        "snapshotIdLabel": "Snapshot",
+        "recordIdLabel": "Record",
+        "notesLabel": "Notes",
+        "kind": {
+          "partner_record": "Partner record",
+          "manual_upload": "Manual upload",
+          "screenshot": "Screenshot",
+          "note": "Note"
+        }
       }
     },
     "discoveredRoles": "Discovered roles",
@@ -1009,14 +1058,36 @@
         "rotation_failed": "Rotation did not solve the issue",
         "manual_tl_review": "Manual TL review",
         "bottleneck_flagged": "Bottleneck detected",
-        "escalated_by_tl": "Escalated by TL"
+        "escalated_by_tl": "Escalated by TL",
+        "partner_missing": "CRM active, partner missing",
+        "partner_active_not_in_crm": "Partner active, CRM not active",
+        "partner_date_mismatch": "Active date mismatch",
+        "partner_dft_mismatch": "DFT date mismatch",
+        "partner_trips_mismatch": "Trips count mismatch"
       },
       "reasonExplain": {
         "sla_breach_repeat": "This lead breached its SLA twice within the policy window. Decide whether to rotate again, keep with the current owner, or escalate.",
         "rotation_failed": "A previous rotation did not solve the issue — the new owner also missed the SLA. Decide what to do next.",
         "manual_tl_review": "A team leader flagged this lead for review.",
         "bottleneck_flagged": "This lead has been stuck in the same stage for too long.",
-        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected."
+        "escalated_by_tl": "A TL escalated this from the Lead Review Queue. Ops / Account Manager action expected.",
+        "partner_missing": "CRM marks this lead as active or won, but the latest partner snapshot has no matching record. Verify the partner sheet or update CRM.",
+        "partner_active_not_in_crm": "The partner sheet shows this contact as active, but CRM hasn't converted the lead yet. Confirm and convert if appropriate.",
+        "partner_date_mismatch": "Captain active date in CRM differs from the partner snapshot. Reconcile or apply the partner date via controlled merge.",
+        "partner_dft_mismatch": "Captain DFT date in CRM differs from the partner snapshot. Reconcile or apply the partner date via controlled merge.",
+        "partner_trips_mismatch": "Partner snapshot trip count differs from the CRM ledger. Investigate before applying commission."
+      },
+      "partnerContext": {
+        "header": "Partner context",
+        "source": "Source",
+        "category": "Category",
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "partnerTripCount": "Partner trips",
+        "crmTripCount": "CRM trips",
+        "captainActivatedAt": "Captain active date",
+        "captainDftAt": "Captain DFT date"
       },
       "resolution": {
         "rotated": "Rotated",
@@ -1367,7 +1438,12 @@
         "followup.create": "Follow-up created",
         "followup.complete": "Follow-up completed",
         "followup.snooze": "Follow-up snoozed",
-        "followup.delete": "Follow-up deleted"
+        "followup.delete": "Follow-up deleted",
+        "partner.sync.completed": "Partner sync",
+        "partner.merge.applied": "Partner merge",
+        "partner.evidence.attached": "Partner evidence",
+        "partner.verification.checked": "Partner check",
+        "partner.reconciliation.review_opened": "Partner review opened"
       }
     },
     "reports": {
@@ -1889,6 +1965,517 @@
         "title": "Reset to defaults",
         "body": "All escalation rules will revert to the platform-wide defaults (notify, notify+tag, rotate-or-review, raise review). This is logged in the audit trail.",
         "cta": "Reset to defaults"
+      }
+    },
+    "partnerSources": {
+      "title": "Partner Sources",
+      "subtitle": "Configure external partner data feeds (Uber, inDrive, DiDi, …) used to verify activation and DFT claims.",
+      "newCta": "Add partner source",
+      "newTitle": "New partner source",
+      "newSubtitle": "Pick a partner, an adapter, and a schedule. Mappings are configured after the source is created.",
+      "detailTitle": "Partner source",
+      "detailSubtitle": "Adapter, schedule, credentials, and column mappings.",
+      "backCta": "Back",
+      "openCta": "Open",
+      "loading": "Loading partner source…",
+      "notFound": "Partner source not found.",
+      "emptyTitle": "No partner sources configured yet.",
+      "emptyBody": "Add a partner data feed to start verifying activation and DFT claims against external systems of record.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner sources.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment. Configuration is read-only until the operator enables it.",
+      "lastSync": "Last sync",
+      "lastSyncNever": "Never synced",
+      "connectionStatusLabel": "Connection",
+      "testConnectionCta": "Test connection",
+      "disableCta": "Disable",
+      "badges": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "credentials": {
+        "configured": "Credentials configured",
+        "notConfigured": "Credentials not configured"
+      },
+      "adapters": {
+        "google_sheets": "Google Sheets",
+        "manual_upload": "Manual upload"
+      },
+      "schedules": {
+        "manual": "Manual sync",
+        "cron": "Scheduled"
+      },
+      "tabModes": {
+        "fixed": "Fixed tab",
+        "new_per_period": "New tab per period"
+      },
+      "connectionStatuses": {
+        "untested": "Untested",
+        "ok": "Connected",
+        "auth_failed": "Auth failed",
+        "sheet_not_found": "Sheet not found",
+        "unknown": "Unknown",
+        "stubbed": "Stubbed",
+        "not_wired": "Coming soon — use manual upload",
+        "running": "Running",
+        "success": "Success",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "sync": {
+        "syncNowCta": "Sync now",
+        "uploadCta": "Upload CSV",
+        "historyCta": "Sync history",
+        "lastSyncLabel": "Last run",
+        "testResultTitle": "Connection test",
+        "resolvedTab": "Resolved tab",
+        "openHistory": "Open sync history",
+        "lastRunCounts": "Total {total} · imported {imported} · skipped {skipped} · errors {errors}",
+        "lastRunTitle": {
+          "success": "Sync completed successfully",
+          "partial": "Sync completed with row errors",
+          "failed": "Sync failed"
+        },
+        "toast": {
+          "success": "Partner sync completed.",
+          "partial": "Partner sync completed with row errors.",
+          "failed": "Partner sync failed.",
+          "skipped": "Partner sync skipped."
+        },
+        "upload": {
+          "title": "Upload CSV",
+          "body": "Paste the CSV content. The first row must be the header. Mappings are applied at row-write time; raw values are preserved either way.",
+          "csvLabel": "CSV content",
+          "csvHelper": "First row is the header.",
+          "csvPlaceholder": "phone,partner_status,partner_active_date,trip_count\n+201001234567,active,2026-04-01,12\n…",
+          "cta": "Run sync"
+        }
+      },
+      "testConnection": {
+        "stubTitle": "Connection test",
+        "noIssues": "Configuration shape looks valid."
+      },
+      "disableConfirm": {
+        "title": "Disable partner source",
+        "body": "Disabling stops scheduled syncs and hides this source from verification surfaces. History (snapshots, mappings) is preserved.",
+        "cta": "Disable",
+        "cancel": "Cancel"
+      },
+      "form": {
+        "readOnlyBanner": "You can view this source but cannot edit it.",
+        "createdToast": "Partner source created.",
+        "savedToast": "Partner source saved.",
+        "disabledToast": "Partner source disabled.",
+        "scopeHint": "Leave Company / Country empty for a tenant-wide source.",
+        "sections": {
+          "identity": "Identity",
+          "adapter": "Adapter & credentials",
+          "schedule": "Schedule & tabs"
+        },
+        "displayName": {
+          "label": "Display name",
+          "helper": "What operators will see in lists and reports."
+        },
+        "partnerCode": {
+          "label": "Partner",
+          "helper": "Which platform this feed comes from.",
+          "placeholder": "Pick a partner…",
+          "options": {
+            "uber": "Uber",
+            "indrive": "inDrive",
+            "didi": "DiDi",
+            "other": "Other"
+          }
+        },
+        "company": {
+          "label": "Company",
+          "helper": "Optional. Limits this source to a single company.",
+          "any": "Any company"
+        },
+        "country": {
+          "label": "Country",
+          "helper": "Optional. Limits this source to a single country.",
+          "any": "Any country"
+        },
+        "isActive": {
+          "label": "Active"
+        },
+        "adapter": {
+          "label": "Adapter",
+          "helper": "How CRM reads from the partner feed.",
+          "options": {
+            "google_sheets": "Google Sheets",
+            "manual_upload": "Manual upload (CSV)"
+          },
+          "manualUploadNotice": "Manual upload sources don't need stored credentials. The operator uploads a CSV per sync.",
+          "googleSheetsNotWiredNotice": "The Google Sheets adapter will be enabled in a follow-up. For now, use Upload CSV on this source."
+        },
+        "credentials": {
+          "privacyHelper": "Credentials are encrypted server-side and never returned to the browser. Replacing them rotates the stored envelope.",
+          "updatedAt": "Last rotated",
+          "replaceCta": "Replace credentials",
+          "cancelReplace": "Keep current credentials",
+          "eraseCta": "Erase credentials",
+          "erasedToast": "Credentials erased.",
+          "serviceAccountEmail": {
+            "label": "Service account email"
+          },
+          "privateKey": {
+            "label": "Private key (PEM)",
+            "helper": "Paste the full PEM block including BEGIN / END lines.",
+            "placeholder": "Paste the full PEM block here"
+          },
+          "sheetId": {
+            "label": "Sheet ID",
+            "helper": "The long alphanumeric id from the sheet URL."
+          }
+        },
+        "schedule": {
+          "kind": {
+            "label": "Sync schedule",
+            "options": {
+              "manual": "Manual only",
+              "cron": "Scheduled (cron)"
+            }
+          },
+          "cronSpec": {
+            "label": "Cron expression",
+            "helper": "Standard 5-field crontab. Example: \"0 11 * * *\" runs every day at 11:00."
+          }
+        },
+        "tabMode": {
+          "label": "Tab mode",
+          "helper": "Does the partner overwrite the same tab every sync, or publish a new one per period?",
+          "options": {
+            "fixed": "Fixed tab",
+            "new_per_period": "New tab per period"
+          }
+        },
+        "fixedTabName": {
+          "label": "Fixed tab name",
+          "helper": "Exact tab name the adapter should read every sync."
+        },
+        "tabDiscovery": {
+          "kind": {
+            "label": "Tab discovery rule",
+            "helper": "How the adapter finds the latest tab.",
+            "options": {
+              "name_pattern": "Match by name pattern",
+              "most_recently_modified": "Most recently modified"
+            }
+          },
+          "pattern": {
+            "label": "Name pattern",
+            "helper": "Use \"YYYY-MM-DD\" placeholders. Example: \"Activations YYYY-MM-DD\"."
+          }
+        }
+      },
+      "mappings": {
+        "title": "Column mappings",
+        "subtitle": "Connect partner sheet columns to CRM fields. Phone is required before sync runs.",
+        "phoneRequiredWarning": "Phone mapping is required before syncing.",
+        "empty": "No mappings yet. Add at least the phone column to get started.",
+        "rowSummary": "from \"{column}\" · {transform}",
+        "badges": {
+          "required": "Required",
+          "phone": "Join key"
+        },
+        "targetFields": {
+          "phone": "Phone",
+          "name": "Name",
+          "partner_status": "Partner status",
+          "partner_active_date": "Partner active date",
+          "partner_dft_date": "Partner DFT date",
+          "trip_count": "Trips count",
+          "last_trip_at": "Last trip"
+        },
+        "transformKinds": {
+          "passthrough": "No transform",
+          "parse_date": "Parse as date",
+          "to_e164": "Normalise phone (E.164)",
+          "lowercase": "Lowercase"
+        },
+        "addRow": {
+          "title": "Add a mapping",
+          "cta": "Add mapping",
+          "targetField": {
+            "label": "CRM field"
+          },
+          "sourceColumn": {
+            "label": "Partner column",
+            "helper": "Verbatim column header from the partner sheet."
+          },
+          "transformKind": {
+            "label": "Transform",
+            "helper": "Apply at snapshot-write time."
+          },
+          "displayOrder": {
+            "label": "Display order"
+          },
+          "isRequired": {
+            "label": "Required (skip rows missing this column)"
+          }
+        }
+      }
+    },
+    "partnerReconciliation": {
+      "title": "Partner Reconciliation",
+      "subtitle": "Compare CRM truth to the latest partner snapshot. Read-only — no CRM fields are changed by this report.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner reconciliation.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "exportCsv": "Export CSV",
+      "emptyTitle": "No discrepancies found in the selected view.",
+      "emptyBody": "Either everything matches the latest partner snapshot, or no partner sources are syncing rows that overlap your scope.",
+      "unnamedLead": "(no name)",
+      "lastSync": "Last sync",
+      "openLead": "Open lead",
+      "filters": {
+        "source": "Partner source",
+        "allSources": "All sources",
+        "category": "Category",
+        "allCategories": "All"
+      },
+      "categories": {
+        "partner_missing": "Missing in partner",
+        "partner_active_not_in_crm": "Partner active, not in CRM",
+        "partner_date_mismatch": "Active date mismatch",
+        "partner_dft_mismatch": "DFT mismatch",
+        "partner_trips_mismatch": "Trips mismatch",
+        "commission_risk": "Commission risk"
+      },
+      "recommendedAction": {
+        "review_or_convert": "Review or convert",
+        "investigate_partner_or_create_lead": "Investigate partner or create lead",
+        "check_partner_status": "Check partner status",
+        "sync_partner": "Sync partner",
+        "reconcile_dates": "Reconcile dates",
+        "investigate_telemetry": "Investigate telemetry",
+        "commission_window_expired": "Commission window expired",
+        "commission_push_needed": "Commission push needed"
+      },
+      "values": {
+        "partner": "Partner value",
+        "crm": "CRM value"
+      },
+      "openReview": {
+        "cta": "Open as review",
+        "title": "Open as review",
+        "body": "This raises a TL Review Queue row pinned to this discrepancy. The lead is not changed; the queue is the actionable surface.",
+        "alreadyOpenToast": "A review for this lead and category is already open.",
+        "openedToast": "Review opened.",
+        "partnerSource": "Partner source",
+        "category": "Category",
+        "lead": "Lead",
+        "phone": "Phone",
+        "notesLabel": "Reviewer notes (optional)",
+        "notesHelper": "Short context the resolver should see when they pick up this review."
+      }
+    },
+    "partnerSnapshots": {
+      "title": "Partner Snapshots",
+      "subtitle": "Every partner sync run, newest first. Shows row counts, resolved tabs, and error names for failed runs.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to partner snapshots.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "filterLabel": "Filter:",
+      "emptyTitle": "No partner snapshots yet.",
+      "emptyBody": "Snapshots are recorded every time a partner sync runs. Trigger one from a partner source detail page.",
+      "emptyFilteredTitle": "No matching snapshots",
+      "emptyFilteredBody": "Nothing matches the current filter. Clear it to see the full history.",
+      "sourceRemoved": "Source removed",
+      "resolvedTab": "Resolved tab",
+      "triggeredBy": "Triggered by",
+      "errorPrefix": "Error",
+      "counts": {
+        "total": "Total",
+        "imported": "Imported",
+        "skipped": "Skipped",
+        "error": "Errors"
+      },
+      "statuses": {
+        "all": "All",
+        "running": "Running",
+        "success": "Success",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "triggers": {
+        "manual": "Manual",
+        "manual_upload": "Manual upload",
+        "cron": "Scheduled"
+      }
+    },
+    "partnerData": {
+      "title": "Partner Data",
+      "checkNow": "Check now",
+      "loading": "Loading partner verification…",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "noPartnerData": "No partner data found for this lead yet.",
+      "neverSynced": "This partner source has not synced yet.",
+      "lastSync": "Last sync",
+      "foundBadge": "Found",
+      "notFoundBadge": "Not found",
+      "notFoundBody": "This contact does not appear in the latest partner snapshot.",
+      "warningsHeader": "Partner data flags",
+      "fields": {
+        "partnerStatus": "Partner status",
+        "partnerActiveDate": "Partner active date",
+        "partnerDftDate": "Partner DFT date",
+        "tripCount": "Trips count",
+        "lastTripAt": "Last trip"
+      },
+      "status": {
+        "matched": "Matches CRM",
+        "not_found": "Not in partner",
+        "crm_active_partner_missing": "CRM active, partner missing",
+        "partner_active_crm_not_active": "Partner active, CRM not active",
+        "date_mismatch": "Active date mismatch",
+        "dft_mismatch": "DFT date mismatch",
+        "trips_mismatch": "Trips mismatch"
+      },
+      "warnings": {
+        "date_mismatch": "Active date differs from CRM.",
+        "dft_mismatch": "DFT date differs from CRM.",
+        "trips_mismatch": "Partner trip count differs from CRM ledger.",
+        "partner_has_active_date_crm_missing": "Partner has an active date but CRM has none.",
+        "partner_has_dft_date_crm_missing": "Partner has a DFT date but CRM has none.",
+        "partner_active_crm_no_captain_yet": "Partner says active but the lead has not been converted yet."
+      },
+      "merge": {
+        "useCta": {
+          "active_date": "Use partner active date",
+          "dft_date": "Use partner DFT date"
+        },
+        "noCaptainHint": "Convert the lead to a captain before merging partner dates.",
+        "confirmTitle": "Apply partner field to CRM",
+        "confirmCta": "Apply merge",
+        "confirmWarning": "This will update the selected captain field and write an audit record. Action cannot be undone automatically.",
+        "confirmBody": {
+          "active_date": "Replace the captain's active date with the partner's value?",
+          "dft_date": "Replace the captain's DFT date with the partner's value?"
+        },
+        "partnerSourceLabel": "Partner source",
+        "snapshotTimeLabel": "Snapshot time",
+        "partnerValueLabel": "Partner value",
+        "crmValueLabel": "Current CRM value",
+        "crmValueHint": "See the lead detail above for current CRM values.",
+        "noteLabel": "Evidence note (optional)",
+        "noteHelper": "A short note about why you trust this partner value. Visible in the audit trail.",
+        "notePlaceholder": "Verified against partner snapshot screenshot dated …",
+        "toast": {
+          "active_date": "Active date updated from partner.",
+          "dft_date": "DFT date updated from partner."
+        },
+        "errors": {
+          "no_captain": "Convert the lead to a captain before merging partner dates.",
+          "no_record": "No partner record matches this lead in the selected source.",
+          "field_not_mergeable": "This field is not mergeable.",
+          "field_missing_in_partner": "Partner snapshot does not have a value for this field.",
+          "value_unchanged": "Partner value already matches CRM; nothing to merge.",
+          "snapshot_stale": "Partner snapshot is too old. Sync the source again before merging.",
+          "feature_disabled": "Partner Data Hub is disabled in this environment."
+        }
+      },
+      "milestone": {
+        "needsPush": "Needs push",
+        "trips": "Trips",
+        "window": "{days}-day window",
+        "deadline": "Deadline: {date}",
+        "daysLeft": "{days} days left",
+        "expiredDaysAgo": "Expired {days} days ago",
+        "nextMilestone": "Next milestone: {step}",
+        "risk": {
+          "low": "On track",
+          "medium": "Mid-window",
+          "high": "Push needed",
+          "expired": "Expired",
+          "completed": "Completed",
+          "unknown": "Pending"
+        },
+        "reason": {
+          "no_partner_record": "No matching partner record yet.",
+          "missing_anchor": "Partner record is missing the anchor date for this milestone."
+        }
+      }
+    },
+    "partnerMilestones": {
+      "title": "Partner Milestones",
+      "subtitle": "Configure commission-window milestones per partner source. Read-only progress is computed from partner snapshot trip counts.",
+      "helper": "Milestones are calculated from partner snapshot trip counts and do not update CRM status automatically.",
+      "noAccessTitle": "No access",
+      "noAccessBody": "You don't have access to milestone configs.",
+      "featureDisabled": "Partner Data Hub is disabled in this environment.",
+      "newCta": "New milestone config",
+      "exportProgress": "Commission progress",
+      "exportRisk": "Commission risk",
+      "emptyTitle": "No milestone configs yet.",
+      "emptyBody": "Define a window and ladder per partner source to surface commission progress on lead detail and the reconciliation report.",
+      "createdToast": "Milestone config created.",
+      "savedToast": "Milestone config saved.",
+      "disabledToast": "Milestone config disabled.",
+      "editorTitle": {
+        "create": "New milestone config",
+        "edit": "Edit milestone config"
+      },
+      "summary": {
+        "window": "{days}-day window"
+      },
+      "anchors": {
+        "partner_active_date": "Partner active date",
+        "partner_dft_date": "Partner DFT date",
+        "first_seen_in_partner": "First seen in partner sheet"
+      },
+      "badges": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "cardActions": {
+        "edit": "Edit",
+        "disable": "Disable"
+      },
+      "form": {
+        "partnerSource": {
+          "label": "Partner source",
+          "placeholder": "Pick a partner source…"
+        },
+        "code": {
+          "label": "Code",
+          "helper": "lowercase_snake_case, unique per partner source. Example: commission_50_30."
+        },
+        "displayName": {
+          "label": "Display name"
+        },
+        "windowDays": {
+          "label": "Window (days)",
+          "helper": "How long after the anchor date the captain has to reach the top milestone."
+        },
+        "anchor": {
+          "label": "Anchor date",
+          "helper": "What date the window starts from."
+        },
+        "steps": {
+          "label": "Milestone steps",
+          "helper": "Comma-separated, ascending. Example: 1, 5, 25, 50."
+        },
+        "risk": {
+          "section": "Risk thresholds (fraction of window remaining)",
+          "helper": "When fraction-of-window-remaining drops below these, the badge flips. Defaults: high=0.30, medium=0.60.",
+          "high": {
+            "label": "High threshold"
+          },
+          "medium": {
+            "label": "Medium threshold"
+          }
+        },
+        "isActive": {
+          "label": "Active"
+        }
+      },
+      "errors": {
+        "invalidSteps": "Milestone steps must be ascending positive integers (e.g. 1, 5, 25, 50).",
+        "invalidWindowDays": "Window days must be a positive integer.",
+        "partnerSourceRequired": "Pick a partner source first."
       }
     }
   },
