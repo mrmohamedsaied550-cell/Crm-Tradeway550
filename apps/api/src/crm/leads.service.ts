@@ -11,6 +11,8 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { DistributionService } from '../distribution/distribution.service';
 import type { RoutingContext } from '../distribution/distribution.types';
 import { AuditService } from '../audit/audit.service';
+import { DuplicateDecisionService } from '../duplicates/duplicate-decision.service';
+import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
@@ -32,6 +34,29 @@ import type {
   BulkMoveStageDto,
   BulkDeleteDto,
 } from './leads.dto';
+
+/**
+ * Phase D2 — D2.5: enriched attempt row returned by
+ * `listAttemptsForLeadInScope(...)`. Stage / lostReason / assignedTo
+ * are joined for display; raw IDs are preserved for the UI to
+ * deep-link without an extra round-trip.
+ */
+export interface AttemptHistoryRow {
+  id: string;
+  attemptIndex: number;
+  lifecycleState: string;
+  source: string;
+  assignedToId: string | null;
+  reactivatedAt: Date | null;
+  reactivationRule: string | null;
+  previousLeadId: string | null;
+  primaryConversationId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  stage: { code: string; name: string } | null;
+  lostReason: { code: string; labelEn: string; labelAr: string } | null;
+  assignedTo: { id: string; name: string } | null;
+}
 
 /**
  * Lead lifecycle.
@@ -97,6 +122,17 @@ export class LeadsService {
      * the audit log itself can't leak the data the role was denied.
      */
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D2 — D2.3: duplicate / reactivation decision engine.
+     * Consulted on every create path BEFORE the insert when
+     * LEAD_ATTEMPTS_V2 resolves true. When the flag resolves false
+     * (production default), the gate is bypassed and create paths
+     * behave bit-for-bit identical to D2.2. @Optional so existing
+     * test fixtures that build LeadsService without the new module
+     * continue to compile; production wiring (CrmModule via the
+     * @Global DuplicatesModule) always provides it.
+     */
+    @Optional() private readonly duplicateDecision?: DuplicateDecisionService,
   ) {}
 
   /**
@@ -249,8 +285,133 @@ export class LeadsService {
       await this.assertUserInTenant(dto.assignedToId);
     }
 
+    // Phase D2 — D2.3: duplicate / reactivation gate.
+    //
+    // Under LEAD_ATTEMPTS_V2=false (production default), this whole
+    // block is skipped and the existing create path runs unchanged
+    // — including the legacy `lead.duplicate_phone` ConflictException
+    // raised at the bottom of this method on P2002.
+    //
+    // Under LEAD_ATTEMPTS_V2=true (dev/test default), we evaluate
+    // the duplicate-decision engine BEFORE attempting the insert
+    // and translate its decision into one of:
+    //   - throw lead.duplicate_phone        (decision = reject_existing_open
+    //                                        OR link_to_existing — manual
+    //                                        create can't link)
+    //   - throw lead.requires_review        (decision = queue_review)
+    //   - proceed with the insert + populate D2 attempt fields
+    //     (decision = create_first_attempt OR create_new_attempt)
+    //
+    // The `duplicateGate` carries the engine's decision out so the
+    // post-insert audit row can chain the new lead id back through
+    // `writeDecisionLogInTx`.
+    let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
+      null;
+    if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
+      duplicateGate = await this.duplicateDecision.evaluate({
+        phone,
+        contactId: null, // manual create doesn't carry a contactId; engine looks up by phone
+        context: {
+          trigger: 'manual',
+          companyId: dto.companyId ?? null,
+          countryId: dto.countryId ?? null,
+          pipelineId: null,
+          actorUserId,
+        },
+      });
+      // D2.3.1 — log every duplicate evaluation that doesn't proceed
+      // to insert BEFORE throwing. Without this, `reject_existing_open`,
+      // `link_to_existing`, and `queue_review` cases left no audit
+      // trail (Bug #2 from the D2.3 audit). The log write is inside
+      // a small `prisma.withTenant` so RLS sees the tenant context;
+      // we write only the rows the engine asked for, never the
+      // post-insert path's chained lead id (there is no lead row).
+      const earlyDecisionShouldLog =
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing' ||
+        duplicateGate.decision === 'queue_review';
+      if (earlyDecisionShouldLog) {
+        const logDecision = duplicateGate;
+        await this.prisma.withTenant(tenantId, (tx) =>
+          this.duplicateDecision!.writeDecisionLogInTx(
+            tx,
+            tenantId,
+            logDecision,
+            {
+              phone,
+              contactId: null,
+              context: {
+                trigger: 'manual',
+                companyId: dto.companyId ?? null,
+                countryId: dto.countryId ?? null,
+                pipelineId: null,
+                actorUserId,
+              },
+            },
+            null,
+            null,
+          ),
+        );
+      }
+      if (
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing'
+      ) {
+        // Manual create can never link — the operator is explicitly
+        // asking to create a new row. Map both reject and link to
+        // the same legacy 409 so the API contract is preserved.
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${phone} already exists in this tenant`,
+        });
+      }
+      if (duplicateGate.decision === 'queue_review') {
+        // Manual create has no review-queue surface today. Surface
+        // a clear, distinct error code so the UI can branch (D2.4
+        // Lead-create form will offer "send to review queue" CTA).
+        throw new ConflictException({
+          code: 'lead.requires_review',
+          message:
+            'This phone matches an existing lead or captain that needs manual review. Use the review queue to resolve before creating a new attempt.',
+        });
+      }
+      // Otherwise: create_first_attempt or create_new_attempt — fall
+      // through to the existing insert. We pass the chain fields via
+      // the closure so the prisma.withTenant block can apply them.
+    }
+
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
+        // D2.3.1 — flag-off lifelong-unique guard.
+        //
+        // Pre-D2.3 the database UNIQUE on (tenant_id, phone) blocked
+        // any insert whose phone matched ANY existing row. The D2.3
+        // partial-unique replaces that with "one OPEN lead per phone",
+        // so without this guard a closed/lost/won/archived match
+        // would silently allow a fresh insert under flag-off — a
+        // regression vs. legacy behavior. Under flag-on the engine
+        // evaluator above already handled this case (it returns
+        // `create_new_attempt` for aged-out lost leads, etc.), so we
+        // skip the guard there.
+        //
+        // The check runs INSIDE the create tx so the outcome is
+        // race-equivalent to the legacy P2002: a concurrent insert
+        // that lands between the findFirst and the lead.create still
+        // surfaces as `lead.duplicate_phone` via the partial-unique's
+        // P2002 catch at the bottom of this method.
+        if (!isLeadAttemptsV2Enabled()) {
+          const existing = await tx.lead.findFirst({
+            where: { tenantId, phone },
+            select: { id: true },
+          });
+          if (existing) {
+            throw new ConflictException({
+              code: 'lead.duplicate_phone',
+              message: `A lead with phone ${phone} already exists in this tenant`,
+            });
+          }
+        }
+
         // Phase 1B — resolve the pipeline first, then resolve / validate
         // the stage *within* that pipeline. Three input paths:
         //   1. pipelineStageId  → load stage; pipeline is stage.pipelineId
@@ -358,6 +519,42 @@ export class LeadsService {
         // non-null payload going forward.
         const attribution = buildAttribution(dto.source, dto.attribution ?? null);
 
+        // Phase D2 — D2.3: when the duplicate gate decided
+        // `create_new_attempt`, populate the chain + reactivation
+        // audit columns on the new row. The previous lead's
+        // attemptIndex + 1 becomes the new attemptIndex; the engine
+        // returned `previousLeadId` directly so we don't re-query.
+        // For first-attempt rows attemptIndex defaults to 1 (column
+        // default) and the chain columns stay null.
+        let attemptFields: {
+          attemptIndex: number;
+          previousLeadId: string | null;
+          reactivatedAt: Date | null;
+          reactivatedById: string | null;
+          reactivationRule: string | null;
+        } = {
+          attemptIndex: 1,
+          previousLeadId: null,
+          reactivatedAt: null,
+          reactivatedById: null,
+          reactivationRule: null,
+        };
+        if (duplicateGate && duplicateGate.decision === 'create_new_attempt') {
+          const previous = duplicateGate.previousLeadId
+            ? await tx.lead.findUnique({
+                where: { id: duplicateGate.previousLeadId },
+                select: { attemptIndex: true },
+              })
+            : null;
+          attemptFields = {
+            attemptIndex: (previous?.attemptIndex ?? 0) + 1,
+            previousLeadId: duplicateGate.previousLeadId,
+            reactivatedAt: new Date(),
+            reactivatedById: actorUserId,
+            reactivationRule: duplicateGate.ruleApplied,
+          };
+        }
+
         const lead = await tx.lead.create({
           data: {
             tenantId,
@@ -375,6 +572,7 @@ export class LeadsService {
             createdById: actorUserId,
             slaDueAt,
             slaStatus,
+            ...attemptFields,
           },
           include: { stage: true, captain: true },
         });
@@ -403,6 +601,51 @@ export class LeadsService {
             data: { hasOpenLead: true },
           });
         }
+
+        // Phase D2 — D2.3: post-insert audit. When the duplicate
+        // gate ran (LEAD_ATTEMPTS_V2=true), record the decision
+        // against the new lead id + add a reactivation activity row
+        // for chained attempts so the timeline starts with a clear
+        // "reactivated from #N" marker. Skipped under flag=false
+        // (no decision was computed).
+        if (duplicateGate && this.duplicateDecision) {
+          await this.duplicateDecision.writeDecisionLogInTx(
+            tx,
+            tenantId,
+            duplicateGate,
+            {
+              phone,
+              contactId: lead.contactId,
+              context: {
+                trigger: 'manual',
+                companyId: dto.companyId ?? null,
+                countryId: dto.countryId ?? null,
+                pipelineId: null,
+                actorUserId,
+              },
+            },
+            lead.id,
+            null,
+          );
+          if (duplicateGate.decision === 'create_new_attempt' && duplicateGate.previousLeadId) {
+            await this.appendActivity(tx, {
+              tenantId,
+              leadId: lead.id,
+              type: 'system',
+              actionSource: 'system',
+              body: `Reactivated as attempt #${lead.attemptIndex} from previous attempt.`,
+              payload: {
+                event: 'reactivation',
+                previousLeadId: duplicateGate.previousLeadId,
+                ruleApplied: duplicateGate.ruleApplied,
+                attemptIndex: lead.attemptIndex,
+                trigger: 'manual',
+              },
+              createdById: actorUserId,
+            });
+          }
+        }
+
         return lead;
       });
     } catch (err) {
@@ -496,6 +739,183 @@ export class LeadsService {
   }
 
   /**
+   * Phase D2 — D2.5: list every attempt for the contact behind this
+   * lead, scope-filtered against the calling user's role.
+   *
+   *   1. Validate the user can see THIS lead (calls
+   *      `findByIdInScopeOrThrow`; throws 404 otherwise — same
+   *      contract as the rest of the lead-detail surface).
+   *   2. Read the lead's `contactId`. Legacy rows that pre-date C10B-1
+   *      (and very rare manual-create rows that never got a contact)
+   *      have `contactId === null`; in that case we return the
+   *      single-row history with `totalAttempts = 1`.
+   *   3. Count ALL attempts in the same (tenant, contact) regardless
+   *      of scope (RLS still pins it to this tenant). The total
+   *      drives the "N previous attempts are outside your access"
+   *      hint when the visible list is shorter than the count.
+   *   4. List attempts the user CAN see, with the joins the UI
+   *      needs (stage / lostReason / assignedTo).
+   *
+   * Returns `{ attempts, totalAttempts, outOfScopeCount, currentLeadId }`.
+   * `attempts` is ordered by `attemptIndex DESC` (newest first); the
+   * UI marks `currentLeadId` as the one the operator is viewing.
+   */
+  async listAttemptsForLeadInScope(
+    leadId: string,
+    userClaims: ScopeUserClaims,
+  ): Promise<{
+    attempts: AttemptHistoryRow[];
+    totalAttempts: number;
+    outOfScopeCount: number;
+    currentLeadId: string;
+  }> {
+    const tenantId = requireTenantId();
+    // 1. Visibility gate. Throws 404 if out of scope.
+    const lead = await this.findByIdInScopeOrThrow(leadId, userClaims);
+    const contactId = lead.contactId;
+
+    // 2. No contact → single-row history.
+    if (!contactId) {
+      return this.prisma.withTenant(tenantId, async (tx) => {
+        const single = await this.fetchAttemptsInScope(tx, {
+          tenantId,
+          contactId: null,
+          leadId,
+          scopeWhere: null,
+        });
+        return {
+          attempts: this.applyOwnerVisibilityToAttempts(single.attempts, leadId, false),
+          totalAttempts: single.attempts.length,
+          outOfScopeCount: 0,
+          currentLeadId: leadId,
+        };
+      });
+    }
+
+    // Phase D2 — D2.6: previous-owner visibility gate. Sales agents
+    // (no `lead.assign` capability) must not see the names of agents
+    // who handled the predecessors. The CURRENT row keeps its owner
+    // intact so the agent still sees their own assignment; only the
+    // predecessor rows are stripped. TL+ / ops keep full history.
+    const canSeePreviousOwner = await this.userCanSeePreviousOwner(userClaims);
+    const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const totalAttempts = await tx.lead.count({
+        where: { tenantId, contactId },
+      });
+      const visible = await this.fetchAttemptsInScope(tx, {
+        tenantId,
+        contactId,
+        leadId: null,
+        scopeWhere,
+      });
+      return {
+        attempts: this.applyOwnerVisibilityToAttempts(
+          visible.attempts,
+          leadId,
+          canSeePreviousOwner,
+        ),
+        totalAttempts,
+        outOfScopeCount: Math.max(0, totalAttempts - visible.attempts.length),
+        currentLeadId: leadId,
+      };
+    });
+  }
+
+  /** Phase D2 — D2.6: previous-owner privilege check.
+   *  Returns true when the role carries `lead.write` — granted to
+   *  TL / Account Manager / Ops / Super Admin (`TEAM_LEAD_EXTRAS`),
+   *  NOT to sales / activation / driving agents. Pure DB read,
+   *  RLS-pinned to the current tenant. Falls back to `false`
+   *  (conservative) when the role lookup fails so a transient error
+   *  never leaks an owner.
+   *
+   *  Why not `lead.assign`? `AGENT_ACTIONS` grants `lead.assign` to
+   *  every agent role (sales / activation / driving), so using it
+   *  here would silently expose previous owners to sales agents —
+   *  the exact violation D2.6's product rule prohibits. `lead.write`
+   *  matches the exact "TL+" cohort the spec names.
+   *
+   *  TODO (forward): introduce a dedicated capability — e.g.
+   *  `lead.previous_owner.read` — or a field-level permission on
+   *  `lead.previousAttemptOwner` so the previous-owner cohort can
+   *  be configured per-tenant without piggy-backing on `lead.write`.
+   *  Tracked in the Final UX / User Stories Audit deferred list. */
+  private async userCanSeePreviousOwner(userClaims: ScopeUserClaims): Promise<boolean> {
+    try {
+      const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
+        tx.role.findUnique({
+          where: { id: userClaims.roleId },
+          include: {
+            capabilities: { include: { capability: { select: { code: true } } } },
+          },
+        }),
+      );
+      const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
+      return codes.includes('lead.write');
+    } catch {
+      return false;
+    }
+  }
+
+  /** Phase D2 — D2.6: strip `assignedTo` / `assignedToId` from every
+   *  PREDECESSOR row when the caller cannot see previous owners. The
+   *  row matching `currentLeadId` is left intact — the agent must still
+   *  see their own assignment. Always preserves audit data server-
+   *  side; this is purely a response-shape redaction. */
+  private applyOwnerVisibilityToAttempts(
+    attempts: AttemptHistoryRow[],
+    currentLeadId: string,
+    canSeePreviousOwner: boolean,
+  ): AttemptHistoryRow[] {
+    if (canSeePreviousOwner) return attempts;
+    return attempts.map((a) =>
+      a.id === currentLeadId ? a : { ...a, assignedTo: null, assignedToId: null },
+    );
+  }
+
+  /** Helper for `listAttemptsForLeadInScope` — runs inside the
+   *  caller's tx and returns the enriched attempts array.
+   *  When `contactId` is null, fetches the single `leadId` row. */
+  private async fetchAttemptsInScope(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantId: string;
+      contactId: string | null;
+      leadId: string | null;
+      scopeWhere: Prisma.LeadWhereInput | null;
+    },
+  ): Promise<{ attempts: AttemptHistoryRow[] }> {
+    const baseWhere: Prisma.LeadWhereInput = input.contactId
+      ? { tenantId: input.tenantId, contactId: input.contactId }
+      : { tenantId: input.tenantId, id: input.leadId! };
+    const where: Prisma.LeadWhereInput = input.scopeWhere
+      ? { AND: [baseWhere, input.scopeWhere] }
+      : baseWhere;
+    const rows = await tx.lead.findMany({
+      where,
+      orderBy: { attemptIndex: 'desc' },
+      select: {
+        id: true,
+        attemptIndex: true,
+        lifecycleState: true,
+        source: true,
+        assignedToId: true,
+        reactivatedAt: true,
+        reactivationRule: true,
+        previousLeadId: true,
+        primaryConversationId: true,
+        createdAt: true,
+        updatedAt: true,
+        stage: { select: { code: true, name: true } },
+        lostReason: { select: { code: true, labelEn: true, labelAr: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
+    });
+    return { attempts: rows };
+  }
+
+  /**
    * Phase C — C3: resolve the scope `where` once per call. Returns
    * `null` when scope is `'global'` OR when the scope context dep
    * isn't wired (legacy fixtures that don't pass userClaims) OR
@@ -562,6 +982,10 @@ export class LeadsService {
       ...(query.source && { source: query.source }),
       ...(query.slaStatus && { slaStatus: query.slaStatus }),
       ...(query.hasOverdueFollowup && { nextActionDueAt: { lt: new Date() } }),
+      // Phase D2 — D2.6: returningOnly narrows the list to multi-
+      // attempt rows. Available on the table view only — Kanban
+      // (listByStage) wouldn't fit a "returning leads" lane cleanly.
+      ...(query.returningOnly && { attemptIndex: { gte: 2 } }),
       ...(createdAt && { createdAt }),
       ...(query.q && {
         OR: [
@@ -1552,7 +1976,149 @@ export class LeadsService {
       ...(input.waId && { ad: { id: input.waId } }),
     });
 
+    // Phase D2 — D2.3: WhatsApp inbound's "create" branch is one of
+    // the create paths gated by LEAD_ATTEMPTS_V2. The inbound
+    // orchestrator (whatsapp-inbound.service.ts) reaches this method
+    // ONLY after it has decided "no open lead matches; route + create"
+    // — meaning the engine, if consulted here, will see no open lead
+    // either. The interesting cases the engine adds are:
+    //   - active captain → queue_review (caller's orchestrator
+    //     already enqueues a review row in the captain_active branch
+    //     before reaching here, so this is a defensive belt-and-
+    //     braces; if a race interleaves, the engine catches it)
+    //   - lost lead aged out → create_new_attempt
+    // When the gate fires `queue_review` (e.g. a returning lost-but-
+    // within-cooldown case), we throw a typed error the inbound
+    // orchestrator can catch and translate into a review row.
+    // Under flag=false the gate is skipped entirely.
+    // D2.3.1 — flag-off lifelong-unique guard.
+    //
+    // Same rationale as in `create()`: the D2.3 partial-unique
+    // replaced the lifelong UNIQUE on (tenant_id, phone), so under
+    // LEAD_ATTEMPTS_V2=false a fresh inbound for a phone whose only
+    // matches are closed/lost/won/archived would silently land a
+    // brand-new lead row — a regression vs. the pre-D2.3 contract,
+    // which would have thrown via P2002 at the create step. We
+    // reproduce the legacy semantic at service level: any match
+    // throws `lead.duplicate_phone`, which the inbound orchestrator
+    // catches and falls through to the same "race-resolved" branch
+    // it already handles.
+    if (!isLeadAttemptsV2Enabled()) {
+      const existing = await tx.lead.findFirst({
+        where: { tenantId: input.tenantId, phone: input.phone },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+    }
+
+    let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
+      null;
+    if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
+      duplicateGate = await this.duplicateDecision.evaluate(
+        {
+          phone: input.phone,
+          contactId: input.contactId,
+          context: {
+            trigger: 'whatsapp_inbound',
+            companyId: input.companyId,
+            countryId: input.countryId,
+            pipelineId: pipeline.id,
+            actorUserId: null,
+          },
+        },
+        { tx },
+      );
+      // D2.3.1 — log every duplicate evaluation that doesn't proceed
+      // to insert BEFORE throwing. Same fix as `create()` (Bug #2);
+      // here we already have the caller's tx so the log lands in
+      // the same transaction as the inbound orchestration.
+      const earlyDecisionShouldLog =
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing' ||
+        duplicateGate.decision === 'queue_review';
+      if (earlyDecisionShouldLog) {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone: input.phone,
+            contactId: input.contactId,
+            context: {
+              trigger: 'whatsapp_inbound',
+              companyId: input.companyId,
+              countryId: input.countryId,
+              pipelineId: pipeline.id,
+              actorUserId: null,
+            },
+          },
+          null,
+          null,
+        );
+      }
+      if (
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing'
+      ) {
+        // Race: an open lead appeared while we were resolving stage.
+        // The legacy P2002 catch below would also handle this, but
+        // raising the engine's decision keeps the audit trail in
+        // sync.
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+      if (duplicateGate.decision === 'queue_review') {
+        // Bubble up so the inbound orchestrator can materialise a
+        // review row. The orchestrator already handles the explicit
+        // captain_active / duplicate_lead branches; the engine's
+        // queue_review here covers cooldown / won / cross-pipeline
+        // edge cases that the orchestrator wasn't checking before.
+        throw new ConflictException({
+          code: 'lead.requires_review',
+          message: 'Inbound matches an existing lead/captain; review required.',
+        });
+      }
+    }
+
     try {
+      // Same chain-fields shape as `create()` — applied when the
+      // gate decided `create_new_attempt`.
+      let attemptFields: {
+        attemptIndex: number;
+        previousLeadId: string | null;
+        reactivatedAt: Date | null;
+        reactivatedById: string | null;
+        reactivationRule: string | null;
+      } = {
+        attemptIndex: 1,
+        previousLeadId: null,
+        reactivatedAt: null,
+        reactivatedById: null,
+        reactivationRule: null,
+      };
+      if (duplicateGate && duplicateGate.decision === 'create_new_attempt') {
+        const previous = duplicateGate.previousLeadId
+          ? await tx.lead.findUnique({
+              where: { id: duplicateGate.previousLeadId },
+              select: { attemptIndex: true },
+            })
+          : null;
+        attemptFields = {
+          attemptIndex: (previous?.attemptIndex ?? 0) + 1,
+          previousLeadId: duplicateGate.previousLeadId,
+          reactivatedAt: now,
+          reactivatedById: null, // automated inbound — no actor user
+          reactivationRule: duplicateGate.ruleApplied,
+        };
+      }
+
       const lead = await tx.lead.create({
         data: {
           tenantId: input.tenantId,
@@ -1571,8 +2137,9 @@ export class LeadsService {
           slaStatus: 'active',
           contactId: input.contactId,
           primaryConversationId: input.primaryConversationId,
+          ...attemptFields,
         },
-        select: { id: true },
+        select: { id: true, attemptIndex: true },
       });
 
       await this.appendActivity(tx, {
@@ -1592,6 +2159,46 @@ export class LeadsService {
         createdById: null,
         actionSource: 'whatsapp',
       });
+
+      // Phase D2 — D2.3: post-insert audit + reactivation activity
+      // (mirrors the manual `create()` path).
+      if (duplicateGate && this.duplicateDecision) {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone: input.phone,
+            contactId: input.contactId,
+            context: {
+              trigger: 'whatsapp_inbound',
+              companyId: input.companyId,
+              countryId: input.countryId,
+              pipelineId: pipeline.id,
+              actorUserId: null,
+            },
+          },
+          lead.id,
+          null,
+        );
+        if (duplicateGate.decision === 'create_new_attempt' && duplicateGate.previousLeadId) {
+          await this.appendActivity(tx, {
+            tenantId: input.tenantId,
+            leadId: lead.id,
+            type: 'system',
+            actionSource: 'system',
+            body: `Reactivated as attempt #${lead.attemptIndex} from previous attempt.`,
+            payload: {
+              event: 'reactivation',
+              previousLeadId: duplicateGate.previousLeadId,
+              ruleApplied: duplicateGate.ruleApplied,
+              attemptIndex: lead.attemptIndex,
+              trigger: 'whatsapp_inbound',
+            },
+            createdById: null,
+          });
+        }
+      }
 
       // C10B-3: keep Contact.hasOpenLead in sync — this freshly-created
       // lead is by definition open. Backfill is the safety net (C10B-2)
@@ -1613,6 +2220,230 @@ export class LeadsService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Phase D2 — D2.6: manual reactivation override.
+   *
+   * Forces a fresh attempt for a CLOSED predecessor lead even when the
+   * automatic engine would have queued / rejected. The new attempt is
+   * always created with `ruleApplied = 'manual_override'`; ownership
+   * follows the tenant's `duplicateRules.ownershipOnReactivation`
+   * (route_engine | previous_owner | unassigned).
+   *
+   * Safety:
+   *   - The caller must already have lead.reactivate (gated at the
+   *     controller); this method assumes the capability check passed.
+   *   - Source lead must be in scope — out-of-scope sources surface
+   *     as 404 (`lead.not_found`) via findByIdInScopeOrThrow.
+   *   - Source lead must NOT be `open`. Reactivating an open lead is
+   *     never the intent (the agent would just keep working it); we
+   *     reject with `lead.reactivate.already_open` so the UI can
+   *     surface a clear message.
+   *
+   * Side-effects (one transaction):
+   *   - Inserts the new Lead row with the chain fields populated.
+   *   - Appends a `system` LeadActivity (`event: 'reactivation'`).
+   *   - Writes a DuplicateDecisionLog row + `lead.duplicate_decision`
+   *     audit verb via writeDecisionLogInTx.
+   *   - Writes a `lead.reactivated` audit verb so the audit page can
+   *     filter manual reactivations independently of the duplicate
+   *     decisions stream.
+   */
+  async manualReactivate(
+    sourceLeadId: string,
+    actorUserId: string,
+    userClaims: ScopeUserClaims,
+  ): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> {
+    if (!this.duplicateDecision) {
+      throw new BadRequestException({
+        code: 'lead.reactivate.unavailable',
+        message: 'Manual reactivation is not available in this deployment',
+      });
+    }
+    const tenantId = requireTenantId();
+    // Visibility gate — out-of-scope source surfaces as 404.
+    const source = await this.findByIdInScopeOrThrow(sourceLeadId, userClaims);
+    if (source.lifecycleState === 'open') {
+      throw new ConflictException({
+        code: 'lead.reactivate.already_open',
+        message:
+          'This lead is still open. Manual reactivation is reserved for closed (won / lost / archived) leads.',
+      });
+    }
+
+    const settings = await this.tenantSettings.getCurrent();
+    const rules = await this.tenantSettings.getDuplicateRules();
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Resolve a contact for the chain. Legacy / manual sources may
+      // lack a contactId; mint one here so the new attempt has a chain
+      // anchor for the next reactivation.
+      let contactId = source.contactId;
+      if (!contactId) {
+        const contact = await tx.contact.upsert({
+          where: { tenantId_phone: { tenantId, phone: source.phone } },
+          update: {},
+          create: {
+            tenantId,
+            phone: source.phone,
+            originalPhone: source.phone,
+            displayName: source.name,
+          },
+          select: { id: true },
+        });
+        contactId = contact.id;
+        await tx.lead.update({ where: { id: source.id }, data: { contactId } });
+      }
+
+      // Pipeline + entry stage — same fallback chain as create() so
+      // the new attempt always lands on a non-terminal stage of the
+      // company × country pipeline (or the tenant default).
+      const pipeline = await this.pipeline.resolveForLeadInTx(tx, {
+        companyId: source.companyId,
+        countryId: source.countryId,
+      });
+      const stage = await tx.pipelineStage.findFirst({
+        where: { pipelineId: pipeline.id, isTerminal: false },
+        orderBy: { order: 'asc' },
+        select: { id: true, code: true },
+      });
+      if (!stage) {
+        throw new BadRequestException({
+          code: 'pipeline.no_entry_stage',
+          message: `Pipeline ${pipeline.id} has no non-terminal entry stage`,
+        });
+      }
+
+      // Owner per rules.ownershipOnReactivation. 'previous_owner' falls
+      // back to the route engine when the predecessor was unassigned;
+      // 'unassigned' produces a queue lead (TL pickup); 'route_engine'
+      // is intentionally null here because the route engine isn't on
+      // the manual-reactivate path — TLs / agents pick up from the
+      // queue, mirroring the rest of the manual create surface.
+      const ownerId =
+        rules.ownershipOnReactivation === 'previous_owner'
+          ? source.assignedToId
+          : rules.ownershipOnReactivation === 'unassigned'
+            ? null
+            : null;
+
+      const now = new Date();
+      const slaDueAt = this.sla.computeDueAt(now, settings.slaMinutes);
+
+      const created = await tx.lead.create({
+        data: {
+          tenantId,
+          name: source.name,
+          phone: source.phone,
+          email: source.email,
+          source: source.source,
+          companyId: source.companyId,
+          countryId: source.countryId,
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          lifecycleState: 'open',
+          assignedToId: ownerId,
+          createdById: actorUserId,
+          slaDueAt,
+          slaStatus: 'active',
+          contactId,
+          attribution: (source.attribution ?? Prisma.JsonNull) as
+            | Prisma.InputJsonValue
+            | typeof Prisma.JsonNull,
+          attemptIndex: source.attemptIndex + 1,
+          previousLeadId: source.id,
+          reactivatedAt: now,
+          reactivatedById: actorUserId,
+          reactivationRule: 'manual_override',
+        },
+        select: { id: true, attemptIndex: true },
+      });
+
+      await this.appendActivity(tx, {
+        tenantId,
+        leadId: created.id,
+        type: 'system',
+        actionSource: 'lead',
+        body: `Manual reactivation: created attempt #${created.attemptIndex} from previous attempt #${source.attemptIndex}.`,
+        payload: {
+          event: 'reactivation',
+          previousLeadId: source.id,
+          previousAttemptIndex: source.attemptIndex,
+          ruleApplied: 'manual_override',
+          attemptIndex: created.attemptIndex,
+          trigger: 'manual_override',
+          actorUserId,
+        },
+        createdById: actorUserId,
+      });
+
+      // Synthesize a DuplicateDecision so the audit/log writer treats
+      // this exactly like an automatic reactivation. The engine's
+      // own `apply()` is intentionally bypassed — manual override
+      // doesn't run the matcher; we already know the predecessor.
+      const synthetic: import('../duplicates/duplicate-rules.service').DuplicateDecision = {
+        decision: 'create_new_attempt',
+        ruleApplied: 'manual_override',
+        confidence: 'high',
+        reason: `Manual reactivation override by user ${actorUserId}`,
+        previousLeadId: source.id,
+        matchedOpenLeadId: null,
+        matchedCaptainId: null,
+        matchedLeadIds: [source.id],
+        recommendedOwnerStrategy: rules.ownershipOnReactivation,
+      };
+      await this.duplicateDecision!.writeDecisionLogInTx(
+        tx,
+        tenantId,
+        synthetic,
+        {
+          phone: source.phone,
+          contactId,
+          context: {
+            trigger: 'manual_override',
+            companyId: source.companyId,
+            countryId: source.countryId,
+            pipelineId: pipeline.id,
+            actorUserId,
+          },
+        },
+        created.id,
+        null,
+      );
+
+      // Dedicated `lead.reactivated` audit verb so audit-page filter
+      // chips can isolate manual reactivations from the broader
+      // `lead.duplicate_decision` stream. Both rows live alongside.
+      if (this.audit) {
+        await this.audit.writeInTx(tx, tenantId, {
+          action: 'lead.reactivated',
+          entityType: 'lead',
+          entityId: created.id,
+          actorUserId,
+          payload: {
+            previousLeadId: source.id,
+            previousAttemptIndex: source.attemptIndex,
+            attemptIndex: created.attemptIndex,
+            ruleApplied: 'manual_override',
+            ownershipStrategy: rules.ownershipOnReactivation,
+          } as unknown as Prisma.InputJsonValue,
+        });
+      }
+
+      // Keep Contact.hasOpenLead in sync — the new attempt is open
+      // by definition.
+      await tx.contact.update({
+        where: { id: contactId },
+        data: { hasOpenLead: true, lastSeenAt: now },
+      });
+
+      return {
+        id: created.id,
+        attemptIndex: created.attemptIndex,
+        previousLeadId: source.id,
+      };
+    });
   }
 
   /**

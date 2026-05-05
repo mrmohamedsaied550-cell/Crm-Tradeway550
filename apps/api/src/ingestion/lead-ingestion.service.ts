@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { Optional } from '@nestjs/common';
+
 import { AuditService } from '../audit/audit.service';
 import { buildAttribution, type AttributionInput } from '../crm/attribution.util';
 import { LeadsService } from '../crm/leads.service';
@@ -9,6 +11,8 @@ import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { DEFAULT_STAGE_CODE, type LeadSource } from '../crm/pipeline.registry';
 import { PipelineService } from '../crm/pipeline.service';
 import { SlaService } from '../crm/sla.service';
+import { DuplicateDecisionService } from '../duplicates/duplicate-decision.service';
+import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId, tenantContext } from '../tenants/tenant-context';
 import { CsvParseError, parseCsv } from './csv.util';
@@ -57,6 +61,13 @@ export class LeadIngestionService {
     private readonly sla: SlaService,
     private readonly audit: AuditService,
     private readonly tenantSettings: TenantSettingsService,
+    /**
+     * Phase D2 — D2.3: duplicate / reactivation decision engine.
+     * Consulted by `tryCreateLead` BEFORE the existing pre-check
+     * when LEAD_ATTEMPTS_V2=true. Under flag=false this stays unused
+     * and the pre-check + silent-skip behavior is preserved.
+     */
+    @Optional() private readonly duplicateDecision?: DuplicateDecisionService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────
@@ -69,6 +80,16 @@ export class LeadIngestionService {
   ): Promise<{
     total: number;
     created: number;
+    /** D2.3 — when LEAD_ATTEMPTS_V2 is on, returning lost / no-answer
+     *  rows that pass the cool-off rule are reactivated as a fresh
+     *  attempt instead of being counted as a duplicate. Always 0
+     *  under the legacy flag-off code path. */
+    reactivated: number;
+    /** D2.3 — when LEAD_ATTEMPTS_V2 is on, ambiguous matches
+     *  (active captain / won lead / cooldown) are counted here
+     *  instead of as duplicates so the operator knows manual
+     *  review is needed. Always 0 under the legacy flag-off path. */
+    reviewQueued: number;
     duplicates: number;
     errors: { row: number; reason: string }[];
   }> {
@@ -106,7 +127,7 @@ export class LeadIngestionService {
     }
 
     if (rows.length === 0) {
-      return { total: 0, created: 0, duplicates: 0, errors: [] };
+      return { total: 0, created: 0, reactivated: 0, reviewQueued: 0, duplicates: 0, errors: [] };
     }
     if (rows.length > 10_000) {
       throw new BadRequestException({
@@ -125,6 +146,8 @@ export class LeadIngestionService {
     const settings = await this.tenantSettings.getCurrent();
     const errors: { row: number; reason: string }[] = [];
     let created = 0;
+    let reactivated = 0;
+    let reviewQueued = 0;
     let duplicates = 0;
     const createdLeadIds: string[] = [];
 
@@ -166,6 +189,7 @@ export class LeadIngestionService {
 
         const result = await this.tryCreateLead(tx, {
           tenantId,
+          trigger: 'csv',
           pipelineId: defaultPipelineId,
           stageId: stage.id,
           stageIsTerminal: stage.isTerminal,
@@ -178,9 +202,12 @@ export class LeadIngestionService {
           slaMinutes: settings.slaMinutes,
           attribution: rowAttribution,
         });
-        if (result.kind === 'created') {
-          created += 1;
+        if (result.kind === 'created' || result.kind === 'reactivated') {
+          if (result.kind === 'reactivated') reactivated += 1;
+          else created += 1;
           createdLeadIds.push(result.id);
+        } else if (result.kind === 'review_queued') {
+          reviewQueued += 1;
         } else if (result.kind === 'duplicate') {
           duplicates += 1;
         } else {
@@ -196,6 +223,8 @@ export class LeadIngestionService {
         payload: {
           total: rows.length,
           created,
+          reactivated,
+          reviewQueued,
           duplicates,
           errors: errors.length,
           source: dto.defaultSource,
@@ -211,7 +240,7 @@ export class LeadIngestionService {
       }
     }
 
-    return { total: rows.length, created, duplicates, errors };
+    return { total: rows.length, created, reactivated, reviewQueued, duplicates, errors };
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -251,7 +280,11 @@ export class LeadIngestionService {
      */
     attribution?: AttributionInput | null;
   }): Promise<
-    { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
+    | { kind: 'created'; id: string }
+    | { kind: 'reactivated'; id: string }
+    | { kind: 'review_queued' }
+    | { kind: 'duplicate' }
+    | { kind: 'error'; reason: string }
   > {
     const result = await this.prisma.withTenant(input.tenantId, async (tx) => {
       // Read the default stage inside this transaction — the webhook
@@ -290,6 +323,7 @@ export class LeadIngestionService {
 
       const r = await this.tryCreateLead(tx, {
         tenantId: input.tenantId,
+        trigger: 'meta',
         // Phase 1B — webhook ingest also lands on the tenant default
         // until per-source mapping (Track B) lets a Meta source bind
         // to a specific (company, country) → pipeline tuple.
@@ -306,13 +340,23 @@ export class LeadIngestionService {
         // Phase A — A4: structured attribution from the Meta event.
         attribution: input.attribution ?? null,
       });
+      // D2.3 — keep the audit verb stable for the happy path
+      // (`lead.ingest.meta` for both created + reactivated since
+      // the reactivation already has its own DuplicateDecisionLog
+      // row + lead.duplicate_decision audit verb). Other outcomes
+      // get distinct suffixes so dashboards can count them.
+      const auditAction =
+        r.kind === 'created' || r.kind === 'reactivated'
+          ? 'lead.ingest.meta'
+          : `lead.ingest.meta.${r.kind}`;
       await this.audit.writeInTx(tx, input.tenantId, {
-        action: r.kind === 'created' ? 'lead.ingest.meta' : `lead.ingest.meta.${r.kind}`,
+        action: auditAction,
         entityType: 'lead',
-        entityId: r.kind === 'created' ? r.id : null,
+        entityId: r.kind === 'created' || r.kind === 'reactivated' ? r.id : null,
         actorUserId: input.actorUserId ?? null,
         payload: {
           source: input.source,
+          ...(r.kind === 'reactivated' && { reactivated: true }),
           ...(r.kind === 'error' && { reason: r.reason }),
           ...(input.metadata && { metadata: input.metadata }),
         } as Prisma.InputJsonValue,
@@ -321,8 +365,13 @@ export class LeadIngestionService {
     });
 
     // Auto-assign outside the ingest tx so the round-robin counter
-    // commit doesn't lock the lead create row.
-    if (result.kind === 'created') {
+    // commit doesn't lock the lead create row. Reactivated rows
+    // also flow through the routing engine when the tenant rule is
+    // `ownershipOnReactivation: 'route_engine'` (the default); for
+    // `previous_owner` the engine has already pinned the owner via
+    // the existing assigned-to-id pre-fill (D2.3 wiring); auto-assign
+    // is a no-op when the lead already has an assignee.
+    if (result.kind === 'created' || result.kind === 'reactivated') {
       await this.tryAutoAssign(input.tenantId, result.id, input.actorUserId ?? null);
     }
 
@@ -337,6 +386,9 @@ export class LeadIngestionService {
     tx: Prisma.TransactionClient,
     input: {
       tenantId: string;
+      /** D2.3 — distinguishes the source of the row for the
+       *  duplicate-decision engine's audit log. */
+      trigger: 'csv' | 'meta';
       /**
        * Phase 1B — denormalised pipeline id; persisted on the lead so
        * Kanban + reporting can filter without joining stages. Always
@@ -361,7 +413,11 @@ export class LeadIngestionService {
       attribution?: AttributionInput | null;
     },
   ): Promise<
-    { kind: 'created'; id: string } | { kind: 'duplicate' } | { kind: 'error'; reason: string }
+    | { kind: 'created'; id: string }
+    | { kind: 'reactivated'; id: string }
+    | { kind: 'review_queued' }
+    | { kind: 'duplicate' }
+    | { kind: 'error'; reason: string }
   > {
     if (input.name.length === 0) {
       return { kind: 'error', reason: 'missing name' };
@@ -388,14 +444,106 @@ export class LeadIngestionService {
       }
     }
 
+    // Phase D2 — D2.3: when LEAD_ATTEMPTS_V2 is on, route the
+    // duplicate decision through the engine BEFORE the existing
+    // pre-check. Outcomes:
+    //   - reject_existing_open / link_to_existing → duplicate
+    //   - queue_review                            → review_queued
+    //   - create_first_attempt                    → fall through to create
+    //   - create_new_attempt                      → create with chain fields
+    //
+    // Under flag=false the engine is skipped and the legacy pre-check
+    // (a few lines below) handles duplicates the same way it always
+    // has — silent skip with `kind: 'duplicate'`.
+    let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
+      null;
+    if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
+      duplicateGate = await this.duplicateDecision.evaluate(
+        {
+          phone,
+          contactId: null,
+          context: {
+            trigger: input.trigger,
+            companyId: null,
+            countryId: null,
+            pipelineId: input.pipelineId,
+            actorUserId: input.actorUserId,
+          },
+        },
+        { tx },
+      );
+      if (
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing'
+      ) {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone,
+            contactId: null,
+            context: {
+              trigger: input.trigger,
+              companyId: null,
+              countryId: null,
+              pipelineId: input.pipelineId,
+              actorUserId: input.actorUserId,
+            },
+          },
+          null,
+          null,
+        );
+        return { kind: 'duplicate' };
+      }
+      if (duplicateGate.decision === 'queue_review') {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone,
+            contactId: null,
+            context: {
+              trigger: input.trigger,
+              companyId: null,
+              countryId: null,
+              pipelineId: input.pipelineId,
+              actorUserId: input.actorUserId,
+            },
+          },
+          null,
+          null,
+        );
+        return { kind: 'review_queued' };
+      }
+      // Otherwise: create_first_attempt / create_new_attempt → fall
+      // through to the create. The legacy pre-check below is now
+      // redundant (the engine already checked) but kept as a safety
+      // net under flag-on too — `findFirst` on a phone the engine
+      // just declared "no open match" returns nothing, so the check
+      // is a no-op cost.
+    }
+
     // Pre-check by (tenant, phone) — same idempotency strategy as the
     // bonus engine. We avoid try/catch on P2002 because a unique
     // violation aborts the surrounding transaction (Postgres state
     // 25P02), which would block every subsequent row in a CSV import.
-    const existing = await tx.lead.findFirst({
-      where: { tenantId: input.tenantId, phone },
-      select: { id: true },
-    });
+    //
+    // Under LEAD_ATTEMPTS_V2=true this pre-check is now scoped to
+    // OPEN leads only — the partial-unique-on-open index is the
+    // database guarantee, and historical lost / won / archived rows
+    // for the same phone are expected. Under flag-off the legacy
+    // "any row matches" semantics still apply.
+    const existing = isLeadAttemptsV2Enabled()
+      ? await tx.lead.findFirst({
+          where: { tenantId: input.tenantId, phone, lifecycleState: 'open' },
+          select: { id: true },
+        })
+      : await tx.lead.findFirst({
+          where: { tenantId: input.tenantId, phone },
+          select: { id: true },
+        });
     if (existing) {
       return { kind: 'duplicate' };
     }
@@ -409,6 +557,37 @@ export class LeadIngestionService {
     // campaign/ad ids, CSV-mapped UTM fields). Always non-null
     // post-A4 so reports can rely on it.
     const attribution = buildAttribution(input.source, input.attribution ?? null);
+
+    // D2.3 — multi-attempt chain fields (set when the engine
+    // decided create_new_attempt; defaults to "first attempt" otherwise).
+    let attemptFields: {
+      attemptIndex: number;
+      previousLeadId: string | null;
+      reactivatedAt: Date | null;
+      reactivatedById: string | null;
+      reactivationRule: string | null;
+    } = {
+      attemptIndex: 1,
+      previousLeadId: null,
+      reactivatedAt: null,
+      reactivatedById: null,
+      reactivationRule: null,
+    };
+    if (duplicateGate && duplicateGate.decision === 'create_new_attempt') {
+      const previous = duplicateGate.previousLeadId
+        ? await tx.lead.findUnique({
+            where: { id: duplicateGate.previousLeadId },
+            select: { attemptIndex: true },
+          })
+        : null;
+      attemptFields = {
+        attemptIndex: (previous?.attemptIndex ?? 0) + 1,
+        previousLeadId: duplicateGate.previousLeadId,
+        reactivatedAt: now,
+        reactivatedById: input.actorUserId,
+        reactivationRule: duplicateGate.ruleApplied,
+      };
+    }
 
     const lead = await tx.lead.create({
       data: {
@@ -428,8 +607,9 @@ export class LeadIngestionService {
         createdById: input.actorUserId,
         slaDueAt,
         slaStatus,
+        ...attemptFields,
       },
-      select: { id: true },
+      select: { id: true, attemptIndex: true },
     });
     await tx.leadActivity.create({
       data: {
@@ -441,6 +621,49 @@ export class LeadIngestionService {
         createdById: input.actorUserId,
       },
     });
+
+    // D2.3 — write the duplicate-decision log + reactivation activity
+    // when the engine ran. Mirrors LeadsService.create / createFromWhatsApp.
+    if (duplicateGate && this.duplicateDecision) {
+      await this.duplicateDecision.writeDecisionLogInTx(
+        tx,
+        input.tenantId,
+        duplicateGate,
+        {
+          phone,
+          contactId: null,
+          context: {
+            trigger: input.trigger,
+            companyId: null,
+            countryId: null,
+            pipelineId: input.pipelineId,
+            actorUserId: input.actorUserId,
+          },
+        },
+        lead.id,
+        null,
+      );
+      if (duplicateGate.decision === 'create_new_attempt' && duplicateGate.previousLeadId) {
+        await tx.leadActivity.create({
+          data: {
+            tenantId: input.tenantId,
+            leadId: lead.id,
+            type: 'system',
+            actionSource: 'system',
+            body: `Reactivated as attempt #${lead.attemptIndex} from previous attempt.`,
+            payload: {
+              event: 'reactivation',
+              previousLeadId: duplicateGate.previousLeadId,
+              ruleApplied: duplicateGate.ruleApplied,
+              attemptIndex: lead.attemptIndex,
+              trigger: input.trigger,
+            },
+            createdById: input.actorUserId,
+          },
+        });
+        return { kind: 'reactivated', id: lead.id };
+      }
+    }
     return { kind: 'created', id: lead.id };
   }
 

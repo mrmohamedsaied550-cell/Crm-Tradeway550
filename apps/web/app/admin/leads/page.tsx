@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
+import { AttemptBadge } from '@/components/admin/lead-detail/attempt-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/ui/data-table';
@@ -224,6 +225,9 @@ export default function LeadsPage(): JSX.Element {
   const [filterCreatedFrom, setFilterCreatedFrom] = useState<string>(''); // yyyy-mm-dd
   const [filterCreatedTo, setFilterCreatedTo] = useState<string>('');
   const [filterOverdue, setFilterOverdue] = useState<boolean>(false);
+  // Phase D2 — D2.6: returning-leads filter (attemptIndex >= 2). Off
+  // by default so first-attempt rows stay in the picture.
+  const [filterReturning, setFilterReturning] = useState<boolean>(false);
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
 
   const [creating, setCreating] = useState<boolean>(false);
@@ -276,6 +280,7 @@ export default function LeadsPage(): JSX.Element {
           createdFrom,
           createdTo,
           hasOverdueFollowup: filterOverdue || undefined,
+          returningOnly: filterReturning || undefined,
           limit: 100,
         }),
         // Q2 — load stages from the ACTIVE pipeline, not the tenant
@@ -315,6 +320,7 @@ export default function LeadsPage(): JSX.Element {
             createdFrom,
             createdTo,
             hasOverdueFollowup: filterOverdue,
+            returningOnly: filterReturning,
           }),
           ids: page.items.map((r) => r.id),
           total: page.total,
@@ -335,6 +341,7 @@ export default function LeadsPage(): JSX.Element {
     filterCreatedFrom,
     filterCreatedTo,
     filterOverdue,
+    filterReturning,
     effectiveViewMode,
   ]);
 
@@ -388,7 +395,8 @@ export default function LeadsPage(): JSX.Element {
     Boolean(filterAssignee) ||
     Boolean(filterCreatedFrom) ||
     Boolean(filterCreatedTo) ||
-    filterOverdue;
+    filterOverdue ||
+    filterReturning;
 
   /**
    * Phase 1 — Kanban filter shape. Mirrors the list view's filters
@@ -440,6 +448,7 @@ export default function LeadsPage(): JSX.Element {
     setFilterCreatedFrom('');
     setFilterCreatedTo('');
     setFilterOverdue(false);
+    setFilterReturning(false);
   }
 
   // P3-05 — when the row set shrinks (filter change, deletion), prune
@@ -742,6 +751,9 @@ export default function LeadsPage(): JSX.Element {
               />
             ) : null}
             <span className="font-medium">{r.name}</span>
+            {/* D2.5 — small returning-lead chip when attemptIndex > 1.
+                Hidden for first-attempt rows so the list stays quiet. */}
+            <AttemptBadge attemptIndex={r.attemptIndex ?? 1} />
           </span>
         </FieldGated>
       ),
@@ -1054,6 +1066,16 @@ export default function LeadsPage(): JSX.Element {
               onChange={(e) => setFilterOverdue(e.target.checked)}
             />
             {t('advanced.overdueOnly')}
+          </label>
+          {/* Phase D2 — D2.6: returning-leads chip. Available on the
+              list view only; Kanban doesn't expose this filter. */}
+          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+            <input
+              type="checkbox"
+              checked={filterReturning}
+              onChange={(e) => setFilterReturning(e.target.checked)}
+            />
+            {t('advanced.returningOnly')}
           </label>
         </div>
       ) : null}

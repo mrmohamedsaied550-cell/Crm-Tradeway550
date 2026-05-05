@@ -25,6 +25,9 @@ import { IngestionModule } from './ingestion/ingestion.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { BackupModule } from './backup/backup.module';
 import { DistributionModule } from './distribution/distribution.module';
+// Phase D2 — D2.2: duplicate / reactivation engine. Behind the
+// LEAD_ATTEMPTS_V2 flag; no existing create path invokes it yet.
+import { DuplicatesModule } from './duplicates/duplicates.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -66,6 +69,7 @@ import { buildLoggerConfig } from './common/logger';
     RealtimeModule,
     BackupModule,
     DistributionModule,
+    DuplicatesModule,
     HealthModule,
   ],
   providers: [

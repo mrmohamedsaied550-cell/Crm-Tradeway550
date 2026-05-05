@@ -78,6 +78,8 @@ model Tenant {
   /// Phase C — C10B-1: WhatsApp ownership + contact identity.
   contacts                    Contact[]
   whatsAppConversationReviews WhatsAppConversationReview[]
+  /// Phase D2 — D2.1: append-only duplicate-decision audit log.
+  duplicateDecisionLogs       DuplicateDecisionLog[]
 
   @@map("tenants")
 }
@@ -318,6 +320,14 @@ model User {
   // through the join table.
   createdLeads                Lead[]                 @relation("LeadCreator")
   assignedLeads               Lead[]                 @relation("LeadAssignee")
+  /// Phase D2 — D2.1: back-relation for `Lead.reactivatedById`.
+  /// Empty until D2.3 wires the reactivation path; kept here so
+  /// the schema compiles and so future "leads I reactivated"
+  /// reports don't need a round-trip through DuplicateDecisionLog.
+  reactivatedLeads            Lead[]                 @relation("LeadReactivator")
+  /// Phase D2 — D2.1: back-relation for the actor who took a
+  /// duplicate decision (auto or manual).
+  duplicateDecisions          DuplicateDecisionLog[] @relation("DuplicateDecisionActor")
   authoredActivities          LeadActivity[]
   /// C36 — follow-ups the user is responsible for. The owner of a
   /// follow-up is `assignedToId`; `createdById` is who scheduled it
@@ -578,6 +588,31 @@ model Lead {
   primaryConversationId String?               @map("primary_conversation_id") @db.Uuid
   primaryConversation   WhatsAppConversation? @relation("LeadPrimaryConversation", fields: [primaryConversationId], references: [id], onDelete: SetNull)
 
+  /// Phase D2 — D2.1: multi-attempt foundation.
+  /// `attemptIndex` numbers attempts within a (tenant, contact) chain;
+  /// every existing row is attempt 1 (default). Backfills as 1 for any
+  /// future legacy rows that lack a contactId. Future create paths
+  /// (D2.3) bump this when reactivating; D2.1 itself does not.
+  /// `previousLeadId` chains the row to the prior attempt for the same
+  /// contact, so the UI can render an "Attempt N of M" history without
+  /// a window function. Self-reference; SetNull on delete so removing a
+  /// historical attempt doesn't cascade-delete the chain.
+  /// `reactivatedAt` / `reactivatedById` / `reactivationRule` capture
+  /// the moment a fresh attempt was created from a closed predecessor.
+  /// `reactivationRule` is one of the rule codes the future
+  /// DuplicateRulesService emits (`reactivate_lost_aged_out`,
+  /// `reactivate_no_answer_aged_out`, `manual_override`, …).
+  /// All four columns are NULL on D2.1 — no runtime path writes them
+  /// yet. Wired in D2.2 / D2.3.
+  attemptIndex     Int       @default(1) @map("attempt_index")
+  previousLeadId   String?   @map("previous_lead_id") @db.Uuid
+  previousLead     Lead?     @relation("LeadAttemptChain", fields: [previousLeadId], references: [id], onDelete: SetNull)
+  nextAttempts     Lead[]    @relation("LeadAttemptChain")
+  reactivatedAt    DateTime? @map("reactivated_at") @db.Timestamptz(6)
+  reactivatedById  String?   @map("reactivated_by_id") @db.Uuid
+  reactivatedBy    User?     @relation("LeadReactivator", fields: [reactivatedById], references: [id])
+  reactivationRule String?   @map("reactivation_rule")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -587,8 +622,21 @@ model Lead {
   followUps             LeadFollowUp[]
   /// Phase 1A — append-only routing decisions for this lead.
   routingLogs           LeadRoutingLog[]
+  /// Phase D2 — D2.1: every duplicate-decision audit row that
+  /// resolved to creating / linking THIS lead points back here.
+  /// Read-only side; the writer is DuplicateDecisionLog itself.
+  duplicateDecisions    DuplicateDecisionLog[] @relation("DuplicateDecisionResultLead")
 
-  @@unique([tenantId, phone])
+  // Phase D2 — D2.3: the lifelong @@unique([tenantId, phone]) was
+  // dropped in favour of a PARTIAL UNIQUE INDEX scoped to OPEN
+  // leads only (`leads_open_phone_uniq` — see migration 0033).
+  // Prisma 5 doesn't model partial-unique indexes in the schema
+  // language; the index is created by raw SQL in the migration and
+  // exists in the database, but is not declared here. The runtime
+  // gate is DuplicateDecisionService (D2.2); the partial index is
+  // the concurrent-race safety net. Multiple historical / lost /
+  // won / archived leads with the same phone are expected and
+  // permitted.
   @@index([tenantId, stageId])
   @@index([tenantId, assignedToId])
   @@index([tenantId, createdAt])
@@ -604,6 +652,10 @@ model Lead {
   @@index([tenantId, lifecycleState])
   // Phase C — C10B-1: lead lookups via contact identity.
   @@index([tenantId, contactId])
+  // Phase D2 — D2.1: cheap "list attempts for this contact ordered
+  // by attempt number" without a sort — supports the future Attempts
+  // History card on the lead detail page.
+  @@index([tenantId, contactId, attemptIndex])
   @@map("leads")
 }
 
@@ -950,6 +1002,9 @@ model Contact {
   conversations WhatsAppConversation[]
   leads         Lead[]
   reviews       WhatsAppConversationReview[]
+  /// Phase D2 — D2.1: every duplicate-decision audit row that was
+  /// evaluated for THIS contact. Empty until D2.3 starts writing.
+  duplicateDecisions DuplicateDecisionLog[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, lastSeenAt])
@@ -1010,6 +1065,95 @@ model WhatsAppConversationReview {
   @@index([tenantId, resolvedAt])
   @@index([tenantId, reason])
   @@map("whatsapp_conversation_reviews")
+}
+
+/// Phase D2 — D2.1: append-only audit log of every duplicate-detection
+/// decision the system makes (auto or manual).
+///
+/// One row per evaluation. Captures the input (matched leads + matched
+/// captain), the rule that fired, the outcome (`decision`), and links
+/// to whatever the decision produced (a new Lead, a Review row).
+/// Reviewers and Ops use this log to:
+///   - audit reactivation policy ("why was this auto-reactivated?"),
+///   - sanity-check rule changes ("after we lowered the cool-off,
+///     how many leads got reactivated?"),
+///   - investigate compliance edge cases.
+///
+/// D2.1 ONLY ships the storage. No service writes to this table yet —
+/// `DuplicateDecisionService` lands in D2.2 (behind LEAD_ATTEMPTS_V2
+/// flag) and starts populating rows in D2.3.
+///
+/// Tenant-scoped via FORCE'd RLS, same as the rest of the CRM.
+model DuplicateDecisionLog {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @map("tenant_id") @db.Uuid
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Identity anchor for the decision. Nullable only for the rare
+  /// case where the trigger fired before a Contact existed (e.g. a
+  /// raw Meta payload lacking a phone we could normalise). In that
+  /// case the row still records `phone` so an admin can reconstruct.
+  contactId String?  @map("contact_id") @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// E.164 phone the decision was evaluated against. Always present
+  /// even when `contactId` is NULL.
+  phone     String
+
+  /// Where the decision came from.
+  /// 'manual' | 'csv' | 'meta' | 'whatsapp_inbound' | 'review_resolve_new_lead' | 'review_resolve_new_attempt'
+  trigger   String
+
+  /// Inputs the rule engine considered.
+  matchedLeadIds   String[] @map("matched_lead_ids") @db.Uuid
+  matchedCaptainId String?  @map("matched_captain_id") @db.Uuid
+
+  /// Which rule fired. Stable string codes — easier to dashboard than
+  /// an enum that has to migrate every time we add a rule.
+  /// 'create_first_attempt'
+  ///   | 'reactivate_lost_aged_out'
+  ///   | 'reactivate_no_answer_aged_out'
+  ///   | 'route_to_review_active_captain'
+  ///   | 'route_to_review_open_lead'
+  ///   | 'route_to_review_won'
+  ///   | 'reject_existing_open'
+  ///   | 'manual_override'
+  ruleApplied String  @map("rule_applied")
+
+  /// What the system did about it.
+  /// 'created_new_attempt' | 'queued_review' | 'linked_to_existing' | 'rejected'
+  decision    String
+
+  /// Engine confidence ('high' | 'medium' | 'low'). Low routes to
+  /// review queue regardless of rule match — a guard against false
+  /// positives in fuzzy phone-normalisation cases.
+  confidence  String  @default("high")
+
+  /// Actor user ID — populated for manual / review-resolve decisions,
+  /// NULL for automatic ingest (CSV / Meta / inbound) where the
+  /// system itself is the actor.
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  actor       User?   @relation("DuplicateDecisionActor", fields: [actorUserId], references: [id])
+
+  /// Outputs of the decision (when applicable).
+  resultLeadId   String? @map("result_lead_id") @db.Uuid
+  resultLead     Lead?   @relation("DuplicateDecisionResultLead", fields: [resultLeadId], references: [id], onDelete: SetNull)
+  resultReviewId String? @map("result_review_id") @db.Uuid
+
+  /// Free-form payload for any extra context (rule input snapshots,
+  /// timing details, age-of-previous-lead in days, …). Never holds
+  /// raw provider metadata.
+  payload   Json?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Index for the per-contact "show every duplicate decision for
+  // this person" view on the lead detail page (D2.5).
+  @@index([tenantId, contactId, createdAt])
+  // Index for the Ops "auto-decisions" dashboard tab (D2.5) which
+  // groups by `decision` over a time window.
+  @@index([tenantId, decision, createdAt])
+  @@map("duplicate_decision_log")
 }
 
 /// WhatsAppAccount — per-tenant configuration for one provider connection.
@@ -1623,6 +1767,24 @@ model TenantSettings {
   /// target). Defaults to 'capacity' so existing tenants behave identically
   /// to today's implementation.
   defaultStrategy   String   @default("capacity") @map("default_strategy")
+
+  /// Phase D2 — D2.1: tenant-configurable duplicate / reactivation
+  /// rules. NULL means "use code defaults" (D2.2 introduces the
+  /// safe defaults below). The expected shape is:
+  /// {
+  ///   "reactivateLostAfterDays":           30,
+  ///   "reactivateNoAnswerAfterDays":       7,
+  ///   "reactivateNoAnswerLostReasonCodes": ["no_answer", "no_response"],
+  ///   "captainBehavior":                   "always_review",
+  ///   "wonBehavior":                       "always_review",
+  ///   "ownershipOnReactivation":           "route_engine",
+  ///   "crossPipelineMatch":                false
+  /// }
+  /// D2.1 only adds the column; D2.2 introduces the typed Zod
+  /// schema + service that reads / writes it. Older rows stay
+  /// NULL on UPDATE; no behavior change.
+  duplicateRules    Json?    @map("duplicate_rules")
+
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

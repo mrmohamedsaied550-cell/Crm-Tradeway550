@@ -251,6 +251,13 @@ export const ListLeadsQuerySchema = z
      * "in the past" is a single moment.
      */
     hasOverdueFollowup: z.coerce.boolean().optional(),
+    /**
+     * Phase D2 — D2.6: narrow to "returning" leads — i.e. rows whose
+     * `attemptIndex >= 2`. Lets a TL or Ops monitor the cohort of
+     * previously-handled people without scanning the whole list. The
+     * filter doesn't change scope or owner visibility.
+     */
+    returningOnly: z.coerce.boolean().optional(),
     /** Pagination — basic offset/limit; cursor pagination arrives later. */
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),

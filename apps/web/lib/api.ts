@@ -25,6 +25,7 @@ import {
 import type {
   AdminUser,
   AgentCapacityRow,
+  AttemptHistoryResult,
   Captain,
   CaptainDocument,
   CaptainStatus,
@@ -610,6 +611,8 @@ export const leadsApi = {
       createdTo?: string;
       unassigned?: boolean;
       hasOverdueFollowup?: boolean;
+      /** D2.6 — narrow to multi-attempt rows (attemptIndex >= 2). */
+      returningOnly?: boolean;
       limit?: number;
       offset?: number;
     } = {},
@@ -727,6 +730,21 @@ export const leadsApi = {
    */
   routingLog: (id: string): Promise<LeadRoutingLogRow[]> =>
     apiFetch<LeadRoutingLogRow[]>(`/leads/${id}/routing-log`),
+  /**
+   * Phase D2 — D2.5: list every attempt for the contact behind this
+   * lead, scope-filtered. The response carries `outOfScopeCount` so
+   * the UI can surface "N previous attempts are outside your access."
+   * without leaking any of those attempts' fields.
+   */
+  attempts: (id: string): Promise<AttemptHistoryResult> =>
+    apiFetch<AttemptHistoryResult>(`/leads/${id}/attempts`),
+  /**
+   * Phase D2 — D2.6: manual reactivation override. Server requires
+   * `lead.reactivate`; the lead must be closed (won / lost / archived).
+   * Returns the new attempt's id so the caller can redirect.
+   */
+  reactivate: (id: string): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> =>
+    apiFetch(`/leads/${id}/reactivate`, { method: 'POST' }),
   addActivity: (
     id: string,
     input: {
@@ -824,6 +842,14 @@ export const leadsApi = {
   }): Promise<{
     total: number;
     created: number;
+    /** Phase D2 — D2.3: returned only when LEAD_ATTEMPTS_V2 is on
+     *  for the tenant; falls back to 0 on flag-off API responses
+     *  (the field is optional at the wire level for compat). */
+    reactivated?: number;
+    /** Phase D2 — D2.3: ambiguous matches the import sent to the
+     *  WhatsApp review queue. Optional for the same flag-off
+     *  compatibility reason as `reactivated`. */
+    reviewQueued?: number;
     duplicates: number;
     errors: { row: number; reason: string }[];
   }> =>
@@ -1402,10 +1428,45 @@ export interface UpdateTenantSettingsInput {
   distributionRules?: { source: LeadSource; assigneeUserId: string }[];
 }
 
+/**
+ * Phase D2 — D2.4: tenant duplicate / reactivation rules.
+ *
+ * Stored as a JSONB column on `tenant_settings.duplicate_rules` and
+ * exposed via two dedicated endpoints (separate capability from
+ * `tenant.settings.write`). NULL on the column = use the locked
+ * product defaults; the backend always returns a fully-populated
+ * config object so the UI never has to merge with defaults itself.
+ */
+export type OwnershipOnReactivation = 'route_engine' | 'previous_owner' | 'unassigned';
+export type CaptainBehavior = 'always_review';
+export type WonBehavior = 'always_review';
+
+export interface DuplicateRulesConfig {
+  reactivateLostAfterDays: number;
+  reactivateNoAnswerAfterDays: number;
+  reactivateNoAnswerLostReasonCodes: string[];
+  captainBehavior: CaptainBehavior;
+  wonBehavior: WonBehavior;
+  ownershipOnReactivation: OwnershipOnReactivation;
+  crossPipelineMatch: boolean;
+}
+
+/** Every field optional — the panel sends only what changed. */
+export type DuplicateRulesPatch = Partial<DuplicateRulesConfig>;
+
 export const tenantSettingsApi = {
   get: (): Promise<TenantSettingsRow> => apiFetch<TenantSettingsRow>('/tenant/settings'),
   update: (input: UpdateTenantSettingsInput): Promise<TenantSettingsRow> =>
     apiFetch<TenantSettingsRow>('/tenant/settings', { method: 'PATCH', body: input }),
+  /** D2.4 — read the per-tenant duplicate / reactivation rules. */
+  getDuplicateRules: (): Promise<DuplicateRulesConfig> =>
+    apiFetch<DuplicateRulesConfig>('/tenant/settings/duplicate-rules'),
+  /** D2.4 — write the per-tenant duplicate / reactivation rules. */
+  updateDuplicateRules: (input: DuplicateRulesPatch): Promise<DuplicateRulesConfig> =>
+    apiFetch<DuplicateRulesConfig>('/tenant/settings/duplicate-rules', {
+      method: 'PATCH',
+      body: input,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

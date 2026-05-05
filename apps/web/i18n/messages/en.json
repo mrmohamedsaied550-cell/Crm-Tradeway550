@@ -339,7 +339,8 @@
         "unassigned": "Unassigned",
         "createdFrom": "Created from",
         "createdTo": "Created to",
-        "overdueOnly": "Only leads with an overdue follow-up"
+        "overdueOnly": "Only leads with an overdue follow-up",
+        "returningOnly": "Returning leads"
       },
       "openDetail": "Open",
       "unassigned": "Unassigned",
@@ -505,6 +506,46 @@
             "created": "Lead created in stage {stage}",
             "updated": "Lead profile updated"
           }
+        },
+        "attempts": {
+          "title": "Attempts history",
+          "loadFailed": "Couldn't load attempts.",
+          "loading": "Loading attempts…",
+          "attemptN": "Attempt {n} of {total}",
+          "explainBody": "This person has appeared on the funnel before. Read the timeline below before contacting them.",
+          "attemptLabel": "Attempt #{n}",
+          "currentBadge": "Current attempt",
+          "outOfScope": "{n} previous attempts are outside your access.",
+          "openCta": "Open attempt",
+          "unassigned": "Unassigned",
+          "handledPreviously": "Handled previously",
+          "lostReasonLine": "Lost: {reason}",
+          "sourceLine": "Source: {source}",
+          "badge": "Attempt {n}",
+          "lifecycle": {
+            "open": "Open",
+            "won": "Won",
+            "lost": "Lost",
+            "archived": "Archived"
+          },
+          "rule": {
+            "reactivate_lost_aged_out": "Reactivated after Lost cool-off",
+            "reactivate_no_answer_aged_out": "Reactivated after No Answer cool-off",
+            "manual_override": "Manual override",
+            "sent_to_review": "Sent to review",
+            "unknown": "Reactivated"
+          }
+        },
+        "reactivate": {
+          "action": "Reactivate",
+          "title": "Create a new attempt?",
+          "body": "This will create a new lead attempt for {name} and keep the current lead history unchanged.",
+          "warning": "Use this only when management intentionally wants to reopen this person for a new acquisition attempt.",
+          "acknowledge": "I understand this will create a new attempt.",
+          "confirm": "Reactivate",
+          "successToast": "New attempt created.",
+          "errorAlreadyOpen": "This lead is still open. Reactivation is reserved for closed (won / lost / archived) leads.",
+          "errorForbidden": "You don't have permission to reactivate leads."
         }
       },
       "drawer": {
@@ -1155,7 +1196,17 @@
       "subtitle": "Recent admin actions across leads, follow-ups, bonuses, competitions, and WhatsApp handovers.",
       "emptyTitle": "No audit events yet",
       "emptyBody": "Mutations to leads, follow-ups, bonuses, competitions, and WhatsApp handovers will appear here.",
-      "actorSystem": "system"
+      "emptyFilteredTitle": "No matching events",
+      "emptyFilteredBody": "Nothing matches the current filter in the most recent events. Clear the filter to see the full stream.",
+      "actorSystem": "system",
+      "filterLabel": "Filter:",
+      "chips": {
+        "all": "All events",
+        "lead.duplicate_decision": "Duplicate decisions",
+        "lead.reactivated": "Manual reactivations",
+        "tenant.duplicate_rules.update": "Duplicate-rule changes",
+        "whatsapp.review.resolved": "Review resolutions"
+      }
     },
     "reports": {
       "title": "Reports",
@@ -1372,6 +1423,9 @@
           "source": "Source",
           "status": "Status",
           "assignedAt": "Assigned at"
+        },
+        "attempts": {
+          "count": "{n} attempts on this contact"
         }
       },
       "addNote": {
@@ -1514,6 +1568,73 @@
         "canRead": "Read",
         "canWrite": "Write",
         "sensitive": "Sensitive"
+      }
+    },
+    "duplicateRules": {
+      "title": "Duplicate / reactivation rules",
+      "subtitle": "When a returning person matches an existing lead or captain, these rules decide whether the system reactivates, queues for review, or rejects.",
+      "loadFailed": "Couldn't load duplicate rules.",
+      "saveFailed": "Couldn't save duplicate rules.",
+      "saved": "Duplicate rules updated.",
+      "saveCta": "Save changes",
+      "resetCta": "Reset to defaults",
+      "noAccess": "You don't have access to tenant settings.",
+      "readOnlyBanner": "You can view these rules but cannot edit them.",
+      "sections": {
+        "timing": "Reactivation timing",
+        "review": "Review policies",
+        "ownership": "Ownership rules",
+        "scope": "Matching scope"
+      },
+      "lostDays": {
+        "label": "Reactivate Lost leads after (days)",
+        "helper": "Lost leads older than this can become a new attempt if the same person returns."
+      },
+      "noAnswerDays": {
+        "label": "Reactivate No Answer leads after (days)",
+        "helper": "No Answer leads can return sooner because they were not a confirmed rejection."
+      },
+      "captain": {
+        "label": "Active captains always go to review",
+        "helper": "Active captains may be asking for support, not trying to register again.",
+        "lockedHint": "Locked policy. The active-captain rule can't be auto-bypassed today."
+      },
+      "won": {
+        "label": "Won leads always go to review",
+        "helper": "Won leads may already be captains or completed activation, so a human should decide.",
+        "lockedHint": "Locked policy. Won leads always require manual review."
+      },
+      "ownership": {
+        "intro": "Choose who owns a returning lead's new attempt.",
+        "options": {
+          "route_engine": {
+            "label": "Route using distribution rules",
+            "helper": "Best for fair capacity-based assignment."
+          },
+          "previous_owner": {
+            "label": "Previous owner",
+            "helper": "Send returning leads back to the last owner."
+          },
+          "unassigned": {
+            "label": "Unassigned",
+            "helper": "Leaves the attempt unassigned for manual review."
+          }
+        }
+      },
+      "crossPipeline": {
+        "label": "Match duplicates across pipelines",
+        "helper": "When off, a lead in another company / country / pipeline will not block a new attempt.",
+        "warning": "This may block new attempts across different companies or countries."
+      },
+      "confirmSave": {
+        "title": "Apply duplicate rules",
+        "body": "These rules affect new manual leads, imports, Meta leads, and WhatsApp inbound. Continue?",
+        "cta": "Apply rules"
+      },
+      "confirmReset": {
+        "title": "Reset to defaults",
+        "body": "All duplicate / reactivation rules will revert to the platform-wide defaults. This is logged in the audit trail.",
+        "cta": "Reset to defaults"
       }
     }
   },

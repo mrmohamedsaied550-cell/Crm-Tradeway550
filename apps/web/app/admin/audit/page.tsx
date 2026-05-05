@@ -9,8 +9,26 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
+import { cn } from '@/lib/utils';
 import { ApiError, auditApi, usersApi, type AuditRow } from '@/lib/api';
 import type { AdminUser } from '@/lib/api-types';
+
+/**
+ * Phase D2 — D2.6: filter chips for the four D2 audit verbs the
+ * Operations / Super Admin team uses to inspect duplicate decisions
+ * and manual reactivations. Selecting a chip narrows the local view
+ * to rows whose `action` matches; the API itself still returns the
+ * full stream — this is a client-side filter intentionally, so a TL
+ * can flip between "everything in the last 200 events" and "just the
+ * D2 verbs" without re-fetching.
+ */
+const D2_AUDIT_ACTIONS = [
+  'lead.duplicate_decision',
+  'lead.reactivated',
+  'tenant.duplicate_rules.update',
+  'whatsapp.review.resolved',
+] as const;
+type D2AuditAction = (typeof D2_AUDIT_ACTIONS)[number];
 
 /**
  * /admin/audit (C40) — unified audit stream.
@@ -45,6 +63,9 @@ export default function AdminAuditPage(): JSX.Element {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // Phase D2 — D2.6: chip-based filter for the D2 audit verbs. `null`
+  // disables the filter; a chip code shows only rows of that action.
+  const [actionFilter, setActionFilter] = useState<D2AuditAction | null>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -71,6 +92,13 @@ export default function AdminAuditPage(): JSX.Element {
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
+  // Apply the chip filter client-side. The API returns the unified
+  // stream; this just narrows the rendered list.
+  const visibleRows = useMemo(
+    () => (actionFilter ? rows.filter((r) => r.action === actionFilter) : rows),
+    [rows, actionFilter],
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -94,20 +122,53 @@ export default function AdminAuditPage(): JSX.Element {
         </Notice>
       ) : null}
 
+      {/* Phase D2 — D2.6: chip filter for D2 audit verbs. The chip is
+          a toggle; clicking the active one clears the filter. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-ink-tertiary">{t('filterLabel')}</span>
+        <button
+          type="button"
+          onClick={() => setActionFilter(null)}
+          className={cn(
+            'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+            actionFilter === null
+              ? 'border-brand-600 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-surface',
+          )}
+        >
+          {t('chips.all')}
+        </button>
+        {D2_AUDIT_ACTIONS.map((code) => (
+          <button
+            key={code}
+            type="button"
+            onClick={() => setActionFilter(actionFilter === code ? null : code)}
+            className={cn(
+              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+              actionFilter === code
+                ? 'border-brand-600 bg-brand-50 text-brand-700'
+                : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-surface',
+            )}
+          >
+            {t(`chips.${code}` as 'chips.lead.duplicate_decision')}
+          </button>
+        ))}
+      </div>
+
       {loading && rows.length === 0 ? (
         <div className="flex items-center justify-center gap-2 rounded-lg border border-surface-border bg-surface-card p-8 text-sm text-ink-secondary">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           {tCommon('loading')}
         </div>
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <EmptyState
           icon={<ScrollText className="h-7 w-7" aria-hidden="true" />}
-          title={t('emptyTitle')}
-          body={t('emptyBody')}
+          title={actionFilter ? t('emptyFilteredTitle') : t('emptyTitle')}
+          body={actionFilter ? t('emptyFilteredBody') : t('emptyBody')}
         />
       ) : (
         <ul className="divide-y divide-surface-border rounded-lg border border-surface-border bg-surface-card shadow-card">
-          {rows.map((r) => {
+          {visibleRows.map((r) => {
             const u = r.actorUserId ? userById.get(r.actorUserId) : null;
             const meta = summarisePayload(r.payload);
             return (

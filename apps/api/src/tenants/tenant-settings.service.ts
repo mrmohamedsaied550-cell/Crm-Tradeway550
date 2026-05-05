@@ -3,6 +3,13 @@ import type { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { getSlaMinutes } from '../crm/sla.config';
+import {
+  DEFAULT_DUPLICATE_RULES,
+  mergeWithDefaults,
+  parseDuplicateRulesJson,
+  type DuplicateRulesConfig,
+  type DuplicateRulesPatch,
+} from '../duplicates/duplicate-rules.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from './tenant-context';
 import type { DistributionRule, UpdateTenantSettingsDto } from './tenant-settings.dto';
@@ -202,6 +209,104 @@ export class TenantSettingsService {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  /**
+   * Phase D2 — D2.4: read the per-tenant duplicate / reactivation
+   * rules. Returns the locked product defaults when the JSON column
+   * is NULL or malformed. Tolerant of an absent settings row (synth
+   * fallback returns defaults).
+   */
+  async getDuplicateRules(): Promise<DuplicateRulesConfig> {
+    const tenantId = requireTenantId();
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.tenantSettings.findUnique({
+        where: { tenantId },
+        select: { duplicateRules: true },
+      }),
+    );
+    if (!row) return { ...DEFAULT_DUPLICATE_RULES };
+    return parseDuplicateRulesJson(row.duplicateRules ?? null);
+  }
+
+  /**
+   * Phase D2 — D2.4: write the per-tenant duplicate / reactivation
+   * rules. The patch is partial — every key in DEFAULT_DUPLICATE_RULES
+   * is optional in the input. Missing keys keep their current value
+   * (or the default if the row is fresh).
+   *
+   * Audit: writes `tenant.duplicate_rules.update` with `before`,
+   * `after`, and `changedFields` payload — diff-friendly so an Ops
+   * Manager can later answer "what did Account Manager X change last
+   * week?" via /admin/audit.
+   */
+  async updateDuplicateRules(
+    patch: DuplicateRulesPatch,
+    actorUserId: string | null,
+  ): Promise<DuplicateRulesConfig> {
+    const tenantId = requireTenantId();
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Read current first so the audit payload can record both
+      // before + after. The row may not exist yet — use an upsert.
+      const current = await tx.tenantSettings.findUnique({
+        where: { tenantId },
+        select: { duplicateRules: true },
+      });
+      const before: DuplicateRulesConfig = current
+        ? parseDuplicateRulesJson(current.duplicateRules ?? null)
+        : { ...DEFAULT_DUPLICATE_RULES };
+      // The merge preserves any value the operator didn't touch in
+      // this PATCH — including values they previously set explicitly.
+      // Without this, partial PATCHes would silently revert other
+      // fields to the locked defaults.
+      const merged: DuplicateRulesPatch = {
+        reactivateLostAfterDays: patch.reactivateLostAfterDays ?? before.reactivateLostAfterDays,
+        reactivateNoAnswerAfterDays:
+          patch.reactivateNoAnswerAfterDays ?? before.reactivateNoAnswerAfterDays,
+        reactivateNoAnswerLostReasonCodes: patch.reactivateNoAnswerLostReasonCodes ?? [
+          ...before.reactivateNoAnswerLostReasonCodes,
+        ],
+        captainBehavior: patch.captainBehavior ?? before.captainBehavior,
+        wonBehavior: patch.wonBehavior ?? before.wonBehavior,
+        ownershipOnReactivation: patch.ownershipOnReactivation ?? before.ownershipOnReactivation,
+        crossPipelineMatch: patch.crossPipelineMatch ?? before.crossPipelineMatch,
+      };
+      const after = mergeWithDefaults(merged);
+
+      // Compute changed-fields list for the audit payload. Only
+      // top-level keys that actually moved are recorded; arrays are
+      // compared by JSON to keep the comparison cheap.
+      const changedFields = (Object.keys(after) as (keyof DuplicateRulesConfig)[]).filter((k) => {
+        const a = (after as unknown as Record<string, unknown>)[k];
+        const b = (before as unknown as Record<string, unknown>)[k];
+        return JSON.stringify(a) !== JSON.stringify(b);
+      });
+
+      await tx.tenantSettings.upsert({
+        where: { tenantId },
+        update: {
+          duplicateRules: after as unknown as Prisma.InputJsonValue,
+        },
+        create: {
+          tenantId,
+          duplicateRules: after as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'tenant.duplicate_rules.update',
+        entityType: 'tenant_settings',
+        entityId: tenantId,
+        actorUserId,
+        payload: {
+          before,
+          after,
+          changedFields,
+        } as unknown as Prisma.InputJsonValue,
+      });
+
+      return after;
+    });
   }
 
   /** Keep the synthesised row's shape identical to a real row. */
