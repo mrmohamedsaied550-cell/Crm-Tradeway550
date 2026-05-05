@@ -82,7 +82,10 @@ export function AttemptsHistoryCard({ leadId }: { leadId: string }): JSX.Element
   const currentIndex = current?.attemptIndex ?? 1;
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 shadow-sm">
+    <section
+      id="attempts"
+      className="flex flex-col gap-3 scroll-mt-20 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 shadow-sm"
+    >
       <header className="flex items-center justify-between gap-2">
         <h3 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
           <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -133,6 +136,13 @@ function AttemptRow({
       : attempt.lostReason.labelEn
     : null;
 
+  // Phase D2 — D2.6: when the API redacted assignedTo on a predecessor
+  // (sales agent without `lead.assign`), show the neutral "Handled
+  // previously" line instead of the assignee name. The current row
+  // keeps the real owner so the agent can always see their own
+  // assignment.
+  const ownerHidden = !isCurrent && !attempt.assignedTo;
+
   return (
     <li
       className={cn(
@@ -167,6 +177,11 @@ function AttemptRow({
           <span className="inline-flex items-center gap-1">
             <UserCircle2 className="h-3 w-3 text-ink-tertiary" aria-hidden="true" />
             {attempt.assignedTo.name}
+          </span>
+        ) : ownerHidden ? (
+          <span className="inline-flex items-center gap-1 italic text-ink-tertiary">
+            <UserCircle2 className="h-3 w-3" aria-hidden="true" />
+            {t('handledPreviously')}
           </span>
         ) : (
           <span className="italic text-ink-tertiary">{t('unassigned')}</span>

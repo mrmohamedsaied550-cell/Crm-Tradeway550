@@ -244,6 +244,26 @@ export class LeadsController {
     return this.leads.listActivities(id, claimsToScope(user));
   }
 
+  /**
+   * Phase D2 — D2.6: manual reactivation override.
+   *
+   * Forces a fresh attempt for a closed predecessor. Requires
+   * `lead.reactivate` (granted to ops_manager / account_manager /
+   * super_admin by default — sales agents and TLs cannot trigger).
+   *
+   * Returns the new attempt's id + index so the UI can redirect the
+   * operator to the new lead detail page on success. Emits a
+   * `lead.reactivated` audit verb in addition to the standard
+   * `lead.duplicate_decision` row.
+   */
+  @Post('leads/:id/reactivate')
+  @RequireCapability('lead.reactivate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Manually reactivate a closed lead (creates a new attempt)' })
+  reactivate(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
+    return this.leads.manualReactivate(id, user.sub, claimsToScope(user));
+  }
+
   @Post('leads/:id/activities')
   @RequireCapability('lead.activity.write')
   @ApiOperation({ summary: 'Append a note or call activity' })

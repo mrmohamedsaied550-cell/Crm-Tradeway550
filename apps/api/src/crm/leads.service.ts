@@ -784,7 +784,7 @@ export class LeadsService {
           scopeWhere: null,
         });
         return {
-          attempts: single.attempts,
+          attempts: this.applyOwnerVisibilityToAttempts(single.attempts, leadId, false),
           totalAttempts: single.attempts.length,
           outOfScopeCount: 0,
           currentLeadId: leadId,
@@ -792,6 +792,12 @@ export class LeadsService {
       });
     }
 
+    // Phase D2 — D2.6: previous-owner visibility gate. Sales agents
+    // (no `lead.assign` capability) must not see the names of agents
+    // who handled the predecessors. The CURRENT row keeps its owner
+    // intact so the agent still sees their own assignment; only the
+    // predecessor rows are stripped. TL+ / ops keep full history.
+    const canSeePreviousOwner = await this.userCanSeePreviousOwner(userClaims);
     const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
       const totalAttempts = await tx.lead.count({
@@ -804,12 +810,54 @@ export class LeadsService {
         scopeWhere,
       });
       return {
-        attempts: visible.attempts,
+        attempts: this.applyOwnerVisibilityToAttempts(
+          visible.attempts,
+          leadId,
+          canSeePreviousOwner,
+        ),
         totalAttempts,
         outOfScopeCount: Math.max(0, totalAttempts - visible.attempts.length),
         currentLeadId: leadId,
       };
     });
+  }
+
+  /** Phase D2 — D2.6: previous-owner privilege check.
+   *  Returns true when the role carries `lead.assign` (TL+ / Account
+   *  Manager / Ops / Super Admin). Pure DB read, RLS-pinned to the
+   *  current tenant. Falls back to `false` (conservative) when the
+   *  role lookup fails so a transient error never leaks an owner. */
+  private async userCanSeePreviousOwner(userClaims: ScopeUserClaims): Promise<boolean> {
+    try {
+      const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
+        tx.role.findUnique({
+          where: { id: userClaims.roleId },
+          include: {
+            capabilities: { include: { capability: { select: { code: true } } } },
+          },
+        }),
+      );
+      const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
+      return codes.includes('lead.assign');
+    } catch {
+      return false;
+    }
+  }
+
+  /** Phase D2 — D2.6: strip `assignedTo` / `assignedToId` from every
+   *  PREDECESSOR row when the caller cannot see previous owners. The
+   *  row matching `currentLeadId` is left intact — the agent must still
+   *  see their own assignment. Always preserves audit data server-
+   *  side; this is purely a response-shape redaction. */
+  private applyOwnerVisibilityToAttempts(
+    attempts: AttemptHistoryRow[],
+    currentLeadId: string,
+    canSeePreviousOwner: boolean,
+  ): AttemptHistoryRow[] {
+    if (canSeePreviousOwner) return attempts;
+    return attempts.map((a) =>
+      a.id === currentLeadId ? a : { ...a, assignedTo: null, assignedToId: null },
+    );
   }
 
   /** Helper for `listAttemptsForLeadInScope` — runs inside the
@@ -920,6 +968,10 @@ export class LeadsService {
       ...(query.source && { source: query.source }),
       ...(query.slaStatus && { slaStatus: query.slaStatus }),
       ...(query.hasOverdueFollowup && { nextActionDueAt: { lt: new Date() } }),
+      // Phase D2 — D2.6: returningOnly narrows the list to multi-
+      // attempt rows. Available on the table view only — Kanban
+      // (listByStage) wouldn't fit a "returning leads" lane cleanly.
+      ...(query.returningOnly && { attemptIndex: { gte: 2 } }),
       ...(createdAt && { createdAt }),
       ...(query.q && {
         OR: [
@@ -2154,6 +2206,230 @@ export class LeadsService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Phase D2 — D2.6: manual reactivation override.
+   *
+   * Forces a fresh attempt for a CLOSED predecessor lead even when the
+   * automatic engine would have queued / rejected. The new attempt is
+   * always created with `ruleApplied = 'manual_override'`; ownership
+   * follows the tenant's `duplicateRules.ownershipOnReactivation`
+   * (route_engine | previous_owner | unassigned).
+   *
+   * Safety:
+   *   - The caller must already have lead.reactivate (gated at the
+   *     controller); this method assumes the capability check passed.
+   *   - Source lead must be in scope — out-of-scope sources surface
+   *     as 404 (`lead.not_found`) via findByIdInScopeOrThrow.
+   *   - Source lead must NOT be `open`. Reactivating an open lead is
+   *     never the intent (the agent would just keep working it); we
+   *     reject with `lead.reactivate.already_open` so the UI can
+   *     surface a clear message.
+   *
+   * Side-effects (one transaction):
+   *   - Inserts the new Lead row with the chain fields populated.
+   *   - Appends a `system` LeadActivity (`event: 'reactivation'`).
+   *   - Writes a DuplicateDecisionLog row + `lead.duplicate_decision`
+   *     audit verb via writeDecisionLogInTx.
+   *   - Writes a `lead.reactivated` audit verb so the audit page can
+   *     filter manual reactivations independently of the duplicate
+   *     decisions stream.
+   */
+  async manualReactivate(
+    sourceLeadId: string,
+    actorUserId: string,
+    userClaims: ScopeUserClaims,
+  ): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> {
+    if (!this.duplicateDecision) {
+      throw new BadRequestException({
+        code: 'lead.reactivate.unavailable',
+        message: 'Manual reactivation is not available in this deployment',
+      });
+    }
+    const tenantId = requireTenantId();
+    // Visibility gate — out-of-scope source surfaces as 404.
+    const source = await this.findByIdInScopeOrThrow(sourceLeadId, userClaims);
+    if (source.lifecycleState === 'open') {
+      throw new ConflictException({
+        code: 'lead.reactivate.already_open',
+        message:
+          'This lead is still open. Manual reactivation is reserved for closed (won / lost / archived) leads.',
+      });
+    }
+
+    const settings = await this.tenantSettings.getCurrent();
+    const rules = await this.tenantSettings.getDuplicateRules();
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Resolve a contact for the chain. Legacy / manual sources may
+      // lack a contactId; mint one here so the new attempt has a chain
+      // anchor for the next reactivation.
+      let contactId = source.contactId;
+      if (!contactId) {
+        const contact = await tx.contact.upsert({
+          where: { tenantId_phone: { tenantId, phone: source.phone } },
+          update: {},
+          create: {
+            tenantId,
+            phone: source.phone,
+            originalPhone: source.phone,
+            displayName: source.name,
+          },
+          select: { id: true },
+        });
+        contactId = contact.id;
+        await tx.lead.update({ where: { id: source.id }, data: { contactId } });
+      }
+
+      // Pipeline + entry stage — same fallback chain as create() so
+      // the new attempt always lands on a non-terminal stage of the
+      // company × country pipeline (or the tenant default).
+      const pipeline = await this.pipeline.resolveForLeadInTx(tx, {
+        companyId: source.companyId,
+        countryId: source.countryId,
+      });
+      const stage = await tx.pipelineStage.findFirst({
+        where: { pipelineId: pipeline.id, isTerminal: false },
+        orderBy: { order: 'asc' },
+        select: { id: true, code: true },
+      });
+      if (!stage) {
+        throw new BadRequestException({
+          code: 'pipeline.no_entry_stage',
+          message: `Pipeline ${pipeline.id} has no non-terminal entry stage`,
+        });
+      }
+
+      // Owner per rules.ownershipOnReactivation. 'previous_owner' falls
+      // back to the route engine when the predecessor was unassigned;
+      // 'unassigned' produces a queue lead (TL pickup); 'route_engine'
+      // is intentionally null here because the route engine isn't on
+      // the manual-reactivate path — TLs / agents pick up from the
+      // queue, mirroring the rest of the manual create surface.
+      const ownerId =
+        rules.ownershipOnReactivation === 'previous_owner'
+          ? source.assignedToId
+          : rules.ownershipOnReactivation === 'unassigned'
+            ? null
+            : null;
+
+      const now = new Date();
+      const slaDueAt = this.sla.computeDueAt(now, settings.slaMinutes);
+
+      const created = await tx.lead.create({
+        data: {
+          tenantId,
+          name: source.name,
+          phone: source.phone,
+          email: source.email,
+          source: source.source,
+          companyId: source.companyId,
+          countryId: source.countryId,
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          lifecycleState: 'open',
+          assignedToId: ownerId,
+          createdById: actorUserId,
+          slaDueAt,
+          slaStatus: 'active',
+          contactId,
+          attribution: (source.attribution ?? Prisma.JsonNull) as
+            | Prisma.InputJsonValue
+            | typeof Prisma.JsonNull,
+          attemptIndex: source.attemptIndex + 1,
+          previousLeadId: source.id,
+          reactivatedAt: now,
+          reactivatedById: actorUserId,
+          reactivationRule: 'manual_override',
+        },
+        select: { id: true, attemptIndex: true },
+      });
+
+      await this.appendActivity(tx, {
+        tenantId,
+        leadId: created.id,
+        type: 'system',
+        actionSource: 'lead',
+        body: `Manual reactivation: created attempt #${created.attemptIndex} from previous attempt #${source.attemptIndex}.`,
+        payload: {
+          event: 'reactivation',
+          previousLeadId: source.id,
+          previousAttemptIndex: source.attemptIndex,
+          ruleApplied: 'manual_override',
+          attemptIndex: created.attemptIndex,
+          trigger: 'manual_override',
+          actorUserId,
+        },
+        createdById: actorUserId,
+      });
+
+      // Synthesize a DuplicateDecision so the audit/log writer treats
+      // this exactly like an automatic reactivation. The engine's
+      // own `apply()` is intentionally bypassed — manual override
+      // doesn't run the matcher; we already know the predecessor.
+      const synthetic: import('../duplicates/duplicate-rules.service').DuplicateDecision = {
+        decision: 'create_new_attempt',
+        ruleApplied: 'manual_override',
+        confidence: 'high',
+        reason: `Manual reactivation override by user ${actorUserId}`,
+        previousLeadId: source.id,
+        matchedOpenLeadId: null,
+        matchedCaptainId: null,
+        matchedLeadIds: [source.id],
+        recommendedOwnerStrategy: rules.ownershipOnReactivation,
+      };
+      await this.duplicateDecision!.writeDecisionLogInTx(
+        tx,
+        tenantId,
+        synthetic,
+        {
+          phone: source.phone,
+          contactId,
+          context: {
+            trigger: 'manual_override',
+            companyId: source.companyId,
+            countryId: source.countryId,
+            pipelineId: pipeline.id,
+            actorUserId,
+          },
+        },
+        created.id,
+        null,
+      );
+
+      // Dedicated `lead.reactivated` audit verb so audit-page filter
+      // chips can isolate manual reactivations from the broader
+      // `lead.duplicate_decision` stream. Both rows live alongside.
+      if (this.audit) {
+        await this.audit.writeInTx(tx, tenantId, {
+          action: 'lead.reactivated',
+          entityType: 'lead',
+          entityId: created.id,
+          actorUserId,
+          payload: {
+            previousLeadId: source.id,
+            previousAttemptIndex: source.attemptIndex,
+            attemptIndex: created.attemptIndex,
+            ruleApplied: 'manual_override',
+            ownershipStrategy: rules.ownershipOnReactivation,
+          } as unknown as Prisma.InputJsonValue,
+        });
+      }
+
+      // Keep Contact.hasOpenLead in sync — the new attempt is open
+      // by definition.
+      await tx.contact.update({
+        where: { id: contactId },
+        data: { hasOpenLead: true, lastSeenAt: now },
+      });
+
+      return {
+        id: created.id,
+        attemptIndex: created.attemptIndex,
+        previousLeadId: source.id,
+      };
+    });
   }
 
   /**

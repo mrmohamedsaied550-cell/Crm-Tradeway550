@@ -611,6 +611,8 @@ export const leadsApi = {
       createdTo?: string;
       unassigned?: boolean;
       hasOverdueFollowup?: boolean;
+      /** D2.6 — narrow to multi-attempt rows (attemptIndex >= 2). */
+      returningOnly?: boolean;
       limit?: number;
       offset?: number;
     } = {},
@@ -736,6 +738,13 @@ export const leadsApi = {
    */
   attempts: (id: string): Promise<AttemptHistoryResult> =>
     apiFetch<AttemptHistoryResult>(`/leads/${id}/attempts`),
+  /**
+   * Phase D2 — D2.6: manual reactivation override. Server requires
+   * `lead.reactivate`; the lead must be closed (won / lost / archived).
+   * Returns the new attempt's id so the caller can redirect.
+   */
+  reactivate: (id: string): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> =>
+    apiFetch(`/leads/${id}/reactivate`, { method: 'POST' }),
   addActivity: (
     id: string,
     input: {

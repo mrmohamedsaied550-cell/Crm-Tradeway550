@@ -339,7 +339,8 @@
         "unassigned": "Unassigned",
         "createdFrom": "Created from",
         "createdTo": "Created to",
-        "overdueOnly": "Only leads with an overdue follow-up"
+        "overdueOnly": "Only leads with an overdue follow-up",
+        "returningOnly": "Returning leads"
       },
       "openDetail": "Open",
       "unassigned": "Unassigned",
@@ -517,6 +518,7 @@
           "outOfScope": "{n} previous attempts are outside your access.",
           "openCta": "Open attempt",
           "unassigned": "Unassigned",
+          "handledPreviously": "Handled previously",
           "lostReasonLine": "Lost: {reason}",
           "sourceLine": "Source: {source}",
           "badge": "Attempt {n}",
@@ -533,6 +535,17 @@
             "sent_to_review": "Sent to review",
             "unknown": "Reactivated"
           }
+        },
+        "reactivate": {
+          "action": "Reactivate",
+          "title": "Create a new attempt?",
+          "body": "This will create a new lead attempt for {name} and keep the current lead history unchanged.",
+          "warning": "Use this only when management intentionally wants to reopen this person for a new acquisition attempt.",
+          "acknowledge": "I understand this will create a new attempt.",
+          "confirm": "Reactivate",
+          "successToast": "New attempt created.",
+          "errorAlreadyOpen": "This lead is still open. Reactivation is reserved for closed (won / lost / archived) leads.",
+          "errorForbidden": "You don't have permission to reactivate leads."
         }
       },
       "drawer": {
@@ -1183,7 +1196,17 @@
       "subtitle": "Recent admin actions across leads, follow-ups, bonuses, competitions, and WhatsApp handovers.",
       "emptyTitle": "No audit events yet",
       "emptyBody": "Mutations to leads, follow-ups, bonuses, competitions, and WhatsApp handovers will appear here.",
-      "actorSystem": "system"
+      "emptyFilteredTitle": "No matching events",
+      "emptyFilteredBody": "Nothing matches the current filter in the most recent events. Clear the filter to see the full stream.",
+      "actorSystem": "system",
+      "filterLabel": "Filter:",
+      "chips": {
+        "all": "All events",
+        "lead.duplicate_decision": "Duplicate decisions",
+        "lead.reactivated": "Manual reactivations",
+        "tenant.duplicate_rules.update": "Duplicate-rule changes",
+        "whatsapp.review.resolved": "Review resolutions"
+      }
     },
     "reports": {
       "title": "Reports",

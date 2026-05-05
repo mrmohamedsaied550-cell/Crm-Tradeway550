@@ -13,6 +13,7 @@ import {
   Mail,
   Phone,
   PhoneCall,
+  Repeat2,
   StickyNote,
   Trophy,
   UserCog,
@@ -29,6 +30,7 @@ import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
+import { ReactivateLeadModal } from '@/components/admin/reactivate-lead-modal';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { AttemptsHistoryCard } from '@/components/admin/lead-detail/attempts-history-card';
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
@@ -61,6 +63,7 @@ import type {
   SlaStatus,
   Team,
 } from '@/lib/api-types';
+import { hasCapability } from '@/lib/auth';
 import { readListContext, type NavigatorPosition } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
 
@@ -162,6 +165,11 @@ export default function LeadDetailPage(): JSX.Element {
   // Phase B — B1: + Follow-up modal + snooze modal state.
   const [followUpModalOpen, setFollowUpModalOpen] = useState<boolean>(false);
   const [snoozeFor, setSnoozeFor] = useState<LeadFollowUp | null>(null);
+
+  // Phase D2 — D2.6: manual reactivation modal state.
+  const [reactivateOpen, setReactivateOpen] = useState<boolean>(false);
+  const [reactivateError, setReactivateError] = useState<string | null>(null);
+  const [reactivateSubmitting, setReactivateSubmitting] = useState<boolean>(false);
 
   // Tick once a minute so relative-time labels stay fresh in the
   // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
@@ -486,6 +494,35 @@ export default function LeadDetailPage(): JSX.Element {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setActionPending(null);
+    }
+  }
+
+  // Phase D2 — D2.6: manual reactivation. Capability + closed-state
+  // gating happens in the CTA's render guards; here we just call the
+  // endpoint and route to the new attempt's detail page on success.
+  async function onReactivateConfirm(): Promise<void> {
+    if (!lead) return;
+    setReactivateSubmitting(true);
+    setReactivateError(null);
+    try {
+      const result = await leadsApi.reactivate(lead.id);
+      toast({ tone: 'success', title: tDetail('reactivate.successToast') });
+      setReactivateOpen(false);
+      router.push(`/admin/leads/${result.id}#attempts`);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.code === 'lead.reactivate.already_open') {
+          setReactivateError(tDetail('reactivate.errorAlreadyOpen'));
+        } else if (err.code === 'auth.forbidden') {
+          setReactivateError(tDetail('reactivate.errorForbidden'));
+        } else {
+          setReactivateError(err.message);
+        }
+      } else {
+        setReactivateError(String(err));
+      }
+    } finally {
+      setReactivateSubmitting(false);
     }
   }
 
@@ -899,6 +936,24 @@ export default function LeadDetailPage(): JSX.Element {
               {isLost ? (
                 <p className="text-xs text-ink-tertiary">{tDetail('cantConvertLost')}</p>
               ) : null}
+
+              {/* Phase D2 — D2.6: manual reactivation override. Only
+                  surfaced when the user holds `lead.reactivate` AND
+                  the lead is closed (won / lost / archived). The
+                  checkbox-gated modal handles the confirmation. */}
+              {hasCapability('lead.reactivate') && lead.lifecycleState !== 'open' ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setReactivateError(null);
+                    setReactivateOpen(true);
+                  }}
+                  size="sm"
+                >
+                  <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tDetail('reactivate.action')}
+                </Button>
+              ) : null}
             </div>
           </section>
         </aside>
@@ -934,6 +989,16 @@ export default function LeadDetailPage(): JSX.Element {
         )}
         onConfirm={onSnoozeConfirm}
         onClose={() => setSnoozeFor(null)}
+      />
+
+      {/* Phase D2 — D2.6: manual reactivation confirmation. */}
+      <ReactivateLeadModal
+        open={reactivateOpen}
+        leadName={lead.name}
+        submitting={reactivateSubmitting}
+        error={reactivateError}
+        onConfirm={() => void onReactivateConfirm()}
+        onClose={() => setReactivateOpen(false)}
       />
     </div>
   );
