@@ -493,6 +493,7 @@
             "assignment": "إسناد",
             "auto_assignment": "إسناد تلقائي",
             "sla_breach": "خرق المستوى",
+            "sla_threshold_crossed": "حد المستوى",
             "system": "نظام"
           },
           "summary": {

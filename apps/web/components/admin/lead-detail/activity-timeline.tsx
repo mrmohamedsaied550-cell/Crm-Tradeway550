@@ -6,6 +6,7 @@ import {
   CalendarPlus,
   Check,
   Clock,
+  Gauge,
   Phone,
   Settings,
   StickyNote,
@@ -59,6 +60,12 @@ function activityTone(type: LeadActivityType): Tone {
     case 'note':
     case 'call':
       return 'healthy';
+    // Phase D3 — D3.2: threshold transitions render as warning by
+    // default. Per-bucket tone (info for t75 / warning for t100 /
+    // breach for t150+) is D3.7 polish — keeping it simple here so
+    // D3.2 stays a backend-heavy commit.
+    case 'sla_threshold_crossed':
+      return 'warning';
     default:
       return 'neutral';
   }
@@ -71,6 +78,9 @@ const ACTIVITY_ICON: Record<LeadActivityType, React.ComponentType<{ className?: 
   assignment: UserPlus,
   auto_assignment: Users,
   sla_breach: TriangleAlert,
+  // Phase D3 — D3.2: dial-style icon distinguishes threshold-crossed
+  // events from full breaches. The full ladder visual lands in D3.7.
+  sla_threshold_crossed: Gauge,
   system: Settings,
 };
 

@@ -8,6 +8,22 @@ import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { AssignmentService } from './assignment.service';
 import { getSlaMinutes } from './sla.config';
+import { SlaThresholdsService, type SlaThreshold } from './sla-thresholds.service';
+
+/**
+ * Phase D3 — D3.2: shape returned by `recomputeThreshold` when the
+ * threshold bucket changes. Returns NULL on no-op (paused / closed /
+ * already-on-this-bucket).
+ */
+export interface ThresholdTransition {
+  leadId: string;
+  from: SlaThreshold;
+  to: SlaThreshold;
+  ratio: number;
+  elapsedMinutes: number;
+  budgetMinutes: number;
+  slaDueAt: Date;
+}
 
 export type SlaStatus = 'active' | 'breached' | 'paused';
 
@@ -65,6 +81,15 @@ export class SlaService {
      * AssignmentService — same behaviour as pre-cutover.
      */
     @Optional() private readonly distribution?: DistributionService,
+    /**
+     * Phase D3 — D3.2: pure threshold engine. @Optional so existing
+     * test harnesses that hand-construct SlaService without it keep
+     * compiling. When undefined, `recomputeThreshold` is a no-op
+     * (returns null) — the legacy binary breach path stays the
+     * only SLA behaviour. Production wiring (CrmModule) always
+     * provides it.
+     */
+    @Optional() private readonly thresholds?: SlaThresholdsService,
   ) {}
 
   // ───────────────────────────────────────────────────────────────────────
@@ -132,6 +157,213 @@ export class SlaService {
       where: { id: leadId },
       data: { slaDueAt: null, slaStatus: 'paused' },
     });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Phase D3 — D3.2: SLA threshold engine
+  //
+  // Pure read fallback for the per-stage / tenant-wide budget, plus a
+  // recompute method the scheduler tick (and future on-demand callers)
+  // use to keep `lead.sla_threshold` + `lead.sla_threshold_at` honest.
+  //
+  // Design choices:
+  //   - The pure math lives in SlaThresholdsService (no DB calls).
+  //     This file only persists the result + emits an activity row
+  //     on transitions.
+  //   - When the threshold doesn't change, `recomputeThreshold`
+  //     returns null and writes nothing — the scheduler can scan the
+  //     entire active fleet every minute without producing churn.
+  //   - When it DOES change, we update in a single tx: the lead row
+  //     (slaThreshold + slaThresholdAt) AND the LeadActivity. Either
+  //     both land or neither does — no audit drift if a partial commit
+  //     races a manual stage move.
+  //   - This method does NOT trigger rotation, escalation, notifications,
+  //     or any side effect beyond the activity row. Those land in
+  //     D3.4 / D3.5 behind the same `D3_ENGINE_V1` flag.
+  //   - Existing `slaStatus` semantics are preserved bit-for-bit. The
+  //     new threshold ladder coexists with the legacy binary breach;
+  //     they will be unified in a later D3 chunk once consumers have
+  //     migrated.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the effective SLA minutes for a stage, with tenant fallback.
+   *
+   *   stage.slaMinutes  ?? tenantSettings.slaMinutes
+   *
+   * NULL result if neither is configured — caller must treat that as
+   * "no SLA budget" (no threshold bucket can be assigned). Returns
+   * the budget as a number of minutes.
+   *
+   * Used by the threshold engine. Future D3 chunks will route the
+   * existing `resetForLead` callsites through this helper too so per-
+   * stage SLA is honoured at lead-create / stage-move time; D3.2
+   * leaves those callsites unchanged on purpose (legacy behaviour
+   * preserved for flag-off — see `D3_ENGINE_V1` in `d3-feature-flag.ts`).
+   */
+  async resolveSlaMinutesForStage(
+    tx: Prisma.TransactionClient,
+    stageId: string,
+  ): Promise<number | null> {
+    const tenantId = requireTenantId();
+    const stage = await tx.pipelineStage.findUnique({
+      where: { id: stageId },
+      select: { slaMinutes: true },
+    });
+    if (stage?.slaMinutes != null) return stage.slaMinutes;
+    if (this.tenantSettings) {
+      const settings = await this.tenantSettings.getForTenant(tenantId);
+      return settings.slaMinutes;
+    }
+    // Test harnesses without TenantSettingsService fall back to the
+    // env-default — same as `getEffectiveSlaMinutes`.
+    return getSlaMinutes();
+  }
+
+  /**
+   * Recompute the SLA threshold bucket for a single lead. No-op (returns
+   * null) when:
+   *   - The threshold engine isn't wired (`thresholds` undefined).
+   *   - The lead is non-'open' (terminal / archived).
+   *   - The lead's `slaStatus` is 'paused' or 'breached' — paused has no
+   *     timer; breached is handled by the legacy binary path and we
+   *     don't want to double-emit transitions on top of it.
+   *   - The lead has no `slaDueAt` (paused with cleared due-at).
+   *   - The computed bucket equals the lead's current `sla_threshold`.
+   *
+   * On a real transition: updates `lead.sla_threshold` and
+   * `lead.sla_threshold_at` and appends ONE `LeadActivity` row of
+   * type `sla_threshold_crossed` carrying `{from, to, ratio,
+   * budgetMinutes, elapsedMinutes, slaDueAt}` in its payload. Returns
+   * the transition for the caller to fold into batch-summary logs.
+   */
+  async recomputeThreshold(
+    tx: Prisma.TransactionClient,
+    leadId: string,
+    now: Date = new Date(),
+  ): Promise<ThresholdTransition | null> {
+    if (!this.thresholds) return null;
+    const tenantId = requireTenantId();
+    const lead = await tx.lead.findUnique({
+      where: { id: leadId },
+      select: {
+        id: true,
+        slaDueAt: true,
+        slaStatus: true,
+        slaThreshold: true,
+        lifecycleState: true,
+        stage: { select: { id: true, slaMinutes: true, isTerminal: true } },
+      },
+    });
+    if (!lead) return null;
+    if (lead.lifecycleState !== 'open') return null;
+    if (lead.stage.isTerminal) return null;
+    if (lead.slaStatus !== 'active') return null;
+    if (!lead.slaDueAt) return null;
+
+    const budgetMinutes = await this.resolveSlaMinutesForStage(tx, lead.stage.id);
+    const result = this.thresholds.computeBucket({
+      slaDueAt: lead.slaDueAt,
+      budgetMinutes,
+      now,
+    });
+    if (result.noOp) return null;
+
+    const fromBucket = (lead.slaThreshold ?? 'ok') as SlaThreshold;
+    const toBucket = result.threshold;
+    if (fromBucket === toBucket) return null;
+
+    await tx.lead.update({
+      where: { id: leadId },
+      data: { slaThreshold: toBucket, slaThresholdAt: now },
+    });
+    await tx.leadActivity.create({
+      data: {
+        tenantId,
+        leadId,
+        type: 'sla_threshold_crossed',
+        actionSource: 'system',
+        body: `SLA threshold ${fromBucket} → ${toBucket}`,
+        payload: {
+          event: 'sla_threshold_crossed',
+          from: fromBucket,
+          to: toBucket,
+          ratio: result.ratio,
+          budgetMinutes: result.budgetMinutes,
+          elapsedMinutes: result.elapsedMinutes,
+          slaDueAt: lead.slaDueAt.toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      leadId,
+      from: fromBucket,
+      to: toBucket,
+      ratio: result.ratio,
+      elapsedMinutes: result.elapsedMinutes,
+      budgetMinutes: result.budgetMinutes,
+      slaDueAt: lead.slaDueAt,
+    };
+  }
+
+  /**
+   * Tenant-wide threshold sweep. Iterates every open lead with an
+   * active SLA timer in batches (default 200) and recomputes its
+   * threshold under a single shared `now`. Returns the list of
+   * actual transitions for the scheduler's per-tenant log line.
+   *
+   * Each lead is recomputed in its own transaction so a single bad
+   * row cannot block the rest of the tenant's sweep — same isolation
+   * pattern as `runReassignmentForBreaches`.
+   *
+   * Caller is responsible for the feature-flag check and the tenant
+   * context — this method assumes both are already in place.
+   */
+  async runThresholdRecomputeForTenant(
+    now: Date = new Date(),
+    options: { batchSize?: number } = {},
+  ): Promise<ThresholdTransition[]> {
+    if (!this.thresholds) return [];
+    const tenantId = requireTenantId();
+    const batchSize = options.batchSize ?? 200;
+
+    // Hot-path query backed by the `(tenant, sla_threshold, sla_due_at)`
+    // index added in D3.1. We deliberately skip 't200' rows — once a
+    // lead has crossed the highest threshold there's nothing more for
+    // this engine to do until the lead transitions out of 'open' (at
+    // which point the lifecycle filter would skip it anyway).
+    const candidates = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.lead.findMany({
+        where: {
+          slaStatus: 'active',
+          slaDueAt: { not: null, lte: now },
+          lifecycleState: 'open',
+          stage: { isTerminal: false },
+          slaThreshold: { in: ['ok', 't75', 't100', 't150'] },
+        },
+        select: { id: true },
+        take: batchSize * 50, // hard cap so a runaway tenant can't starve siblings
+        orderBy: { slaDueAt: 'asc' },
+      }),
+    );
+
+    const transitions: ThresholdTransition[] = [];
+    for (const cand of candidates) {
+      try {
+        const t = await this.prisma.withTenant(tenantId, (tx) =>
+          this.recomputeThreshold(tx, cand.id, now),
+        );
+        if (t) transitions.push(t);
+      } catch (err) {
+        // Per-row failure shouldn't kill the sweep. Log and continue.
+        this.logger.warn(`sla.recomputeThreshold ${cand.id} failed: ${(err as Error).name}`);
+      }
+    }
+    if (transitions.length > 0) {
+      this.logger.log(`sla.thresholds: ${transitions.length} transition(s) for tenant ${tenantId}`);
+    }
+    return transitions;
   }
 
   // ───────────────────────────────────────────────────────────────────────

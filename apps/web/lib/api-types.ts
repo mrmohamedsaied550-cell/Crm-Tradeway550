@@ -182,6 +182,13 @@ export type LeadActivityType =
   | 'assignment'
   | 'auto_assignment'
   | 'sla_breach'
+  // Phase D3 — D3.2: emitted by the SLA threshold engine when a lead
+  // crosses the ladder buckets (ok ↔ t75 ↔ t100 ↔ t150 ↔ t200). The
+  // backend records the row; D3.2 ships the type union + a minimal
+  // timeline label so the row renders without a raw enum leak. Full
+  // visual treatment (per-bucket tone, threshold ladder) lands in
+  // D3.7 polish.
+  | 'sla_threshold_crossed'
   | 'system';
 
 export type CaptainStatus = 'active' | 'inactive' | 'archived';

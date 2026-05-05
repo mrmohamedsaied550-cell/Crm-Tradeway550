@@ -70,6 +70,12 @@ export const ACTIVITY_TYPES = [
   // C11: emitted by SlaService.runReassignmentForBreaches when a lead's
   // SLA expires before the assignee responds.
   'sla_breach',
+  // Phase D3 — D3.2: emitted by SlaService.recomputeThreshold when the
+  // ladder bucket changes (ok ↔ t75 ↔ t100 ↔ t150 ↔ t200). Distinct
+  // from `sla_breach` because the legacy binary breach path is still
+  // wired and we don't want to double-stamp the timeline. Inert when
+  // `D3_ENGINE_V1` resolves false.
+  'sla_threshold_crossed',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

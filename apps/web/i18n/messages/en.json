@@ -493,6 +493,7 @@
             "assignment": "Assignment",
             "auto_assignment": "Auto-assignment",
             "sla_breach": "SLA breach",
+            "sla_threshold_crossed": "SLA threshold",
             "system": "System"
           },
           "summary": {
