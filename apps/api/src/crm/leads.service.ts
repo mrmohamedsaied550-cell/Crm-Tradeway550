@@ -296,6 +296,40 @@ export class LeadsService {
           actorUserId,
         },
       });
+      // D2.3.1 — log every duplicate evaluation that doesn't proceed
+      // to insert BEFORE throwing. Without this, `reject_existing_open`,
+      // `link_to_existing`, and `queue_review` cases left no audit
+      // trail (Bug #2 from the D2.3 audit). The log write is inside
+      // a small `prisma.withTenant` so RLS sees the tenant context;
+      // we write only the rows the engine asked for, never the
+      // post-insert path's chained lead id (there is no lead row).
+      const earlyDecisionShouldLog =
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing' ||
+        duplicateGate.decision === 'queue_review';
+      if (earlyDecisionShouldLog) {
+        const logDecision = duplicateGate;
+        await this.prisma.withTenant(tenantId, (tx) =>
+          this.duplicateDecision!.writeDecisionLogInTx(
+            tx,
+            tenantId,
+            logDecision,
+            {
+              phone,
+              contactId: null,
+              context: {
+                trigger: 'manual',
+                companyId: dto.companyId ?? null,
+                countryId: dto.countryId ?? null,
+                pipelineId: null,
+                actorUserId,
+              },
+            },
+            null,
+            null,
+          ),
+        );
+      }
       if (
         duplicateGate.decision === 'reject_existing_open' ||
         duplicateGate.decision === 'link_to_existing'
@@ -325,6 +359,36 @@ export class LeadsService {
 
     try {
       return await this.prisma.withTenant(tenantId, async (tx) => {
+        // D2.3.1 — flag-off lifelong-unique guard.
+        //
+        // Pre-D2.3 the database UNIQUE on (tenant_id, phone) blocked
+        // any insert whose phone matched ANY existing row. The D2.3
+        // partial-unique replaces that with "one OPEN lead per phone",
+        // so without this guard a closed/lost/won/archived match
+        // would silently allow a fresh insert under flag-off — a
+        // regression vs. legacy behavior. Under flag-on the engine
+        // evaluator above already handled this case (it returns
+        // `create_new_attempt` for aged-out lost leads, etc.), so we
+        // skip the guard there.
+        //
+        // The check runs INSIDE the create tx so the outcome is
+        // race-equivalent to the legacy P2002: a concurrent insert
+        // that lands between the findFirst and the lead.create still
+        // surfaces as `lead.duplicate_phone` via the partial-unique's
+        // P2002 catch at the bottom of this method.
+        if (!isLeadAttemptsV2Enabled()) {
+          const existing = await tx.lead.findFirst({
+            where: { tenantId, phone },
+            select: { id: true },
+          });
+          if (existing) {
+            throw new ConflictException({
+              code: 'lead.duplicate_phone',
+              message: `A lead with phone ${phone} already exists in this tenant`,
+            });
+          }
+        }
+
         // Phase 1B — resolve the pipeline first, then resolve / validate
         // the stage *within* that pipeline. Three input paths:
         //   1. pipelineStageId  → load stage; pipeline is stage.pipelineId
@@ -1723,6 +1787,31 @@ export class LeadsService {
     // within-cooldown case), we throw a typed error the inbound
     // orchestrator can catch and translate into a review row.
     // Under flag=false the gate is skipped entirely.
+    // D2.3.1 — flag-off lifelong-unique guard.
+    //
+    // Same rationale as in `create()`: the D2.3 partial-unique
+    // replaced the lifelong UNIQUE on (tenant_id, phone), so under
+    // LEAD_ATTEMPTS_V2=false a fresh inbound for a phone whose only
+    // matches are closed/lost/won/archived would silently land a
+    // brand-new lead row — a regression vs. the pre-D2.3 contract,
+    // which would have thrown via P2002 at the create step. We
+    // reproduce the legacy semantic at service level: any match
+    // throws `lead.duplicate_phone`, which the inbound orchestrator
+    // catches and falls through to the same "race-resolved" branch
+    // it already handles.
+    if (!isLeadAttemptsV2Enabled()) {
+      const existing = await tx.lead.findFirst({
+        where: { tenantId: input.tenantId, phone: input.phone },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new ConflictException({
+          code: 'lead.duplicate_phone',
+          message: `A lead with phone ${input.phone} already exists in this tenant`,
+        });
+      }
+    }
+
     let duplicateGate: import('../duplicates/duplicate-rules.service').DuplicateDecision | null =
       null;
     if (this.duplicateDecision && isLeadAttemptsV2Enabled()) {
@@ -1740,6 +1829,34 @@ export class LeadsService {
         },
         { tx },
       );
+      // D2.3.1 — log every duplicate evaluation that doesn't proceed
+      // to insert BEFORE throwing. Same fix as `create()` (Bug #2);
+      // here we already have the caller's tx so the log lands in
+      // the same transaction as the inbound orchestration.
+      const earlyDecisionShouldLog =
+        duplicateGate.decision === 'reject_existing_open' ||
+        duplicateGate.decision === 'link_to_existing' ||
+        duplicateGate.decision === 'queue_review';
+      if (earlyDecisionShouldLog) {
+        await this.duplicateDecision.writeDecisionLogInTx(
+          tx,
+          input.tenantId,
+          duplicateGate,
+          {
+            phone: input.phone,
+            contactId: input.contactId,
+            context: {
+              trigger: 'whatsapp_inbound',
+              companyId: input.companyId,
+              countryId: input.countryId,
+              pipelineId: pipeline.id,
+              actorUserId: null,
+            },
+          },
+          null,
+          null,
+        );
+      }
       if (
         duplicateGate.decision === 'reject_existing_open' ||
         duplicateGate.decision === 'link_to_existing'
