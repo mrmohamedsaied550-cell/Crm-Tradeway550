@@ -823,10 +823,24 @@ export class LeadsService {
   }
 
   /** Phase D2 — D2.6: previous-owner privilege check.
-   *  Returns true when the role carries `lead.assign` (TL+ / Account
-   *  Manager / Ops / Super Admin). Pure DB read, RLS-pinned to the
-   *  current tenant. Falls back to `false` (conservative) when the
-   *  role lookup fails so a transient error never leaks an owner. */
+   *  Returns true when the role carries `lead.write` — granted to
+   *  TL / Account Manager / Ops / Super Admin (`TEAM_LEAD_EXTRAS`),
+   *  NOT to sales / activation / driving agents. Pure DB read,
+   *  RLS-pinned to the current tenant. Falls back to `false`
+   *  (conservative) when the role lookup fails so a transient error
+   *  never leaks an owner.
+   *
+   *  Why not `lead.assign`? `AGENT_ACTIONS` grants `lead.assign` to
+   *  every agent role (sales / activation / driving), so using it
+   *  here would silently expose previous owners to sales agents —
+   *  the exact violation D2.6's product rule prohibits. `lead.write`
+   *  matches the exact "TL+" cohort the spec names.
+   *
+   *  TODO (forward): introduce a dedicated capability — e.g.
+   *  `lead.previous_owner.read` — or a field-level permission on
+   *  `lead.previousAttemptOwner` so the previous-owner cohort can
+   *  be configured per-tenant without piggy-backing on `lead.write`.
+   *  Tracked in the Final UX / User Stories Audit deferred list. */
   private async userCanSeePreviousOwner(userClaims: ScopeUserClaims): Promise<boolean> {
     try {
       const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
@@ -838,7 +852,7 @@ export class LeadsService {
         }),
       );
       const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
-      return codes.includes('lead.assign');
+      return codes.includes('lead.write');
     } catch {
       return false;
     }

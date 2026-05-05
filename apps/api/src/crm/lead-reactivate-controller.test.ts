@@ -15,11 +15,20 @@
  *      partial-unique on (tenant, phone, lifecycle='open') would
  *      surface a duplicate-phone error first; the test asserts the
  *      single-call happy path).
- *   4. Previous-owner visibility — when a sales agent (no
- *      `lead.assign`) calls `listAttemptsForLeadInScope`, the
- *      response strips `assignedTo` / `assignedToId` from
- *      predecessor rows but leaves the current attempt intact. An
- *      ops user with `lead.assign` sees the full owner data.
+ *   4. Previous-owner visibility — keyed on `lead.write` (granted
+ *      to TL / Account Manager / Ops / Super Admin via
+ *      TEAM_LEAD_EXTRAS, NOT to sales / activation / driving agents).
+ *      Three role shapes exercised:
+ *        a. Sales-agent-shaped role with `lead.assign` only — the
+ *           production AGENT_ACTIONS bundle ships `lead.assign`, so
+ *           this case is the regression that motivated the gate fix:
+ *           predecessor `assignedTo` / `assignedToId` MUST be
+ *           stripped while the current row keeps its owner.
+ *        b. Empty role (no capabilities) — defence-in-depth check
+ *           that the conservative-default branch never leaks owner
+ *           data.
+ *        c. TL/Ops-shaped role with `lead.write` — receives the
+ *           full owner data on every row.
  *
  * Local: same DB-unreachable hook-failure pattern as every other
  * integration test in this repo when no Docker daemon is available.
@@ -53,7 +62,15 @@ let prismaSvc: PrismaService;
 let leads: LeadsService;
 let tenantId: string;
 let actorUserId: string;
+/** Sales-agent-shaped role: holds `lead.assign` (mirroring the seeded
+ *  AGENT_ACTIONS bundle) but NOT `lead.write`. The visibility gate
+ *  must hide previous owners from this role. */
 let salesAgentRoleId: string;
+/** Empty role with no capabilities — defence-in-depth check for the
+ *  conservative-default branch of the gate. */
+let emptyRoleId: string;
+/** TL/Ops-shaped role: holds `lead.write` (the new gate signal),
+ *  `lead.assign`, and `lead.reactivate`. Sees the full chain. */
 let elevatedRoleId: string;
 let elevatedUserId: string;
 let entryStageId: string;
@@ -128,15 +145,8 @@ describe('D2.6 — manual reactivation override', () => {
         create: { tenantId, timezone: 'Africa/Cairo', slaMinutes: 60, defaultDialCode: '+20' },
       });
 
-      // Sales-agent role: NO `lead.assign` → cannot see previous owner.
-      const salesRole = await tx.role.create({
-        data: { tenantId, code: 'sales_agent', nameAr: 'مبيعات', nameEn: 'Sales', level: 30 },
-      });
-      salesAgentRoleId = salesRole.id;
-
-      // Elevated role: HAS `lead.assign` AND `lead.reactivate`. We
-      // attach via RoleCapability with a freshly-upserted Capability
-      // row each so the test doesn't depend on the seed having run.
+      // Capability rows — upsert so the test doesn't depend on the
+      // seed having run.
       const reactivateCap = await tx.capability.upsert({
         where: { code: 'lead.reactivate' },
         update: {},
@@ -147,6 +157,34 @@ describe('D2.6 — manual reactivation override', () => {
         update: {},
         create: { code: 'lead.assign', description: 'Assign / auto-assign leads' },
       });
+      const writeCap = await tx.capability.upsert({
+        where: { code: 'lead.write' },
+        update: {},
+        create: { code: 'lead.write', description: 'Create / update / delete leads' },
+      });
+
+      // Sales-agent-shaped role: mirrors the seeded AGENT_ACTIONS
+      // bundle by holding `lead.assign` — but NOT `lead.write`. The
+      // visibility gate (which keys on `lead.write`) must therefore
+      // hide previous owners from this role even though `lead.assign`
+      // is present.
+      const salesRole = await tx.role.create({
+        data: { tenantId, code: 'sales_agent', nameAr: 'مبيعات', nameEn: 'Sales', level: 30 },
+      });
+      salesAgentRoleId = salesRole.id;
+      await tx.roleCapability.create({
+        data: { tenantId, roleId: salesRole.id, capabilityId: assignCap.id },
+      });
+
+      // Empty role: no capabilities at all — defence-in-depth check
+      // that the conservative default branch never leaks owner data.
+      const emptyRole = await tx.role.create({
+        data: { tenantId, code: 'd26_empty', nameAr: 'فارغ', nameEn: 'Empty', level: 10 },
+      });
+      emptyRoleId = emptyRole.id;
+
+      // Elevated role: TL/Ops shape — holds `lead.write`, `lead.assign`,
+      // and `lead.reactivate`. Sees the full chain.
       const elevatedRole = await tx.role.create({
         data: { tenantId, code: 'd26_ops', nameAr: 'عمليات', nameEn: 'Ops (D2.6)', level: 70 },
       });
@@ -156,6 +194,9 @@ describe('D2.6 — manual reactivation override', () => {
       });
       await tx.roleCapability.create({
         data: { tenantId, roleId: elevatedRole.id, capabilityId: assignCap.id },
+      });
+      await tx.roleCapability.create({
+        data: { tenantId, roleId: elevatedRole.id, capabilityId: writeCap.id },
       });
 
       const actor = await tx.user.create({
@@ -292,7 +333,7 @@ describe('D2.6 — manual reactivation override', () => {
     assert.equal(reactAudit!.actorUserId, actorUserId);
   });
 
-  it('hides previous owner from sales agent in attempts response', async () => {
+  it('hides previous owner from sales-agent + empty roles, surfaces it for lead.write holders', async () => {
     const phone = '+201001000963';
     const first = await inTenant(() =>
       leads.create({ name: 'Owner', phone, source: 'manual' }, actorUserId),
@@ -332,8 +373,10 @@ describe('D2.6 — manual reactivation override', () => {
       secondId = newAttempt.id;
     });
 
-    // Sales agent (no `lead.assign`) → predecessor's assignedTo is
-    // stripped; current row keeps its owner.
+    // Sales-agent-shaped role: holds `lead.assign` (mirroring the
+    // production AGENT_ACTIONS bundle) but NOT `lead.write`. The
+    // gate must hide the predecessor's owner; the current row keeps
+    // its owner so the agent still sees their own assignment.
     const salesView = await inTenant(() =>
       leads.listAttemptsForLeadInScope(secondId!, asUser(actorUserId, salesAgentRoleId)),
     );
@@ -341,10 +384,20 @@ describe('D2.6 — manual reactivation override', () => {
     const salesCurrent = salesView.attempts.find((a) => a.id === secondId)!;
     const salesPrev = salesView.attempts.find((a) => a.id === first.id)!;
     assert.equal(salesCurrent.assignedToId, actorUserId, 'current row keeps owner');
-    assert.equal(salesPrev.assignedTo, null, 'predecessor owner hidden');
-    assert.equal(salesPrev.assignedToId, null, 'predecessor owner id hidden');
+    assert.equal(salesPrev.assignedTo, null, 'predecessor owner hidden for sales agent');
+    assert.equal(salesPrev.assignedToId, null, 'predecessor owner id hidden for sales agent');
 
-    // Elevated role (has `lead.assign`) → previous owner returned.
+    // Empty role (defence-in-depth): no capabilities at all → must
+    // still hide previous owner.
+    const emptyView = await inTenant(() =>
+      leads.listAttemptsForLeadInScope(secondId!, asUser(actorUserId, emptyRoleId)),
+    );
+    const emptyPrev = emptyView.attempts.find((a) => a.id === first.id)!;
+    assert.equal(emptyPrev.assignedTo, null, 'predecessor owner hidden for empty role');
+    assert.equal(emptyPrev.assignedToId, null, 'predecessor owner id hidden for empty role');
+
+    // TL/Ops-shaped role: holds `lead.write` (the new gate signal) →
+    // previous owner returned.
     const elevatedView = await inTenant(() =>
       leads.listAttemptsForLeadInScope(secondId!, asUser(actorUserId, elevatedRoleId)),
     );
