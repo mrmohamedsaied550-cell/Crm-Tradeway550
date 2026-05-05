@@ -465,6 +465,23 @@ model PipelineStage {
   /// stages and on terminal stages that are neither (rare; admin can
   /// configure later via Pipeline Builder).
   terminalKind String?  @map("terminal_kind")
+
+  /// Phase D3 — D3.1: per-stage SLA override.
+  /// When NULL, the SLA budget falls back to `tenant_settings.slaMinutes`
+  /// (the legacy tenant-wide default — preserved bit-for-bit so
+  /// existing tenants see no behaviour change). When set, this value
+  /// wins. The threshold engine (D3.2) reads
+  /// `stage.slaMinutes ?? tenantSlaMinutes` on every recompute.
+  /// `slaBusinessHoursOnly` is the seam for future country-holiday-
+  /// aware budgets — D3.1 ships the column only; the engine treats it
+  /// as `false` regardless until the calendar service lands.
+  /// `autoActions` is the seam for future entry/exit hooks (notify,
+  /// reassign team, set tag) the Pipeline Builder will configure;
+  /// D3.1 ships the column only — no consumer reads it yet.
+  slaMinutes           Int?     @map("sla_minutes")
+  slaBusinessHoursOnly Boolean  @default(false) @map("sla_business_hours_only")
+  autoActions          Json?    @map("auto_actions")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -530,6 +547,33 @@ model Lead {
   slaDueAt       DateTime? @map("sla_due_at") @db.Timestamptz(6)
   slaStatus      String    @default("active") @map("sla_status")
   lastResponseAt DateTime? @map("last_response_at") @db.Timestamptz(6)
+
+  /// Phase D3 — D3.1: SLA threshold tracking.
+  /// `slaThreshold` records WHICH ladder bucket the lead currently sits
+  /// in:
+  ///   'ok'    — ratio (elapsed/budget) < 0.75
+  ///   't75'   — 0.75 ≤ ratio < 1.00 (soft reminder)
+  ///   't100'  — 1.00 ≤ ratio < 1.50 (warning, tag at-risk)
+  ///   't150'  — 1.50 ≤ ratio < 2.00 (escalation; first occurrence
+  ///             auto-rotates per tenant policy, second occurrence
+  ///             within 24h raises a TL Review Queue item instead)
+  ///   't200'  — ratio ≥ 2.00 (high escalation; raises TL review)
+  /// Defaults to 'ok' for every existing row at migration time and
+  /// for every newly-created lead. The engine (D3.2) recomputes the
+  /// bucket on every scheduler tick + on every stage move / response.
+  /// `slaThresholdAt` records WHEN the current bucket was entered —
+  /// drives the audit trail and the 24-hour repeat-window check for
+  /// t150 escalations.
+  /// `lastRotatedAt` mirrors the most recent LeadRotationLog row's
+  /// timestamp for the lead. Denormalised so list queries can filter
+  /// "rotated in the last 24h" without joining; populated when the
+  /// rotation engine (D3.4) writes a rotation log. NULL until then.
+  /// All three columns are inert in D3.1 — no service reads or
+  /// writes them yet. Wired in D3.2 (threshold engine) and D3.4
+  /// (rotation engine).
+  slaThreshold    String    @default("ok") @map("sla_threshold")
+  slaThresholdAt  DateTime? @map("sla_threshold_at") @db.Timestamptz(6)
+  lastRotatedAt   DateTime? @map("last_rotated_at") @db.Timestamptz(6)
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -656,6 +700,15 @@ model Lead {
   // by attempt number" without a sort — supports the future Attempts
   // History card on the lead detail page.
   @@index([tenantId, contactId, attemptIndex])
+  // Phase D3 — D3.1: hot path for the future threshold scheduler.
+  // The recompute query is `WHERE tenant=? AND slaThreshold IN
+  // ('ok','t75','t100','t150') AND slaDueAt IS NOT NULL`. The
+  // composite index lets the scanner skip leads that are already
+  // at 't200' (terminal threshold; nothing more for the engine to
+  // do until the lead transitions out of 'open') and lets the UI
+  // chip-filter "leads at t150 or worse" return without a sort.
+  // Inert in D3.1 — no scanner reads it yet.
+  @@index([tenantId, slaThreshold, slaDueAt])
   @@map("leads")
 }
 
