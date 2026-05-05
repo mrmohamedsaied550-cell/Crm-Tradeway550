@@ -189,6 +189,10 @@ export type LeadActivityType =
   // visual treatment (per-bucket tone, threshold ladder) lands in
   // D3.7 polish.
   | 'sla_threshold_crossed'
+  // Phase D3 — D3.3: emitted by LeadStageStatusService.setStatus
+  // when an agent records a stage-specific status (call disposition,
+  // docs-pending sub-state, …). Inert when D3_ENGINE_V1=false.
+  | 'stage_status_changed'
   | 'system';
 
 export type CaptainStatus = 'active' | 'inactive' | 'archived';
@@ -940,4 +944,50 @@ export interface AttemptHistoryResult {
   totalAttempts: number;
   outOfScopeCount: number;
   currentLeadId: string;
+}
+
+/**
+ * Phase D3 — D3.3: stage-specific status surface.
+ *
+ * `AllowedStatusEntry` is the per-stage catalogue entry — `code` is
+ * the stable machine value, `label` / `labelAr` are the display copy
+ * the picker + activity timeline render. Empty `allowedStatuses` on
+ * the response means the stage has no catalogue configured; the UI
+ * renders the "no statuses configured" hint.
+ *
+ * `StageStatusHistoryRow` mirrors what the service returns for both
+ * `currentStatus` (a single row, possibly null) and `history` (every
+ * status row recorded for the lead, newest first).
+ */
+export interface AllowedStatusEntry {
+  code: string;
+  label: string;
+  labelAr: string;
+}
+
+export interface StageStatusHistoryRow {
+  id: string;
+  stageId: string;
+  status: string;
+  attemptIndex: number;
+  notes: string | null;
+  createdAt: string;
+  setBy: { id: string; name: string } | null;
+  /** The stage the status was recorded against — included on history
+   *  rows because they may span multiple stages over a lead's life. */
+  stage?: { id: string; code: string; name: string };
+}
+
+export interface StageStatusesResponse {
+  leadId: string;
+  stage: { id: string; code: string; name: string };
+  currentStatus: StageStatusHistoryRow | null;
+  allowedStatuses: AllowedStatusEntry[];
+  history: StageStatusHistoryRow[];
+}
+
+export interface SetStageStatusResponse {
+  leadId: string;
+  previousStatus: string | null;
+  currentStatus: StageStatusHistoryRow;
 }

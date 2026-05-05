@@ -54,6 +54,8 @@ import type {
   RoleFieldPermissionRow,
   RoleScopeRow,
   RoleSummary,
+  SetStageStatusResponse,
+  StageStatusesResponse,
   SlaStatus,
   BonusAccrual,
   BonusAccrualStatus,
@@ -745,6 +747,30 @@ export const leadsApi = {
    */
   reactivate: (id: string): Promise<{ id: string; attemptIndex: number; previousLeadId: string }> =>
     apiFetch(`/leads/${id}/reactivate`, { method: 'POST' }),
+  /**
+   * Phase D3 — D3.3: stage-specific status surface.
+   *
+   * `getStageStatuses` reads `{ stage, currentStatus, allowedStatuses,
+   * history }` for the lead's CURRENT stage. The `allowedStatuses`
+   * carries `{ code, label, labelAr }` objects so the picker doesn't
+   * have to retranslate; `[]` means the stage has no catalogue
+   * configured and the picker shows the "no statuses configured"
+   * hint.
+   *
+   * `setStageStatus` records a new status. Server validates
+   * `status` against the stage's catalogue and rejects with
+   * `lead.stage.status.invalid` on a mismatch.
+   */
+  getStageStatuses: (id: string): Promise<StageStatusesResponse> =>
+    apiFetch<StageStatusesResponse>(`/leads/${id}/stage-statuses`),
+  setStageStatus: (
+    id: string,
+    input: { status: string; notes?: string },
+  ): Promise<SetStageStatusResponse> =>
+    apiFetch<SetStageStatusResponse>(`/leads/${id}/stage-status`, {
+      method: 'POST',
+      body: input,
+    }),
   addActivity: (
     id: string,
     input: {

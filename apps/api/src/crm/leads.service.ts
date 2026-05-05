@@ -13,6 +13,7 @@ import type { RoutingContext } from '../distribution/distribution.types';
 import { AuditService } from '../audit/audit.service';
 import { DuplicateDecisionService } from '../duplicates/duplicate-decision.service';
 import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
+import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
@@ -1724,6 +1725,39 @@ export class LeadsService {
         }
       }
 
+      // Phase D3 — D3.3: requireStatusOnExit gate. Only enforced
+      // under D3_ENGINE_V1=true AND only when the move actually
+      // changes the stage (a no-op stage move shouldn't trigger).
+      // Reads the from-stage's flag in the same tx so a concurrent
+      // admin toggle can't race the check. The check passes when
+      // the lead's `currentStageStatusId` points at a status row
+      // for the from-stage — i.e. an agent set a status on this
+      // stage attempt before trying to move out. Failure surfaces
+      // a typed code so the UI can render a clear "pick a status
+      // before moving" message.
+      const isStageChange = before.stageId !== toStage.id;
+      if (isD3EngineV1Enabled() && isStageChange) {
+        const fromStageRow = await tx.pipelineStage.findUnique({
+          where: { id: before.stageId },
+          select: { requireStatusOnExit: true },
+        });
+        if (fromStageRow?.requireStatusOnExit) {
+          const currentStatus = before.currentStageStatusId
+            ? await tx.leadStageStatus.findUnique({
+                where: { id: before.currentStageStatusId },
+                select: { stageId: true },
+              })
+            : null;
+          if (!currentStatus || currentStatus.stageId !== before.stageId) {
+            throw new BadRequestException({
+              code: 'lead.stage.status_required',
+              message:
+                'Pick a status for this stage before moving the lead. Stage requires a status on exit.',
+            });
+          }
+        }
+      }
+
       // Stage transitions drive SLA state:
       //   non-terminal → fresh window (counts as agent response).
       //   terminal     → pause; the breach scanner ignores paused rows.
@@ -1747,6 +1781,14 @@ export class LeadsService {
           ? { lostReasonId: target.lostReasonId!, lostNote: target.lostNote ?? null }
           : { lostReasonId: null, lostNote: null };
 
+      // Phase D3 — D3.3: clear `currentStageStatusId` on every real
+      // stage change under D3_ENGINE_V1=true. The history rows stay
+      // in `lead_stage_statuses`; only the denormalised pointer is
+      // reset so the new stage starts with no current-status banner
+      // and the picker prompts the agent again. Inert under flag-off.
+      const stageStatusReset: Prisma.LeadUncheckedUpdateInput =
+        isD3EngineV1Enabled() && isStageChange ? { currentStageStatusId: null } : {};
+
       const updated = await tx.lead.update({
         where: { id },
         data: {
@@ -1754,6 +1796,7 @@ export class LeadsService {
           lifecycleState,
           ...lostFields,
           ...sla,
+          ...stageStatusReset,
         },
         include: { stage: true, captain: true },
       });

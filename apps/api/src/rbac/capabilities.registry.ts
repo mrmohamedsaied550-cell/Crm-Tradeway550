@@ -50,6 +50,16 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'lead.reactivate',
     description: 'Manually reactivate a lead (overrides the duplicate-decision engine)',
   },
+  // Phase D3 — D3.3: record a stage-specific status (call disposition,
+  // documents-pending sub-state, …) on a lead. Granted to every
+  // operating role (sales / activation / driving agent + TL+ + ops);
+  // viewers and QA stay read-only. The picker UI is gated on this
+  // capability; the requireStatusOnExit enforcement (D3.3, flag-on)
+  // also reads it.
+  {
+    code: 'lead.stage.status.write',
+    description: 'Record a stage-specific status on a lead',
+  },
 
   // Meta lead-source registration (P2-06)
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },

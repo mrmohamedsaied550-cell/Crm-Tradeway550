@@ -54,6 +54,11 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'lead.activity.write',
   'lead.stage.move',
   'lead.assign',
+  // Phase D3 — D3.3: agents (sales / activation / driving) record
+  // stage-specific statuses (call dispositions etc.) on the leads
+  // they handle. TLs inherit via AGENT_ACTIONS; ops_manager /
+  // account_manager get it explicitly in their role bundles below.
+  'lead.stage.status.write',
   'followup.write',
   'followup.complete',
   'whatsapp.message.send',
@@ -110,6 +115,8 @@ export const ROLE_DEFINITIONS = [
       'lead.import',
       // Phase D2 — D2.2: manual reactivation override.
       'lead.reactivate',
+      // Phase D3 — D3.3: stage-status write surface (mirrors agents).
+      'lead.stage.status.write',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -165,6 +172,8 @@ export const ROLE_DEFINITIONS = [
       'lead.import',
       // Phase D2 — D2.2: manual reactivation override (mirrors ops_manager).
       'lead.reactivate',
+      // Phase D3 — D3.3: stage-status write surface (mirrors agents).
+      'lead.stage.status.write',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',

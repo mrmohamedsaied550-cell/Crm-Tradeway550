@@ -494,10 +494,13 @@
             "auto_assignment": "Auto-assignment",
             "sla_breach": "SLA breach",
             "sla_threshold_crossed": "SLA threshold",
+            "stage_status_changed": "Stage status changed",
             "system": "System"
           },
           "summary": {
             "stageChange": "Moved from {from} to {to}",
+            "stageStatusChanged": "Stage status changed",
+            "stageStatusChangedTo": "Stage status: {status}",
             "assigned": "Assigned to {user}",
             "unassigned": "Unassigned",
             "reassigned": "Reassigned from {from} to {to}",
@@ -547,6 +550,19 @@
           "successToast": "New attempt created.",
           "errorAlreadyOpen": "This lead is still open. Reactivation is reserved for closed (won / lost / archived) leads.",
           "errorForbidden": "You don't have permission to reactivate leads."
+        },
+        "stageStatus": {
+          "title": "Stage status",
+          "forStage": "For stage \"{stage}\"",
+          "none": "Not set",
+          "noCatalogue": "No statuses configured for this stage.",
+          "pickLabel": "Pick a status",
+          "notesLabel": "Notes (optional)",
+          "notesHint": "Up to 1000 characters. Visible to your TL on the timeline.",
+          "saveCta": "Save status",
+          "saved": "Stage status saved.",
+          "invalidStatus": "That status is not configured for this stage. Refresh and try again.",
+          "requiredOnExit": "Pick a status for this stage before moving the lead."
         }
       },
       "drawer": {

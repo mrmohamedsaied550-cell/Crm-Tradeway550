@@ -76,6 +76,13 @@ export const ACTIVITY_TYPES = [
   // wired and we don't want to double-stamp the timeline. Inert when
   // `D3_ENGINE_V1` resolves false.
   'sla_threshold_crossed',
+  // Phase D3 — D3.3: emitted by LeadStageStatusService.setStatus
+  // when an agent records a stage-specific status (call disposition
+  // / docs-pending sub-state / etc.). Inert when `D3_ENGINE_V1`
+  // resolves false (frontend hides the picker; the activity type
+  // remains in the registry so the audit table accepts it if a
+  // tenant flips the flag mid-window).
+  'stage_status_changed',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

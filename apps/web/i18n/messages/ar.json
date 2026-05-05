@@ -494,10 +494,13 @@
             "auto_assignment": "إسناد تلقائي",
             "sla_breach": "خرق المستوى",
             "sla_threshold_crossed": "حد المستوى",
+            "stage_status_changed": "تم تحديث حالة المرحلة",
             "system": "نظام"
           },
           "summary": {
             "stageChange": "تم النقل من {from} إلى {to}",
+            "stageStatusChanged": "تم تحديث حالة المرحلة",
+            "stageStatusChangedTo": "حالة المرحلة: {status}",
             "assigned": "تم الإسناد إلى {user}",
             "unassigned": "تم إلغاء الإسناد",
             "reassigned": "تم إعادة الإسناد من {from} إلى {to}",
@@ -547,6 +550,19 @@
           "successToast": "تم إنشاء محاولة جديدة.",
           "errorAlreadyOpen": "هذا الليد ما زال مفتوحًا. إعادة التفعيل مخصّصة لليدز المغلقة (محقَّقة / خاسرة / مؤرشفة).",
           "errorForbidden": "ليس لديك صلاحية إعادة تفعيل الليدز."
+        },
+        "stageStatus": {
+          "title": "حالة المرحلة",
+          "forStage": "للمرحلة «{stage}»",
+          "none": "لم يتم التحديد",
+          "noCatalogue": "لا توجد حالات مخصصة لهذه المرحلة.",
+          "pickLabel": "اختر الحالة",
+          "notesLabel": "ملاحظات (اختياري)",
+          "notesHint": "حتى 1000 حرف. ستظهر لقائد فريقك على السجل.",
+          "saveCta": "حفظ الحالة",
+          "saved": "تم حفظ حالة المرحلة.",
+          "invalidStatus": "هذه الحالة غير مفعّلة لهذه المرحلة. أعد التحميل ثم حاول مجددًا.",
+          "requiredOnExit": "اختر حالة لهذه المرحلة قبل نقل الليد."
         }
       },
       "drawer": {

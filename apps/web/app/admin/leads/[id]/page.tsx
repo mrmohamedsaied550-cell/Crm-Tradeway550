@@ -33,6 +33,7 @@ import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
 import { ReactivateLeadModal } from '@/components/admin/reactivate-lead-modal';
 import { ActivityTimeline } from '@/components/admin/lead-detail/activity-timeline';
 import { AttemptsHistoryCard } from '@/components/admin/lead-detail/attempts-history-card';
+import { StageStatusPicker } from '@/components/admin/lead-detail/stage-status-picker';
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
@@ -773,6 +774,15 @@ export default function LeadDetailPage(): JSX.Element {
         {/* Right: action stack — Next Action is the visual hero;
             everything else is supporting context. */}
         <aside className="flex flex-col gap-3">
+          {/* Phase D3 — D3.3: stage-specific status picker. Renders
+              null when the user lacks `lead.stage.status.write`. The
+              `lead.id`-keyed `refreshKey` re-fetches when stage moves
+              clear `currentStageStatusId` server-side. */}
+          <StageStatusPicker
+            leadId={lead.id}
+            refreshKey={lead.updatedAt}
+            onChanged={() => void reload()}
+          />
           <NextActionCard
             next={nextFollowUp}
             now={tickNow}

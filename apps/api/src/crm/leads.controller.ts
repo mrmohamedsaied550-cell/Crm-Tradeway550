@@ -34,6 +34,8 @@ function claimsToScope(claims: AccessTokenClaims): ScopeUserClaims {
 
 import { LeadsService } from './leads.service';
 import { CaptainsService } from './captains.service';
+import { LeadStageStatusService } from './lead-stage-status.service';
+import { SetStageStatusSchema } from './lead-stage-status.dto';
 import { PipelineService } from './pipeline.service';
 import { SlaService } from './sla.service';
 import {
@@ -50,6 +52,7 @@ import {
   UpdateLeadSchema,
 } from './leads.dto';
 
+class SetStageStatusDto extends createZodDto(SetStageStatusSchema) {}
 class CreateLeadDto extends createZodDto(CreateLeadSchema) {}
 class UpdateLeadDto extends createZodDto(UpdateLeadSchema) {}
 class AssignLeadDto extends createZodDto(AssignLeadSchema) {}
@@ -79,6 +82,8 @@ export class LeadsController {
     private readonly captains: CaptainsService,
     private readonly pipeline: PipelineService,
     private readonly sla: SlaService,
+    /** Phase D3 — D3.3: stage-specific status surface. */
+    private readonly stageStatus: LeadStageStatusService,
   ) {}
 
   @Get('pipeline/stages')
@@ -262,6 +267,47 @@ export class LeadsController {
   @ApiOperation({ summary: 'Manually reactivate a closed lead (creates a new attempt)' })
   reactivate(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.manualReactivate(id, user.sub, claimsToScope(user));
+  }
+
+  /**
+   * Phase D3 — D3.3: stage-specific status surface.
+   *
+   * GET — returns `{ stage, currentStatus, allowedStatuses, history }`
+   * for the lead's CURRENT stage. Capability: `lead.read` (everyone
+   * who can see the lead can see its statuses; the read is purely
+   * informational, no PII / owner identity gated).
+   *
+   * POST — records a new status. Capability: `lead.stage.status.write`
+   * (sales / activation / driving agents + TLs + ops + super_admin).
+   * Body: `{ status: <code from allowedStatuses>, notes?: string }`.
+   * Validates the status against the stage's catalogue; rejects with
+   * `lead.stage.status.invalid` on a code that isn't configured.
+   */
+  @Get('leads/:id/stage-statuses')
+  @RequireCapability('lead.read')
+  @ApiOperation({ summary: 'List stage-status history + allowed-statuses for a lead' })
+  listStageStatuses(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.stageStatus.listForLead(id, claimsToScope(user));
+  }
+
+  @Post('leads/:id/stage-status')
+  @RequireCapability('lead.stage.status.write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record a stage-specific status on the lead' })
+  setStageStatus(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SetStageStatusDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.stageStatus.setStatus(
+      id,
+      { status: body.status, ...(body.notes !== undefined && { notes: body.notes }) },
+      user.sub,
+      claimsToScope(user),
+    );
   }
 
   @Post('leads/:id/activities')

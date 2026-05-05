@@ -80,6 +80,8 @@ model Tenant {
   whatsAppConversationReviews WhatsAppConversationReview[]
   /// Phase D2 — D2.1: append-only duplicate-decision audit log.
   duplicateDecisionLogs       DuplicateDecisionLog[]
+  /// Phase D3 — D3.3: per-(lead × stage) status history.
+  leadStageStatuses           LeadStageStatus[]
 
   @@map("tenants")
 }
@@ -355,6 +357,9 @@ model User {
   /// Phase C — C10B-1: WhatsApp conversations currently assigned to
   /// this user. Set by the inbound router or manual handover.
   whatsappConversations       WhatsAppConversation[] @relation("WhatsAppConversationAssignee")
+  /// Phase D3 — D3.3: stage-status rows authored by this user. Empty
+  /// until D3.3 wires the agent picker.
+  authoredStageStatuses       LeadStageStatus[]      @relation("LeadStageStatusAuthor")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -482,10 +487,29 @@ model PipelineStage {
   slaBusinessHoursOnly Boolean  @default(false) @map("sla_business_hours_only")
   autoActions          Json?    @map("auto_actions")
 
+  /// Phase D3 — D3.3: stage-specific status catalogue.
+  /// `allowedStatuses` is a JSONB array of `{ code, label, labelAr }`
+  /// objects defining the operational sub-states an agent can record
+  /// inside this stage (e.g. for "First Contact": Interested /
+  /// No Answer / Wrong Number / Call Later). NULL or empty = no
+  /// statuses configured for the stage; the picker renders a hint
+  /// instead of a disabled dropdown. Validated at the service layer
+  /// — see `LeadStageStatusService`.
+  /// `requireStatusOnExit` is enforced ONLY under D3_ENGINE_V1=true:
+  /// when leaving a stage with this flag set, the agent must have
+  /// recorded at least one status row for the (lead, stage) since
+  /// the stage was entered. Flag-off = inert (existing moveStage
+  /// behaviour byte-identical).
+  allowedStatuses      Json?    @map("allowed_statuses")
+  requireStatusOnExit  Boolean  @default(false) @map("require_status_on_exit")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  leads Lead[]
+  leads         Lead[]
+  /// Phase D3 — D3.3: every status row recorded against this stage.
+  /// Empty until D3.3 wires the agent picker.
+  stageStatuses LeadStageStatus[]
 
   @@unique([pipelineId, code])
   @@unique([pipelineId, order])
@@ -574,6 +598,19 @@ model Lead {
   slaThreshold    String    @default("ok") @map("sla_threshold")
   slaThresholdAt  DateTime? @map("sla_threshold_at") @db.Timestamptz(6)
   lastRotatedAt   DateTime? @map("last_rotated_at") @db.Timestamptz(6)
+
+  /// Phase D3 — D3.3: denormalised pointer to the latest
+  /// LeadStageStatus row for the lead's CURRENT stage. NULL when
+  /// the agent hasn't recorded a status yet on this stage attempt.
+  /// Cleared by `LeadsService.moveStage` when the stage changes
+  /// (under D3_ENGINE_V1=true) so a stale status from the previous
+  /// stage doesn't bleed into the new one. ON DELETE SET NULL so a
+  /// hard-deleted history row never cascades into the lead.
+  currentStageStatusId String?           @map("current_stage_status_id") @db.Uuid
+  currentStageStatus   LeadStageStatus?  @relation("LeadCurrentStageStatus", fields: [currentStageStatusId], references: [id], onDelete: SetNull)
+  /// Back-relation for every LeadStageStatus row historically
+  /// written for this lead (across stages and attempts).
+  stageStatuses        LeadStageStatus[] @relation("LeadStageStatusHistory")
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -710,6 +747,59 @@ model Lead {
   // Inert in D3.1 — no scanner reads it yet.
   @@index([tenantId, slaThreshold, slaDueAt])
   @@map("leads")
+}
+
+/// Phase D3 — D3.3: per-(lead × stage) status history.
+///
+/// Each row records ONE status the agent picked for a lead inside a
+/// particular pipeline stage during a particular attempt — e.g. for
+/// the "First Contact" stage: `status = 'no_answer'` after a missed
+/// call. The latest row for a lead is denormalised onto
+/// `Lead.currentStageStatusId` for cheap reads; the full history
+/// stays here so reports / TL coaching dashboards can ask "how many
+/// times did this lead hit no_answer before being lost?".
+///
+/// Status STRING is validated at the service layer against
+/// `PipelineStage.allowedStatuses`. Storing it as TEXT (not an enum)
+/// lets each tenant configure its own catalogue per stage without
+/// schema migrations.
+///
+/// `attemptIndex` mirrors `Lead.attemptIndex` at write time so the
+/// status row is forensically tied to the attempt it belonged to —
+/// critical when a lead is reactivated (D2) and a fresh attempt's
+/// status history must not leak into the predecessor's report.
+///
+/// FORCE RLS on `tenant_id`. ON DELETE CASCADE for tenant + lead;
+/// ON DELETE SET NULL for the user (so disabling an agent doesn't
+/// destroy their status-history audit trail).
+model LeadStageStatus {
+  id           String  @id @default(uuid()) @db.Uuid
+  tenantId     String  @map("tenant_id") @db.Uuid
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId       String  @map("lead_id") @db.Uuid
+  lead         Lead    @relation("LeadStageStatusHistory", fields: [leadId], references: [id], onDelete: Cascade)
+  stageId      String  @map("stage_id") @db.Uuid
+  stage        PipelineStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  /// Stable code from `PipelineStage.allowedStatuses[].code`. Free
+  /// string at the column level; validated at the service.
+  status       String
+  /// Snapshot of `Lead.attemptIndex` when this status was recorded.
+  /// Lets reports filter "statuses for this attempt only".
+  attemptIndex Int     @map("attempt_index")
+  /// Author. NULL for system-driven future paths (none today).
+  setByUserId  String? @map("set_by_user_id") @db.Uuid
+  setBy        User?   @relation("LeadStageStatusAuthor", fields: [setByUserId], references: [id], onDelete: SetNull)
+  /// Optional free-text note the agent supplied alongside the status.
+  notes        String?
+
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Inverse relation pointing back from Lead.currentStageStatusId.
+  currentForLeads Lead[] @relation("LeadCurrentStageStatus")
+
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  @@index([tenantId, stageId, status])
+  @@map("lead_stage_statuses")
 }
 
 /// Captain — a Lead converted to an active driver.
