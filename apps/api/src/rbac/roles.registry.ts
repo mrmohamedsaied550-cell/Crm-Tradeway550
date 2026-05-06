@@ -191,6 +191,15 @@ export const ROLE_DEFINITIONS = [
       'partner.reconciliation.read',
       'partner.reconciliation.resolve',
       'partner.milestone.write',
+      // Phase D5 — D5.6A: scoped export capabilities. Granted
+      // automatically to every role that already has `tenant.export`
+      // so existing CSV access is preserved when D5.6B / 6C / 6D
+      // change the per-endpoint capability gate.
+      'lead.export',
+      'report.export',
+      'partner.reconciliation.export',
+      'partner.commission.export',
+      'audit.export',
     ],
   },
   {
@@ -265,6 +274,15 @@ export const ROLE_DEFINITIONS = [
       'partner.reconciliation.read',
       'partner.reconciliation.resolve',
       'partner.milestone.write',
+      // Phase D5 — D5.6A: scoped export capabilities. Granted
+      // automatically to every role that already has `tenant.export`
+      // so existing CSV access is preserved when D5.6B / 6C / 6D
+      // change the per-endpoint capability gate.
+      'lead.export',
+      'report.export',
+      'partner.reconciliation.export',
+      'partner.commission.export',
+      'audit.export',
     ],
   },
   {

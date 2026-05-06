@@ -255,6 +255,50 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'partner.milestone.write',
     description: 'Create / update / delete partner milestone configurations',
   },
+
+  // Phase D5 — D5.6A: scoped export capabilities. The legacy
+  // `tenant.export` cap dumps the WHOLE tenant in one JSON
+  // payload; the new caps below let an admin separate "see this
+  // surface in the UI" from "download all rows as a CSV". The
+  // seed grants the new caps to every role that currently holds
+  // `tenant.export` so existing operators keep their CSV access;
+  // sub-tenant.export roles must be granted the per-surface cap
+  // explicitly (the intended product behaviour: TLs / Finance can
+  // be granted "see reports without export" or "see commission
+  // without export"). Super admin gets all caps via
+  // ALL_CAPABILITY_CODES — no special case.
+  //
+  // D5.6A only registers these capabilities + role grants. No
+  // export endpoint changes its capability gate yet; that lands
+  // in D5.6B (partner reconciliation + commission CSVs), D5.6C
+  // (reports CSV), D5.6D (tenant backup hardening). Two of the
+  // five caps (`lead.export`, `audit.export`) are reserved —
+  // there is no leads-CSV or audit-CSV endpoint today, but the
+  // codes exist so a tenant role builder can deny them in
+  // advance.
+  {
+    code: 'lead.export',
+    description:
+      'Download a CSV export that includes lead identifiers (reserved — no endpoint in D5.6A)',
+  },
+  {
+    code: 'report.export',
+    description: 'Download a CSV export of dashboard reports (D5.6C — endpoint cap change pending)',
+  },
+  {
+    code: 'partner.reconciliation.export',
+    description:
+      'Download a CSV export of partner reconciliation discrepancies (D5.6B — endpoint cap change pending)',
+  },
+  {
+    code: 'partner.commission.export',
+    description:
+      'Download a CSV export of partner commission progress / risk (D5.6B — endpoint cap change pending)',
+  },
+  {
+    code: 'audit.export',
+    description: 'Download a CSV export of audit events (reserved — no endpoint in D5.6A)',
+  },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];

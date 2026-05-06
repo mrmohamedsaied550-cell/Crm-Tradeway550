@@ -3,6 +3,9 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { RbacService } from './rbac.service';
 import { RbacController } from './rbac.controller';
 import { CapabilityGuard } from './capability.guard';
+import { ExportAuditService } from './export-audit.service';
+import { ExportInterceptor } from './export.interceptor';
+import { ExportRedactionService } from './export-redaction.service';
 import { FieldFilterService } from './field-filter.service';
 import { FieldRedactionInterceptor } from './field-redaction.interceptor';
 import { PermissionCacheService } from './permission-cache.service';
@@ -39,6 +42,15 @@ import { ScopeContextService } from './scope-context.service';
  * no-op when `D5_DYNAMIC_PERMISSIONS_V1=false`. D5.3 only attaches
  * the decorator to LeadsController.list / findOne; later chunks
  * extend it.
+ *
+ * Phase D5 — D5.6A: registers the export-governance foundation —
+ * `ExportRedactionService`, `ExportAuditService`, and a separate
+ * global `ExportInterceptor` keyed by `@ExportGate(...)`. The
+ * export interceptor is a no-op for every route that lacks the
+ * metadata (every route in this commit) and a no-op when the D5
+ * flag is off. No controller wires `@ExportGate` in D5.6A; D5.6B
+ * is the first chunk to consume it (partner reconciliation +
+ * commission CSVs).
  */
 @Global()
 @Module({
@@ -51,9 +63,16 @@ import { ScopeContextService } from './scope-context.service';
     PermissionCacheService,
     PermissionResolverService,
     FieldRedactionInterceptor,
+    ExportRedactionService,
+    ExportAuditService,
+    ExportInterceptor,
     {
       provide: APP_INTERCEPTOR,
       useExisting: FieldRedactionInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useExisting: ExportInterceptor,
     },
   ],
   exports: [
@@ -64,6 +83,9 @@ import { ScopeContextService } from './scope-context.service';
     PermissionCacheService,
     PermissionResolverService,
     FieldRedactionInterceptor,
+    ExportRedactionService,
+    ExportAuditService,
+    ExportInterceptor,
   ],
 })
 export class RbacModule {}
