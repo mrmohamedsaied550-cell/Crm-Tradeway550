@@ -203,3 +203,186 @@ describe('rbac/D5 hotfix — import-chain invariant', () => {
     );
   });
 });
+
+// ════════════════════════════════════════════════════════════════
+// PR #35 — PermissionCacheService DI hotfix invariants
+// ════════════════════════════════════════════════════════════════
+//
+// After PR #34 fixed the role-dependency cycle, staging boot
+// crashed on a different DI error:
+//
+//   Nest can't resolve dependencies of the PermissionCacheService (?).
+//   Please make sure that the argument Object at index [0] is
+//   available in the RbacModule context.
+//
+// Root cause: `PermissionCacheService.constructor(opts:
+// PermissionCacheOptions)` takes a parameter typed as a
+// TypeScript INTERFACE. Interfaces are erased at runtime, so
+// TypeScript emits the literal `Object` in `design:paramtypes`.
+// Nest then looks up a provider with token `Object`, finds
+// none, and throws.
+//
+// The fix is `@Optional()` on the parameter — Nest silently
+// passes `undefined` when no matching provider exists; the
+// `= {}` default keeps construction working in both DI and
+// direct-`new` (test) call sites.
+//
+// These invariants catch a future regression before deploy.
+
+describe('rbac/D5 hotfix #2 — PermissionCacheService DI safety', () => {
+  it('PermissionCacheService.constructor uses @Optional() on the options param', () => {
+    const src = readSource('permission-cache.service.ts');
+    // The decorator must sit on the constructor parameter that
+    // takes the (interface-typed) options object. We accept any
+    // formatting the linter / prettier might produce.
+    assert.match(
+      src,
+      /constructor\s*\([\s\S]*?@Optional\s*\(\s*\)[\s\S]*?opts\s*:\s*PermissionCacheOptions/,
+      'PermissionCacheService.constructor must keep @Optional() on the opts parameter — ' +
+        'without it, Nest crashes at boot trying to resolve provider for token Object ' +
+        '(the design:paramtypes emit for an interface-typed param).',
+    );
+  });
+
+  it('PermissionCacheService imports Optional from @nestjs/common', () => {
+    const src = readSource('permission-cache.service.ts');
+    assert.match(
+      src,
+      /import\s*\{[^}]*\bOptional\b[^}]*\}\s*from\s*['"]@nestjs\/common['"]/,
+      'Optional must be imported from @nestjs/common',
+    );
+  });
+
+  it('PermissionCacheService keeps PermissionCacheOptions as the param type (test compat)', () => {
+    // The test surface (permission-resolver.service.test.ts) calls
+    // `new PermissionCacheService({ maxEntries, ttlMs })`. Removing
+    // the constructor parameter or renaming the interface would
+    // break those tests. Asserting the shape locks the contract.
+    const src = readSource('permission-cache.service.ts');
+    assert.match(
+      src,
+      /export\s+interface\s+PermissionCacheOptions\b/,
+      'PermissionCacheOptions interface must remain exported',
+    );
+  });
+});
+
+// ════════════════════════════════════════════════════════════════
+// PR #35 — RBAC DI cycle sweep
+// ════════════════════════════════════════════════════════════════
+//
+// After two boot crashes (PR #34: cycle on RoleDependencyService;
+// PR #35: interface-typed param on PermissionCacheService), do
+// a defensive structural sweep of the entire RBAC layer so the
+// next failure-mode does not hit production.
+//
+// For every rbac/* service, walk its source and:
+//   1. Collect every `from './...service'` value-import.
+//   2. For each imported sibling, walk THAT file's value-imports.
+//   3. Detect any cycle that closes back to the starting file
+//      via two or more hops.
+//
+// The previous cycle was 4 hops (rbac → version → change-preview
+// → dependency → rbac). The sweep guards against any future
+// re-introduction of any cycle within the rbac/* directory.
+
+describe('rbac/D5 hotfix #2 — no value-import cycles within rbac/*', () => {
+  // ESM relative-import paths to the rbac/* services that are
+  // most likely to participate in cycles. (We're not chasing
+  // pure-helper / registry / DTO files — those are leaves.)
+  const RBAC_SERVICE_FILES: readonly string[] = [
+    'rbac.service.ts',
+    'role-dependency.service.ts',
+    'role-change-preview.service.ts',
+    'role-version.service.ts',
+    'role-template.service.ts',
+    'role-preview.service.ts',
+    'permission-cache.service.ts',
+    'permission-resolver.service.ts',
+    'field-filter.service.ts',
+    'field-redaction.interceptor.ts',
+    'export-redaction.service.ts',
+    'export-audit.service.ts',
+    'export.interceptor.ts',
+    'ownership-visibility.service.ts',
+    'lead-review-visibility.service.ts',
+    'whatsapp-visibility.service.ts',
+    'scope-context.service.ts',
+    'capability.guard.ts',
+  ];
+
+  /**
+   * Parse the value-import targets from a source file. Returns
+   * normalised relative paths (no extension). Pure-type imports
+   * (`import type { X } from 'mod';`) and re-exports are skipped
+   * — only paths that trigger module evaluation at load time
+   * count.
+   */
+  function valueImportsFrom(filename: string): readonly string[] {
+    const src = readSource(filename);
+    const out: string[] = [];
+    for (const rawLine of src.split('\n')) {
+      const line = rawLine.trim();
+      if (!line.startsWith('import')) continue;
+      // Skip pure-type-only imports.
+      if (/^import\s+type\b/.test(line)) continue;
+      const match = /from\s+['"](\.\/[^'"]+)['"]/.exec(line);
+      if (!match) continue;
+      const target = match[1]!.replace(/\.(ts|tsx|js)$/u, '');
+      out.push(target);
+    }
+    return out;
+  }
+
+  /** Convert "role-version.service" → "role-version.service.ts". */
+  function withExt(target: string): string {
+    return target.startsWith('./') ? `${target.slice(2)}.ts` : `${target}.ts`;
+  }
+
+  /**
+   * BFS from `start` through value-import edges. Returns the
+   * first cycle path that loops back to `start`, or `null` when
+   * the graph is acyclic from this entry point.
+   */
+  function findCycleFrom(start: string): readonly string[] | null {
+    const visited = new Set<string>();
+    const stack: Array<{ node: string; path: readonly string[] }> = [
+      { node: start, path: [start] },
+    ];
+    while (stack.length > 0) {
+      const { node, path } = stack.shift()!;
+      const nodeFile = path.length === 1 ? start : node;
+      let imports: readonly string[];
+      try {
+        imports = valueImportsFrom(nodeFile);
+      } catch {
+        continue; // file not a tracked source — skip
+      }
+      for (const imp of imports) {
+        const next = withExt(imp);
+        if (next === start && path.length > 1) {
+          return [...path, start];
+        }
+        if (visited.has(next)) continue;
+        // Only walk into RBAC siblings — out-of-rbac imports
+        // (PrismaService, AuditService, …) cannot participate
+        // in the rbac-internal cycle we're hunting.
+        if (!RBAC_SERVICE_FILES.includes(next)) continue;
+        visited.add(next);
+        stack.push({ node: next, path: [...path, next] });
+      }
+    }
+    return null;
+  }
+
+  for (const start of RBAC_SERVICE_FILES) {
+    it(`${start} has no value-import cycle to itself`, () => {
+      const cycle = findCycleFrom(start);
+      assert.equal(
+        cycle,
+        null,
+        `value-import cycle detected starting from ${start}: ${cycle?.join(' → ') ?? ''}`,
+      );
+    });
+  }
+});
