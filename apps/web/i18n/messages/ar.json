@@ -2700,6 +2700,9 @@
     "fieldHiddenByRole": "{field} مخفي حسب دورك",
     "ownerDetailsHidden": "تفاصيل المالك مخفية حسب دورك",
     "olderAttemptsHidden": "قد توجد محاولات أقدم لكنها مخفية حسب دورك.",
-    "reviewContextHidden": "بعض تفاصيل المراجعة مخفية حسب دورك."
+    "reviewContextHidden": "بعض تفاصيل المراجعة مخفية حسب دورك.",
+    "whatsappPriorMessagesHidden": "الرسائل السابقة مخفية حسب دورك.",
+    "whatsappHandoverChainHidden": "تفاصيل التسليم مخفية حسب دورك.",
+    "whatsappHistoryHidden": "سجل المحادثة مخفي جزئيًا حسب دورك."
   }
 }

@@ -79,6 +79,38 @@ const ENTRIES: readonly ClientCatalogueEntry[] = [
     labelAr: 'عدد المحاولات خارج الصلاحية',
   },
 
+  // D5.12-A / D5.12-B — WhatsApp conversation visibility surface.
+  {
+    resource: 'whatsapp.conversation',
+    field: 'priorAgentMessages',
+    labelEn: 'Earlier conversation messages',
+    labelAr: 'الرسائل السابقة في المحادثة',
+  },
+  {
+    resource: 'whatsapp.conversation',
+    field: 'handoverChain',
+    labelEn: 'Handover chain',
+    labelAr: 'سلسلة التسليم',
+  },
+  {
+    resource: 'whatsapp.conversation',
+    field: 'handoverSummary',
+    labelEn: 'Handover summary',
+    labelAr: 'ملخص التسليم',
+  },
+  {
+    resource: 'whatsapp.conversation',
+    field: 'reviewNotes',
+    labelEn: 'Review notes',
+    labelAr: 'ملاحظات المراجعة',
+  },
+  {
+    resource: 'whatsapp.conversation',
+    field: 'internalMetadata',
+    labelEn: 'Internal metadata',
+    labelAr: 'بيانات داخلية',
+  },
+
   // D5.8 — TL Review Queue context fields.
   {
     resource: 'lead.review',

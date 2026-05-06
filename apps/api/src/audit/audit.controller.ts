@@ -1,7 +1,9 @@
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
+import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
+import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
 import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
@@ -35,6 +37,7 @@ export class AuditController {
       'lead_activities half of the stream).',
   })
   list(
+    @CurrentUser() user: AccessTokenClaims,
     @Query('limit') limit?: string,
     @Query('before') before?: string,
     @Query('action') action?: string,
@@ -64,6 +67,10 @@ export class AuditController {
       ...(trimmedAction && trimmedAction.length > 0 && { action: trimmedAction }),
       ...(actionPrefixes && { actionPrefixes }),
       ...(trimmedEntityId && trimmedEntityId.length > 0 && { entityId: trimmedEntityId }),
+      // D5.12-B — pass the caller's claims so the WhatsApp
+      // handover-payload redactor can resolve their
+      // `whatsapp.conversation` field-permission deny list.
+      userClaims: { userId: user.sub, tenantId: user.tid, roleId: user.rid },
     });
   }
 

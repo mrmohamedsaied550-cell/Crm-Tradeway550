@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import type { ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 /**
@@ -32,7 +34,19 @@ export interface AuditRow {
 
 @Injectable()
 export class AuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /**
+     * Phase D5 — D5.12-B: WhatsApp activity payload redactor.
+     * Applied to lead-activity rows in the unified audit feed so
+     * `whatsapp_handover` / `whatsapp_handover_summary` payloads
+     * don't leak prior-owner identity or handover summary text
+     * via the `/audit` endpoint. @Optional so legacy fixtures
+     * keep compiling; production wiring (the @Global RbacModule)
+     * always provides it.
+     */
+    @Optional() private readonly whatsappVisibility?: WhatsAppVisibilityService,
+  ) {}
 
   /**
    * Append an audit row inside an existing transaction (so the audit
@@ -136,6 +150,17 @@ export class AuditService {
        */
       actionPrefixes?: readonly string[];
       entityId?: string;
+      /**
+       * D5.12-B — caller's scope claims. When supplied, the
+       * lead-activity half of the stream gets the WhatsApp
+       * handover-payload redaction (sub-keys `fromUserId` /
+       * `toUserId` / `summary` are nulled when the role's
+       * `whatsapp.conversation` deny rules require it). When
+       * absent (system-context callers, tests), the rows pass
+       * through unchanged — the audit field-redaction
+       * interceptor at the controller layer is the fallback gate.
+       */
+      userClaims?: ScopeUserClaims;
     } = {},
   ): Promise<AuditRow[]> {
     const tenantId = requireTenantId();
@@ -231,7 +256,22 @@ export class AuditService {
       ];
 
       rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      return rows.slice(0, limit);
+      const sliced = rows.slice(0, limit);
+      // D5.12-B — apply WhatsApp activity payload redaction to
+      // every audit row whose payload carries a
+      // `whatsapp_handover` / `whatsapp_handover_summary` event.
+      // The redactor mutates ONLY the payload sub-keys
+      // (`fromUserId` / `toUserId` / `summary` / `body`) — every
+      // other column passes through. Surgical, no row-count
+      // change.
+      if (this.whatsappVisibility && opts.userClaims) {
+        const visibility = await this.whatsappVisibility.resolveConversationVisibility(
+          opts.userClaims,
+        );
+        const helper = this.whatsappVisibility;
+        return sliced.map((r) => helper.applyAuditRowPayload(r, visibility));
+      }
+      return sliced;
     });
   }
 }

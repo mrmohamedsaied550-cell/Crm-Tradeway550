@@ -2700,6 +2700,9 @@
     "fieldHiddenByRole": "{field} is hidden by your role",
     "ownerDetailsHidden": "Owner details are hidden by your role",
     "olderAttemptsHidden": "Older attempts may exist but are hidden by your role.",
-    "reviewContextHidden": "Some review context is hidden by your role."
+    "reviewContextHidden": "Some review context is hidden by your role.",
+    "whatsappPriorMessagesHidden": "Earlier messages are hidden by your role.",
+    "whatsappHandoverChainHidden": "Handover details are hidden by your role.",
+    "whatsappHistoryHidden": "Conversation history is partially hidden by your role."
   }
 }

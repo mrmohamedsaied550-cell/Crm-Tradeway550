@@ -573,6 +573,24 @@ export interface WhatsAppConversation {
   lead?: ConversationLeadSummary | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Phase D5 — D5.12-A safety flags surfaced by `findConversationById`
+   * to drive frontend placeholders. Optional because the list shape
+   * does not carry them; only the detail shape sets the three
+   * top-level booleans:
+   *   • `priorMessagesHidden` — messages older than the handover
+   *     `assignedAt` are excluded by the server (clean / summary
+   *     transfer floor OR the role denies `priorAgentMessages`).
+   *   • `handoverChainHidden` — the structured chain of handover
+   *     events is denied for this role.
+   *   • `historyHidden` — full conversation history (or its
+   *     prior-message slice) is hidden.
+   * D5.12-B renders these via small notice banners above the
+   * message thread using `<RedactedFieldBadge>`-style copy.
+   */
+  priorMessagesHidden?: boolean;
+  handoverChainHidden?: boolean;
+  historyHidden?: boolean;
 }
 
 /** D1.1 — minimal lead embedded into the conversation detail response.

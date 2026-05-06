@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { LeadsService } from '../crm/leads.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 /**
@@ -55,6 +56,15 @@ export class WhatsAppReviewService {
     private readonly scopeContext: ScopeContextService,
     private readonly leads: LeadsService,
     private readonly audit: AuditService,
+    /**
+     * Phase D5 — D5.12-B: WhatsApp visibility resolver. Applies
+     * the same field-permission + transfer-mode floor as the
+     * conversation read paths to the embedded `conversation`
+     * projection on each review row. Optional so legacy fixtures
+     * keep compiling; production wiring (`WhatsAppModule` via the
+     * `@Global` `RbacModule`) always provides it.
+     */
+    @Optional() private readonly visibility?: WhatsAppVisibilityService,
   ) {}
 
   /**
@@ -70,12 +80,18 @@ export class WhatsAppReviewService {
     const { where: convoScopeWhere } = await this.scopeContext.resolveConversationScope(claims);
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
     const offset = Math.max(opts.offset ?? 0, 0);
+    // D5.12-B — resolve the role's whatsapp.conversation visibility
+    // ONCE per request. Applied per-row below to the embedded
+    // conversation projection.
+    const visibility = this.visibility
+      ? await this.visibility.resolveConversationVisibility(claims)
+      : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const where: Prisma.WhatsAppConversationReviewWhereInput = {
         ...(opts.resolved === true ? { NOT: { resolvedAt: null } } : { resolvedAt: null }),
         ...(convoScopeWhere && { conversation: { is: convoScopeWhere } }),
       };
-      const [items, total] = await Promise.all([
+      const [rawItems, total] = await Promise.all([
         tx.whatsAppConversationReview.findMany({
           where,
           orderBy: { createdAt: 'desc' },
@@ -89,6 +105,12 @@ export class WhatsAppReviewService {
                 lastMessageText: true,
                 lastInboundAt: true,
                 assignedToId: true,
+                // D5.12-B — needed by WhatsAppVisibilityService
+                // to resolve transfer mode + apply the
+                // prior-message preview cutoff.
+                leadId: true,
+                assignedAt: true,
+                assignmentSource: true,
               },
             },
             contact: { select: { id: true, displayName: true, phone: true, isCaptain: true } },
@@ -96,6 +118,20 @@ export class WhatsAppReviewService {
         }),
         tx.whatsAppConversationReview.count({ where }),
       ]);
+      let items = rawItems;
+      if (visibility !== null && this.visibility) {
+        const helper = this.visibility;
+        items = await Promise.all(
+          rawItems.map(async (row) => {
+            const mode = await helper.resolveTransferMode(tx, {
+              id: row.conversation.id,
+              leadId: row.conversation.leadId,
+              assignmentSource: row.conversation.assignmentSource,
+            });
+            return helper.applyReviewRow(row, visibility, mode);
+          }),
+        );
+      }
       return { items, total, limit, offset };
     });
   }
@@ -103,18 +139,33 @@ export class WhatsAppReviewService {
   async findByIdInScope(claims: ScopeUserClaims, id: string) {
     const tenantId = requireTenantId();
     const { where: convoScopeWhere } = await this.scopeContext.resolveConversationScope(claims);
+    // D5.12-B — apply the conversation visibility gate to the
+    // embedded `conversation` projection. The resolve flow uses
+    // its own internal `findFirst` query inside the resolve()
+    // transaction (NOT this method) so resolution logic continues
+    // to read raw rows.
+    const visibility = this.visibility
+      ? await this.visibility.resolveConversationVisibility(claims)
+      : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const where: Prisma.WhatsAppConversationReviewWhereInput = {
         id,
         ...(convoScopeWhere && { conversation: { is: convoScopeWhere } }),
       };
-      return tx.whatsAppConversationReview.findFirst({
+      const row = await tx.whatsAppConversationReview.findFirst({
         where,
         include: {
           conversation: true,
           contact: true,
         },
       });
+      if (!row || visibility === null || !this.visibility) return row;
+      const mode = await this.visibility.resolveTransferMode(tx, {
+        id: row.conversation.id,
+        leadId: row.conversation.leadId,
+        assignmentSource: row.conversation.assignmentSource,
+      });
+      return this.visibility.applyReviewRow(row, visibility, mode);
     });
   }
 

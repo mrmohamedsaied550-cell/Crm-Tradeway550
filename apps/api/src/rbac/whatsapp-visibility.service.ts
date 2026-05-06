@@ -319,6 +319,252 @@ export class WhatsAppVisibilityService {
       return t !== null && t >= cutoff;
     });
   }
+
+  /**
+   * Phase D5 — D5.12-B: WhatsApp review row redactor.
+   *
+   * The TL Review Queue ships rows that EMBED a conversation
+   * projection (id / phone / lastMessageText / lastInboundAt /
+   * assignedToId in the list shape; the full row in the detail
+   * shape). The embedded conversation may carry prior-agent
+   * content the calling role isn't allowed to see — `applyReviewRow`
+   * applies the same column-level redaction as
+   * `applyConversationListRow` to that nested object plus
+   * D5.12-B-specific gates on the review row itself:
+   *
+   *   • `assignedToId` on the embedded conversation is null'd
+   *     when `internalMetadata` is denied (it leaks the previous
+   *     assignee identity).
+   *   • `lastMessageText` is null'd when its preview predates an
+   *     `assignedAt` AND prior messages must hide.
+   *   • `lastInboundAt` is preserved (operational context — the
+   *     TL needs to see when the customer last replied).
+   *   • The review row's top-level `reason` / `resolution` /
+   *     `resolvedAt` / `createdAt` columns are operational and
+   *     surface verbatim.
+   *
+   * Transfer-mode resolution requires a `tx` client + a populated
+   * `conversation` shape (id / leadId / assignmentSource); the
+   * caller passes the same row it embedded so the helper avoids
+   * a second DB read.
+   *
+   * Pure function — returns a fresh row; the input is untouched.
+   */
+  applyReviewRow<
+    T extends {
+      conversation: {
+        id: string;
+        phone: string;
+        lastMessageText?: string | null;
+        lastInboundAt?: Date | string | null;
+        assignedToId?: string | null;
+        assignedAt?: Date | string | null;
+        assignmentSource?: string | null;
+      } | null;
+    },
+  >(row: T, visibility: ConversationVisibility, mode: WhatsAppTransferMode): T {
+    const out: T = { ...row };
+    if (!out.conversation) return out;
+    const conv = { ...out.conversation } as typeof out.conversation;
+    const hidePrior = this.shouldHidePriorMessages(visibility, mode);
+    if (
+      hidePrior &&
+      conv.lastInboundAt !== undefined &&
+      conv.assignedAt !== undefined &&
+      lastMessageBeforeAssignment({
+        lastMessageAt: conv.lastInboundAt ?? null,
+        assignedAt: conv.assignedAt ?? null,
+      })
+    ) {
+      conv.lastMessageText = null;
+    }
+    if (!visibility.canReadInternalMetadata) {
+      conv.assignedToId = null;
+      conv.assignmentSource = null;
+    }
+    out.conversation = conv;
+    return out;
+  }
+
+  /**
+   * Phase D5 — D5.12-B: redact WhatsApp handover sub-keys inside a
+   * `LeadActivity.payload` JSON blob.
+   *
+   * The lead-detail timeline + the unified audit feed surface
+   * `LeadActivity` rows of `type='assignment'` with
+   * `payload.event='whatsapp_handover'` (carries `fromUserId` /
+   * `toUserId` / `mode` / `summary` / `notify`) and
+   * `type='note'` with `payload.event='whatsapp_handover_summary'`
+   * (carries `fromUserId` / `toUserId` and the body string).
+   *
+   * The catalogue's `lead.activity.payload` field-permission gate
+   * is too coarse — it nulls the entire payload, removing
+   * operational context an agent legitimately needs (`event`,
+   * `mode`, `conversationId`). This redactor is surgical: it only
+   * touches the well-known WhatsApp sub-keys.
+   *
+   * Behaviour matrix:
+   *
+   *   • super-admin bypass            → input unchanged.
+   *   • event !== whatsapp_handover  → row passes through (other
+   *     activity types redact at the existing `lead.activity`
+   *     `@ResourceFieldGate`).
+   *   • whatsapp_handover row:
+   *       - `fromUserId` nulled when `internalMetadata` denied
+   *         (previous-owner identity).
+   *       - `toUserId` preserved (current assignee — the agent
+   *         themselves; hiding it would break their own UI).
+   *       - `summary` nulled when `handoverSummary` denied.
+   *       - `mode` / `conversationId` / `notify` preserved
+   *         (operational context).
+   *   • whatsapp_handover_summary row:
+   *       - `fromUserId` / `toUserId` nulled when
+   *         `internalMetadata` denied.
+   *       - The activity's `body` text (the summary itself) is
+   *         nulled when `handoverSummary` denied.
+   *
+   * Pure function — returns a fresh array of cloned rows. Row
+   * count is preserved exactly; nothing is dropped.
+   */
+  applyActivityList<
+    T extends {
+      type: string;
+      body?: string | null;
+      payload: unknown;
+    },
+  >(rows: readonly T[], visibility: ConversationVisibility): T[] {
+    if (visibility.bypassedFieldPermissions) return [...rows];
+    return rows.map((r) => this.applyActivityRow(r, visibility));
+  }
+
+  /**
+   * Phase D5 — D5.12-B: redact a unified-audit-feed row's
+   * `payload` JSON when it represents a `whatsapp_handover` /
+   * `whatsapp_handover_summary` event. The audit pipeline merges
+   * `LeadActivity.body` into `payload.body` (see
+   * `AuditService.list`), so this helper nulls the merged `body`
+   * key alongside the regular sub-key redaction.
+   *
+   * Only the `payload` field is mutated; every other audit-row
+   * column passes through.
+   */
+  applyAuditRowPayload<T extends { payload: unknown }>(
+    row: T,
+    visibility: ConversationVisibility,
+  ): T {
+    if (visibility.bypassedFieldPermissions) return row;
+    if (!row.payload || typeof row.payload !== 'object' || Array.isArray(row.payload)) {
+      return row;
+    }
+    const payload = row.payload as Record<string, unknown>;
+    const event = payload['event'];
+    if (event !== 'whatsapp_handover' && event !== 'whatsapp_handover_summary') {
+      return row;
+    }
+    const newPayload: Record<string, unknown> = { ...payload };
+    let changed = false;
+    if (!visibility.canReadInternalMetadata) {
+      if ('fromUserId' in newPayload && newPayload['fromUserId'] !== null) {
+        newPayload['fromUserId'] = null;
+        changed = true;
+      }
+      if (
+        event === 'whatsapp_handover_summary' &&
+        'toUserId' in newPayload &&
+        newPayload['toUserId'] !== null
+      ) {
+        newPayload['toUserId'] = null;
+        changed = true;
+      }
+    }
+    if (!visibility.canReadHandoverSummary) {
+      if ('summary' in newPayload && newPayload['summary'] !== null) {
+        newPayload['summary'] = null;
+        changed = true;
+      }
+      // Audit feed merges `LeadActivity.body` into payload.body
+      // for lead-activity rows. The whatsapp_handover_summary
+      // body is the verbatim summary text — null it on the same
+      // gate as the structured `summary` sub-key.
+      if (
+        event === 'whatsapp_handover_summary' &&
+        'body' in newPayload &&
+        newPayload['body'] !== null
+      ) {
+        newPayload['body'] = null;
+        changed = true;
+      }
+    }
+    if (!changed) return row;
+    return { ...row, payload: newPayload };
+  }
+
+  applyActivityRow<
+    T extends {
+      type: string;
+      body?: string | null;
+      payload: unknown;
+    },
+  >(row: T, visibility: ConversationVisibility): T {
+    if (visibility.bypassedFieldPermissions) return row;
+    if (!row.payload || typeof row.payload !== 'object' || Array.isArray(row.payload)) {
+      return row;
+    }
+    const payload = row.payload as Record<string, unknown>;
+    const event = payload['event'];
+    if (event !== 'whatsapp_handover' && event !== 'whatsapp_handover_summary') {
+      return row;
+    }
+
+    let changed = false;
+    const newPayload: Record<string, unknown> = { ...payload };
+
+    if (!visibility.canReadInternalMetadata) {
+      if ('fromUserId' in newPayload && newPayload['fromUserId'] !== null) {
+        newPayload['fromUserId'] = null;
+        changed = true;
+      }
+      // For whatsapp_handover_summary the toUserId is the actor's
+      // counterpart — the receiver. We null it here too because the
+      // surrounding context is the previous-agent → previous-target
+      // chain, NOT the current viewer's own assignment. For the
+      // primary whatsapp_handover row, toUserId is the current
+      // owner, so we preserve it.
+      if (
+        event === 'whatsapp_handover_summary' &&
+        'toUserId' in newPayload &&
+        newPayload['toUserId'] !== null
+      ) {
+        newPayload['toUserId'] = null;
+        changed = true;
+      }
+    }
+
+    if (!visibility.canReadHandoverSummary) {
+      if ('summary' in newPayload && newPayload['summary'] !== null) {
+        newPayload['summary'] = null;
+        changed = true;
+      }
+    }
+
+    const out: T = { ...row };
+    if (changed) {
+      (out as { payload: unknown }).payload = newPayload;
+    }
+    // For whatsapp_handover_summary rows the activity's `body` is
+    // a verbatim copy of the operator-authored summary text. Null
+    // it when `handoverSummary` is denied so the timeline doesn't
+    // leak via the `body` channel that bypasses `payload`.
+    if (
+      event === 'whatsapp_handover_summary' &&
+      !visibility.canReadHandoverSummary &&
+      out.body !== null &&
+      out.body !== undefined
+    ) {
+      (out as { body: string | null }).body = null;
+    }
+    return out;
+  }
 }
 
 // ─── helpers ──────────────────────────────────────────────────────

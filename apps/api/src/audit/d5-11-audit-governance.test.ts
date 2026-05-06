@@ -138,10 +138,21 @@ describe('audit/D5.11 — resolveActionPrefixes', () => {
 // C. AuditController validation
 // ════════════════════════════════════════════════════════════════
 
+// D5.12-B: AuditController.list now takes `@CurrentUser()` as the
+// first argument so the WhatsApp handover-payload redactor can
+// resolve the caller's whatsapp.conversation deny list. Tests
+// pass a fake claims envelope.
+const FAKE_USER = {
+  typ: 'access' as const,
+  sub: 'u-1',
+  tid: 't-1',
+  rid: 'r-1',
+};
+
 describe('audit/D5.11 — AuditController', () => {
   it('forwards a known actionPrefix as the resolved prefix array', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, undefined, 'rbac');
+    await controller.list(FAKE_USER, undefined, undefined, undefined, 'rbac');
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0]!.actionPrefixes, ['rbac.']);
     assert.equal(calls[0]!.action, undefined);
@@ -149,7 +160,7 @@ describe('audit/D5.11 — AuditController', () => {
 
   it('forwards an umbrella actionPrefix as the multi-prefix array', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, undefined, 'export_governance');
+    await controller.list(FAKE_USER, undefined, undefined, undefined, 'export_governance');
     assert.equal(calls.length, 1);
     const ps = calls[0]!.actionPrefixes!;
     assert.ok(ps.length >= 4);
@@ -161,7 +172,7 @@ describe('audit/D5.11 — AuditController', () => {
     const { controller } = buildController();
     let thrown: BadRequestException | null = null;
     try {
-      await controller.list(undefined, undefined, undefined, 'arbitrary.prefix');
+      await controller.list(FAKE_USER, undefined, undefined, undefined, 'arbitrary.prefix');
     } catch (err) {
       thrown = err as BadRequestException;
     }
@@ -178,34 +189,40 @@ describe('audit/D5.11 — AuditController', () => {
 
   it('treats an empty / whitespace actionPrefix as absent (no validation, no filter)', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, undefined, '   ');
+    await controller.list(FAKE_USER, undefined, undefined, undefined, '   ');
     assert.equal(calls[0]!.actionPrefixes, undefined);
   });
 
   it('still accepts the legacy `action` exact + wildcard filter', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, 'lead.rotated');
+    await controller.list(FAKE_USER, undefined, undefined, 'lead.rotated');
     assert.equal(calls[0]!.action, 'lead.rotated');
     assert.equal(calls[0]!.actionPrefixes, undefined);
   });
 
   it('accepts both action and actionPrefix simultaneously (service ANDs them)', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, 'lead.rotated', 'rbac');
+    await controller.list(FAKE_USER, undefined, undefined, 'lead.rotated', 'rbac');
     assert.equal(calls[0]!.action, 'lead.rotated');
     assert.deepEqual(calls[0]!.actionPrefixes, ['rbac.']);
   });
 
   it('forwards a trimmed entityId', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, undefined, undefined, '  role-1  ');
+    await controller.list(FAKE_USER, undefined, undefined, undefined, undefined, '  role-1  ');
     assert.equal(calls[0]!.entityId, 'role-1');
   });
 
   it('drops empty / whitespace entityId', async () => {
     const { controller, calls } = buildController();
-    await controller.list(undefined, undefined, undefined, undefined, '   ');
+    await controller.list(FAKE_USER, undefined, undefined, undefined, undefined, '   ');
     assert.equal(calls[0]!.entityId, undefined);
+  });
+
+  it('forwards the calling claims as userClaims', async () => {
+    const { controller, calls } = buildController();
+    await controller.list(FAKE_USER);
+    assert.deepEqual(calls[0]!.userClaims, { userId: 'u-1', tenantId: 't-1', roleId: 'r-1' });
   });
 });
 

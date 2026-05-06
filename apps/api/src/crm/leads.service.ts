@@ -17,6 +17,7 @@ import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
 import { OwnershipVisibilityService } from '../rbac/ownership-visibility.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { buildAttribution } from './attribution.util';
@@ -145,6 +146,17 @@ export class LeadsService {
      * via the @Global RbacModule) always provides it.
      */
     @Optional() private readonly ownershipVisibility?: OwnershipVisibilityService,
+    /**
+     * Phase D5 — D5.12-B: WhatsApp activity payload redactor.
+     * Walks `LeadActivity` rows in `listActivities` and strips
+     * sensitive sub-keys (`fromUserId` / `toUserId` / `summary`)
+     * from `whatsapp_handover` + `whatsapp_handover_summary`
+     * payloads when the role's `whatsapp.conversation` deny rules
+     * require it. @Optional so legacy fixtures keep compiling;
+     * production wiring (CrmModule via the @Global RbacModule)
+     * always provides it.
+     */
+    @Optional() private readonly whatsappVisibility?: WhatsAppVisibilityService,
   ) {}
 
   /**
@@ -1246,24 +1258,35 @@ export class LeadsService {
         },
       }),
     );
+    if (!userClaims) return rows;
     // Phase C — C4: an activity's `payload` JSON may mirror lead-
-    // shape fields (e.g. attribution.campaign was lifted into a
-    // payload by a future emitter). Apply the SAME lead-resource
-    // deny paths to each `payload` so the timeline can't leak a
-    // value the role isn't allowed to see directly. Today's
-    // emitters don't include any of the seeded sales_agent denies,
-    // so this is a defensive pass — but it ships now so future
-    // payload writers stay safe by default.
-    if (!userClaims || !this.fieldFilter) return rows;
-    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
-    if (paths.length === 0) return rows;
-    return rows.map((row) => ({
-      ...row,
-      payload:
-        row.payload == null
-          ? row.payload
-          : (this.fieldFilter!.filterRead(row.payload, paths) as typeof row.payload),
-    }));
+    // shape fields. Apply lead-resource deny paths to each
+    // payload so the timeline can't leak a value the role isn't
+    // allowed to see directly.
+    let next = rows;
+    if (this.fieldFilter) {
+      const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+      if (paths.length > 0) {
+        const filter = this.fieldFilter;
+        next = next.map((row) => ({
+          ...row,
+          payload:
+            row.payload == null
+              ? row.payload
+              : (filter.filterRead(row.payload, paths) as typeof row.payload),
+        }));
+      }
+    }
+    // Phase D5 — D5.12-B: redact WhatsApp handover sub-keys
+    // (`fromUserId` / `toUserId` / `summary`) on
+    // `whatsapp_handover` + `whatsapp_handover_summary` activity
+    // payloads. Surgical — non-WhatsApp rows pass through
+    // unchanged. Row count preserved.
+    if (this.whatsappVisibility) {
+      const visibility = await this.whatsappVisibility.resolveConversationVisibility(userClaims);
+      next = this.whatsappVisibility.applyActivityList(next, visibility);
+    }
+    return next;
   }
 
   // ───────────────────────────────────────────────────────────────────────
