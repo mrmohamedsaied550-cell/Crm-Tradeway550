@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { tenantContext } from '../tenants/tenant-context';
 import { hashPassword } from '../identity/password.util';
 import { PIPELINE_STAGE_DEFINITIONS } from '../crm/pipeline.registry';
-import { BackupService } from './backup.service';
+import { BackupService, tenantBackupToWireEnvelope } from './backup.service';
 
 const TENANT_CODE = '__p3_07_backup__';
 
@@ -131,7 +131,18 @@ describe('BackupService.exportTenant (P3-07)', () => {
   });
 
   it('strips secrets and stamps schemaVersion + rowCap', async () => {
-    const dump = await inTenant(() => svc.exportTenant());
+    // D5.6D-1 — exportTenant() now returns a StructuredTenantBackup;
+    // collapse it through the wire-envelope helper so this legacy
+    // assertion suite continues to verify the wire-restore-compatible
+    // shape end-to-end.
+    const structured = await inTenant(() => svc.exportTenant());
+    const dump = tenantBackupToWireEnvelope(structured) as {
+      schemaVersion: number;
+      rowCap: number;
+      tenant: { code: string };
+      counts: Record<string, number>;
+      data: Record<string, unknown[]>;
+    };
 
     assert.equal(dump.schemaVersion, 1);
     assert.equal(dump.rowCap, 10_000);
@@ -147,13 +158,13 @@ describe('BackupService.exportTenant (P3-07)', () => {
 
     // Counts envelope matches the data arrays length-for-length.
     for (const [key, count] of Object.entries(dump.counts)) {
-      const arr = (dump.data as Record<string, unknown[]>)[key];
+      const arr = dump.data[key];
       assert.ok(Array.isArray(arr), `data.${key} must be an array`);
-      assert.equal(arr.length, count, `counts.${key} must match data.${key}.length`);
+      assert.equal(arr!.length, count, `counts.${key} must match data.${key}.length`);
     }
 
     // Sanity: at least the lead we seeded shows up.
-    assert.equal(dump.counts.leads, 1);
-    assert.equal(dump.counts.whatsappAccounts, 1);
+    assert.equal(dump.counts['leads'], 1);
+    assert.equal(dump.counts['whatsappAccounts'], 1);
   });
 });

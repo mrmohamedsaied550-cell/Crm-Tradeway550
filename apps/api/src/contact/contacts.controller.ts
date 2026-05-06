@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { ContactsService } from './contacts.service';
@@ -76,6 +77,7 @@ export class ContactsController {
 
   @Get(':id')
   @RequireCapability('whatsapp.contact.read')
+  @ResourceFieldGate('contact')
   @ApiOperation({
     summary: 'Get a contact (cleaned identity; raw provider snapshot is omitted)',
   })

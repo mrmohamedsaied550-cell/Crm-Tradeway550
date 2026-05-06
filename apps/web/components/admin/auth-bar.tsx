@@ -65,6 +65,17 @@ export function AuthBar(): JSX.Element {
           // network call. Defaults permissive when the cached
           // /auth/me predates the C4 server change.
           fieldPermissions: u.fieldPermissions ?? [],
+          // Phase D5 — D5.9: cache the derived deny projections +
+          // scope map shipped by /auth/me so the SPA's permission
+          // helpers and `<RedactedFieldBadge>` work on the first
+          // render without waiting for hydration.
+          ...(u.deniedReadFieldsByResource && {
+            deniedReadFieldsByResource: u.deniedReadFieldsByResource,
+          }),
+          ...(u.deniedWriteFieldsByResource && {
+            deniedWriteFieldsByResource: u.deniedWriteFieldsByResource,
+          }),
+          ...(u.scopesByResource && { scopesByResource: u.scopesByResource }),
         };
         setCachedMe(next);
         setMe(next);

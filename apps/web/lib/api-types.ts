@@ -100,19 +100,333 @@ export interface RoleDetail {
   fieldPermissions: readonly RoleFieldPermissionRow[];
 }
 
+/**
+ * Phase D5 — D5.10: stable warning codes shipped by
+ * `GET /rbac/roles/:id/preview`. The role-editor preview tab maps
+ * each code to localised copy via `admin.roles.preview.warnings.*`.
+ */
+export type RolePreviewWarningCode =
+  | 'has_export_capabilities'
+  | 'has_partner_data_access'
+  | 'has_partner_merge_capability'
+  | 'has_audit_payload_access'
+  | 'no_lead_read_capability'
+  | 'has_hidden_owner_history_fields'
+  | 'has_super_admin_bypass';
+
+/**
+ * Phase D5 — D5.10: response shape for the role permission
+ * preview endpoint. Read-only metadata projection — no row
+ * VALUES, no session, no impersonation.
+ */
+export interface RolePreviewResult {
+  role: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    level: number;
+    isSystem: boolean;
+  };
+  permissions: {
+    capabilities: readonly string[];
+    scopesByResource: Readonly<Record<string, string>>;
+    deniedReadFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    deniedWriteFieldsByResource: Readonly<Record<string, readonly string[]>>;
+  };
+  uiHints: {
+    hiddenFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    readOnlyFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    exportCapabilities: readonly string[];
+    hasLeadRead: boolean;
+  };
+  warnings: readonly RolePreviewWarningCode[];
+}
+
 export interface CapabilityCatalogueEntry {
   id: string;
   code: string;
   description: string;
 }
 
-export interface FieldCatalogueEntry {
-  resource: 'lead';
+/**
+ * Phase D5 — D5.14: dependency-aware role guard surface.
+ *
+ * The role editor calls
+ * `POST /rbac/roles/:id/dependency-check { capabilities: string[] }`
+ * with the proposed capability set; the server returns this
+ * structural analysis. Frontend renders the warnings grouped by
+ * severity above the save button. If `requiresTypedConfirmation`
+ * is true, the save flow opens a typed-confirmation modal that
+ * asks the operator to echo `typedConfirmationPhrase` verbatim.
+ */
+export type RoleDependencyWarningSeverity = 'info' | 'warning' | 'critical';
+
+export type RoleDependencyWarningCode =
+  | 'capability.dependency.missing'
+  | 'capability.high_risk.export'
+  | 'capability.high_risk.partner_merge'
+  | 'capability.high_risk.lockout_admin'
+  | 'capability.high_risk.permission_preview'
+  | 'capability.lockout.self_required'
+  | 'capability.lockout.last_admin'
+  | 'role.system_immutable_attempt';
+
+export interface RoleDependencyWarning {
+  code: RoleDependencyWarningCode;
+  severity: RoleDependencyWarningSeverity;
+  capability: string | null;
+  dependsOn: readonly string[];
+  messageKey: string;
+  meta: Readonly<Record<string, string | number | boolean>>;
+}
+
+export interface RoleDependencyAnalysis {
+  warnings: readonly RoleDependencyWarning[];
+  severityCounts: Readonly<Record<RoleDependencyWarningSeverity, number>>;
+  requiresTypedConfirmation: boolean;
+  typedConfirmationPhrase: string;
+}
+
+/**
+ * Phase D5 — D5.15-A: structural change-set preview shape.
+ *
+ * The role builder calls `POST /rbac/roles/:id/change-preview`
+ * with the proposed capability / scope / field-permission set
+ * (any subset). The server returns a read-only diff plus the
+ * D5.14 dependency analysis verbatim.
+ *
+ * Risk flags (`riskSummary`) are booleans the UI uses to
+ * highlight categories on the review modal — the user never
+ * sees raw payload values, only structural identifiers
+ * (capability codes, resource + field names, scope strings).
+ */
+export interface RoleChangePreviewFieldPair {
+  resource: string;
   field: string;
+}
+
+export interface RoleChangePreviewScopeChange {
+  resource: RoleScopeRow['resource'];
+  from: RoleScopeRow['scope'];
+  to: RoleScopeRow['scope'];
+}
+
+/**
+ * Phase D5 — D5.16: role template shapes.
+ *
+ * Curated, safe starting points for /admin/roles. The frontend
+ * "Create from template" flow lists the registry, opens a
+ * preview drawer per template, and finally calls the
+ * create-from-template endpoint with admin-supplied code/name.
+ */
+export type RoleTemplateCategory =
+  | 'agent'
+  | 'team_lead'
+  | 'admin'
+  | 'finance'
+  | 'partner'
+  | 'qa'
+  | 'viewer';
+
+export type RoleTemplateRiskTag =
+  | 'export_capability'
+  | 'tenant_export'
+  | 'partner_merge'
+  | 'permission_admin'
+  | 'permission_preview'
+  | 'audit_read'
+  | 'high_privilege';
+
+export interface RoleTemplateSummary {
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  category: RoleTemplateCategory;
+  suggestedLevel: number;
+  capabilityCount: number;
+  scopeCount: number;
+  fieldPermissionCount: number;
+  riskTags: readonly RoleTemplateRiskTag[];
+}
+
+export interface RoleTemplateDetail extends RoleTemplateSummary {
+  capabilities: readonly string[];
+  scopes: readonly RoleScopeRow[];
+  fieldPermissions: readonly RoleFieldPermissionRow[];
+}
+
+export interface RoleTemplatePreviewResult {
+  template: RoleTemplateDetail;
+  dependencyAnalysis: RoleDependencyAnalysis;
+  highRiskCapabilities: readonly string[];
+  typedConfirmationPhrase: string;
+}
+
+/**
+ * Phase D5 — D5.15-B: role version history shapes.
+ *
+ * History rows are server-built snapshots of `(metadata,
+ * capabilities, scopes, fieldPermissions)` plus a structural
+ * change-summary that mirrors the D5.15-A diff vocabulary.
+ * No row VALUES are stored or returned — only structural
+ * identifiers.
+ */
+export type RoleVersionTriggerAction =
+  | 'create'
+  | 'update'
+  | 'duplicate'
+  | 'scopes'
+  | 'field_permissions'
+  | 'revert';
+
+export interface RoleVersionChangeSummary {
+  grantedCapabilities: readonly string[];
+  revokedCapabilities: readonly string[];
+  fieldPermissionChanges: {
+    readDeniedAdded: ReadonlyArray<{ resource: string; field: string }>;
+    readDeniedRemoved: ReadonlyArray<{ resource: string; field: string }>;
+    writeDeniedAdded: ReadonlyArray<{ resource: string; field: string }>;
+    writeDeniedRemoved: ReadonlyArray<{ resource: string; field: string }>;
+  };
+  scopeChanges: {
+    changed: ReadonlyArray<{ resource: string; from: string; to: string }>;
+    added: ReadonlyArray<{ resource: string; scope: string }>;
+    removed: ReadonlyArray<{ resource: string; scope: string }>;
+  };
+  riskFlags: {
+    exportCapabilityAdded: boolean;
+    exportCapabilityRevoked: boolean;
+    ownerHistoryVisibilityChanged: boolean;
+    auditVisibilityChanged: boolean;
+    backupExportChanged: boolean;
+    permissionAdminChanged: boolean;
+    partnerMergeChanged: boolean;
+  };
+}
+
+export interface RoleVersionListItem {
+  id: string;
+  versionNumber: number;
+  triggerAction: RoleVersionTriggerAction;
+  actor: {
+    userId: string | null;
+    name: string | null;
+    email: string | null;
+  };
+  reason: string | null;
+  createdAt: string;
+  changeSummary: RoleVersionChangeSummary;
+  counts: {
+    grantedCapabilities: number;
+    revokedCapabilities: number;
+    fieldPermissionChanges: number;
+    scopeChanges: number;
+  };
+}
+
+export interface RoleVersionSnapshot {
+  metadata: {
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    level: number;
+    description: string | null;
+    isSystem: boolean;
+    isActive: boolean;
+  };
+  capabilities: readonly string[];
+  scopes: ReadonlyArray<{ resource: string; scope: string }>;
+  fieldPermissions: ReadonlyArray<{
+    resource: string;
+    field: string;
+    canRead: boolean;
+    canWrite: boolean;
+  }>;
+}
+
+export interface RoleVersionDetail extends RoleVersionListItem {
+  snapshot: RoleVersionSnapshot;
+}
+
+export interface RoleVersionListResult {
+  items: readonly RoleVersionListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface RoleChangePreviewResult {
+  role: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    isSystem: boolean;
+  };
+  changes: {
+    capabilities: {
+      granted: readonly string[];
+      revoked: readonly string[];
+      unchangedCount: number;
+    };
+    fieldPermissions: {
+      readDeniedAdded: readonly RoleChangePreviewFieldPair[];
+      readDeniedRemoved: readonly RoleChangePreviewFieldPair[];
+      writeDeniedAdded: readonly RoleChangePreviewFieldPair[];
+      writeDeniedRemoved: readonly RoleChangePreviewFieldPair[];
+    };
+    scopes: {
+      changed: readonly RoleChangePreviewScopeChange[];
+      added: readonly RoleScopeRow[];
+      removed: readonly RoleScopeRow[];
+    };
+  };
+  warnings: readonly RoleDependencyWarning[];
+  severityCounts: Readonly<Record<RoleDependencyWarningSeverity, number>>;
+  requiresTypedConfirmation: boolean;
+  typedConfirmationPhrase: string;
+  riskSummary: {
+    exportCapabilityAdded: boolean;
+    exportCapabilityRevoked: boolean;
+    ownerHistoryVisibilityChanged: boolean;
+    auditVisibilityChanged: boolean;
+    backupExportChanged: boolean;
+    permissionAdminChanged: boolean;
+    partnerMergeChanged: boolean;
+  };
+  hasChanges: boolean;
+}
+
+/**
+ * Phase D5 — D5.2: catalogue widened to fourteen resources
+ * (lead, lead.activity, lead.review, rotation, followup, captain,
+ * contact, partner_source, partner.verification, partner.evidence,
+ * partner.reconciliation, whatsapp.conversation, report, audit).
+ * `resource` is typed as `string` because the role editor groups
+ * by it and the server treats it as an open string at the
+ * field_permissions DTO boundary; clients should not switch on
+ * the literal set.
+ */
+export interface FieldCatalogueEntry {
+  resource: string;
+  field: string;
+  /** Sub-group inside the resource — used by the role editor to chunk the matrix. */
+  group?: string;
   sensitive: boolean;
   defaultRead: boolean;
   defaultWrite: boolean;
   labelEn: string;
+  /** Arabic label — present in D5.2 onwards; older payloads may omit. */
+  labelAr?: string;
+  /**
+   * D5.2 — when `false`, runtime redaction MUST NOT strip this
+   * field even if a deny row exists (e.g. `lead.id`). Default
+   * `true` when omitted.
+   */
+  redactable?: boolean;
 }
 
 /**
@@ -399,6 +713,28 @@ export interface MeUser {
     canRead: boolean;
     canWrite: boolean;
   }>;
+  /**
+   * Phase D5 — D5.9: derived `Record<resource, field[]>` projections
+   * of the role's deny rows. Empty objects on the super_admin
+   * bypass. The SPA's permission helpers (`canReadField`,
+   * `canWriteField`, `isFieldDenied`) read these directly so screens
+   * can render `<RedactedFieldBadge>` without re-walking the flat
+   * `fieldPermissions` list on every render. UX guidance ONLY — the
+   * API is the source of truth for what data leaves the server.
+   *
+   * Optional on the wire so the type stays compatible with cached
+   * `me` payloads written before the D5.9 deploy; the helpers fall
+   * back permissively when the field is absent.
+   */
+  deniedReadFieldsByResource?: Record<string, readonly string[]>;
+  deniedWriteFieldsByResource?: Record<string, readonly string[]>;
+  /**
+   * Phase D5 — D5.9: per-resource role scope (own / team / company /
+   * country / global). Drives "Showing leads from your team only"
+   * banners. Resources without an explicit row default to
+   * `'global'`; absent keys here mean the same on the client.
+   */
+  scopesByResource?: Record<string, string>;
 }
 
 export interface LoginResponse {
@@ -488,6 +824,24 @@ export interface WhatsAppConversation {
   lead?: ConversationLeadSummary | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Phase D5 — D5.12-A safety flags surfaced by `findConversationById`
+   * to drive frontend placeholders. Optional because the list shape
+   * does not carry them; only the detail shape sets the three
+   * top-level booleans:
+   *   • `priorMessagesHidden` — messages older than the handover
+   *     `assignedAt` are excluded by the server (clean / summary
+   *     transfer floor OR the role denies `priorAgentMessages`).
+   *   • `handoverChainHidden` — the structured chain of handover
+   *     events is denied for this role.
+   *   • `historyHidden` — full conversation history (or its
+   *     prior-message slice) is hidden.
+   * D5.12-B renders these via small notice banners above the
+   * message thread using `<RedactedFieldBadge>`-style copy.
+   */
+  priorMessagesHidden?: boolean;
+  handoverChainHidden?: boolean;
+  historyHidden?: boolean;
 }
 
 /** D1.1 — minimal lead embedded into the conversation detail response.
@@ -574,6 +928,16 @@ export interface WhatsAppConversationReview {
   /** Joined when listing/getting; not always present. */
   conversation?: WhatsAppConversation;
   contact?: Contact;
+  /**
+   * Phase D5 — D5.13: server-set transparency flag. True when the
+   * review row's embedded `conversation` had `assignedToId` /
+   * `assignmentSource` redacted by the
+   * `whatsapp.conversation.internalMetadata` field permission
+   * (see `WhatsAppVisibilityService.applyReviewRow`). The review
+   * card uses this to render a calm `<RedactedFieldBadge>` notice
+   * — the server is the source of truth for the redaction.
+   */
+  internalMetadataHidden?: boolean;
 }
 
 export interface ReviewListResult {
@@ -939,15 +1303,21 @@ export interface AttemptHistoryRow {
 }
 
 /**
- * Response of GET /leads/:id/attempts. `outOfScopeCount` is the
- * count of attempts the operator's role can't see; the UI surfaces
- * it as a single "N previous attempts are outside your access."
- * line at the bottom of the timeline.
+ * Response of GET /leads/:id/attempts.
+ *
+ * `outOfScopeCount`:
+ *   • `number` — when the role can read the count, surfaces as
+ *     "N previous attempts are outside your access."
+ *   • `null`   — Phase D5 — D5.8: the role's
+ *     `lead.outOfScopeAttemptCount` field-permission is denied.
+ *     The UI renders the generic "older attempts may exist but
+ *     are hidden by your role" copy without disclosing whether
+ *     any actually exist.
  */
 export interface AttemptHistoryResult {
   attempts: AttemptHistoryRow[];
   totalAttempts: number;
-  outOfScopeCount: number;
+  outOfScopeCount: number | null;
   currentLeadId: string;
 }
 

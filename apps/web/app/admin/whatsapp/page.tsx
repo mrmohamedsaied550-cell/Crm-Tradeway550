@@ -18,6 +18,7 @@ import {
   type ConversationAction,
 } from '@/components/whatsapp/conversation-action-menu';
 import { ConversationHeader } from '@/components/whatsapp/conversation-header';
+import { ConversationVisibilityBanners } from '@/components/whatsapp/conversation-visibility-banners';
 import { ConversationRow } from '@/components/whatsapp/conversation-row';
 import {
   ConfirmConversationActionModal,
@@ -508,6 +509,7 @@ export default function WhatsAppInboxPage(): JSX.Element {
                 }
                 now={now}
               />
+              <ConversationVisibilityBanners conversation={selected} />
               <ChatThread messages={messages} loading={chatLoading} />
               <SendComposer
                 conversation={selected}

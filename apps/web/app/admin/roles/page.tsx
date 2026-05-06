@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Copy, Lock, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Copy, Lock, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
+import { RoleTemplatePicker } from '@/components/admin/roles/role-template-picker';
 import { ApiError, rolesApi } from '@/lib/api';
 import type { RoleSummary } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
@@ -84,6 +85,13 @@ export default function RolesAdminPage(): JSX.Element {
   const [dupForm, setDupForm] = useState<DuplicateFormState>(EMPTY_DUPLICATE);
   const [submittingDup, setSubmittingDup] = useState<boolean>(false);
   const [dupError, setDupError] = useState<string | null>(null);
+
+  // D5.16 — Template picker state. The picker is the safer
+  // alternative to the duplicate flow: it ships curated capability
+  // sets + safe field-permission denies + sensible scope defaults,
+  // routed through the existing D5.14 dependency-check + D5.15-B
+  // version-capture chain.
+  const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -238,10 +246,20 @@ export default function RolesAdminPage(): JSX.Element {
         subtitle={t('subtitle')}
         actions={
           canWrite ? (
-            <Button onClick={openCreate}>
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              {t('newRole')}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setTemplatePickerOpen(true)}
+                data-testid="role-template-picker-open"
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                {t('templates.picker.openCta')}
+              </Button>
+              <Button onClick={openCreate}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {t('newRole')}
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -416,6 +434,21 @@ export default function RolesAdminPage(): JSX.Element {
           </Field>
         </form>
       </Modal>
+
+      {/* D5.16 — curated template picker. Sits alongside the
+          existing duplicate flow as the safer "Create from
+          template" path. Successful creates route to the new
+          role's detail page so the admin can review the seeded
+          capabilities / scopes / field denies before assigning
+          users. */}
+      <RoleTemplatePicker
+        open={templatePickerOpen}
+        onClose={() => setTemplatePickerOpen(false)}
+        onCreated={async (newRoleId) => {
+          await reload();
+          router.push(`/admin/roles/${newRoleId}`);
+        }}
+      />
     </div>
   );
 }

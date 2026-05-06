@@ -47,6 +47,7 @@ export function LeadReviewCard({
   onResolved: () => void;
 }): JSX.Element {
   const t = useTranslations('admin.leadReviews');
+  const tCommon = useTranslations('common');
   const { toast } = useToast();
 
   const [pendingResolution, setPendingResolution] = useState<LeadReviewResolution | null>(null);
@@ -57,6 +58,26 @@ export function LeadReviewCard({
   const reasonExplain = t(`reasonExplain.${review.reason}` as 'reasonExplain.sla_breach_repeat');
   const isResolved = review.resolvedAt !== null;
   const partnerContext = readPartnerContext(review.reasonPayload);
+
+  // Phase D5 — D5.8 / D5.9: detect when the server redacted the
+  // review's context. Two signals: (1) `reasonPayload === null`
+  // means the entire blob was denied at the server-layer
+  // (`lead.review.reasonPayload`); (2) `partnerContext === null`
+  // for a partner-shaped reason means the nested
+  // `partnerSourceId` / `partnerRecordId` keys were stripped by
+  // `LeadReviewVisibilityService` when `lead.review.partnerContext`
+  // is denied. Either way we render the calm "Some review context
+  // is hidden by your role" placeholder so the operator
+  // understands the gap.
+  const reasonPayloadRedacted = review.reasonPayload === null;
+  const partnerContextLikelyRedacted =
+    !partnerContext &&
+    !reasonPayloadRedacted &&
+    (review.reason === 'partner_active_not_in_crm' ||
+      review.reason === 'partner_date_mismatch' ||
+      review.reason === 'partner_dft_mismatch' ||
+      review.reason === 'partner_trips_mismatch');
+  const contextRedacted = reasonPayloadRedacted || partnerContextLikelyRedacted;
 
   async function onConfirm(notes?: string): Promise<void> {
     if (!pendingResolution) return;
@@ -133,6 +154,17 @@ export function LeadReviewCard({
       </header>
 
       <p className="text-sm text-ink-secondary">{reasonExplain}</p>
+
+      {contextRedacted ? (
+        // Phase D5 — D5.9: placeholder for server-redacted
+        // reasonPayload / partnerContext. Calm copy, not alarming.
+        <div
+          className="flex items-start gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 text-xs italic text-ink-tertiary"
+          data-testid="review-context-redacted"
+        >
+          <span>{tCommon('reviewContextHidden')}</span>
+        </div>
+      ) : null}
 
       {partnerContext ? (
         <dl className="grid grid-cols-1 gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 sm:grid-cols-2">

@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import type { ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 /**
@@ -32,7 +34,19 @@ export interface AuditRow {
 
 @Injectable()
 export class AuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /**
+     * Phase D5 — D5.12-B: WhatsApp activity payload redactor.
+     * Applied to lead-activity rows in the unified audit feed so
+     * `whatsapp_handover` / `whatsapp_handover_summary` payloads
+     * don't leak prior-owner identity or handover summary text
+     * via the `/audit` endpoint. @Optional so legacy fixtures
+     * keep compiling; production wiring (the @Global RbacModule)
+     * always provides it.
+     */
+    @Optional() private readonly whatsappVisibility?: WhatsAppVisibilityService,
+  ) {}
 
   /**
    * Append an audit row inside an existing transaction (so the audit
@@ -107,35 +121,79 @@ export class AuditService {
   /**
    * P2-04 — accept an `action` filter on the unified audit feed.
    *
-   * Two shapes:
+   * Three shapes:
    *   - exact match  (e.g. `?action=auth.login.success`)
    *   - prefix match (e.g. `?action=auth.*`)  — convenient for "show
    *     me everything auth-related" without the caller having to OR
    *     a dozen specific verbs together.
+   *   - allow-listed actionPrefix group (D5.11) — caller passes the
+   *     allow-list KEY (e.g. `'rbac'`, `'tenant_export'`) and the
+   *     service translates it to the canonical prefix string. This
+   *     is the path the admin audit chips use.
    *
-   * The filter applies to `audit_events.action` directly. For the
-   * `lead_activities` half of the stream, the synthesised verb is
-   * `lead.<type>`, so a prefix like `lead.*` will likewise narrow
-   * the activity rows.
+   * D5.11 — the optional `entityId` filter narrows to one specific
+   * audit_event row (e.g. "all rbac.role.previewed events for role
+   * X"). Lead activities have no entityId column — when the filter
+   * is set the activities half is dropped (saves a query when the
+   * caller wants a non-lead-scoped view).
    */
-  async list(opts: { limit?: number; before?: Date; action?: string } = {}): Promise<AuditRow[]> {
+  async list(
+    opts: {
+      limit?: number;
+      before?: Date;
+      action?: string;
+      /**
+       * D5.11 — list of allow-listed action prefixes. Each prefix
+       * is ORed into the `audit_events.action` filter via
+       * `startsWith`. Resolved from `AUDIT_ACTION_GROUPS` by the
+       * controller; the service never accepts a free-form prefix.
+       */
+      actionPrefixes?: readonly string[];
+      entityId?: string;
+      /**
+       * D5.12-B — caller's scope claims. When supplied, the
+       * lead-activity half of the stream gets the WhatsApp
+       * handover-payload redaction (sub-keys `fromUserId` /
+       * `toUserId` / `summary` are nulled when the role's
+       * `whatsapp.conversation` deny rules require it). When
+       * absent (system-context callers, tests), the rows pass
+       * through unchanged — the audit field-redaction
+       * interceptor at the controller layer is the fallback gate.
+       */
+      userClaims?: ScopeUserClaims;
+    } = {},
+  ): Promise<AuditRow[]> {
     const tenantId = requireTenantId();
     const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
     const filter = parseActionFilter(opts.action);
+    const entityIdFilter = opts.entityId?.trim();
+    const safePrefixes = (opts.actionPrefixes ?? []).filter((p) => p.length > 0);
+    const hasGroupFilter = safePrefixes.length > 0;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const eventWhere: Prisma.AuditEventWhereInput = {
         ...(opts.before && { createdAt: { lt: opts.before } }),
         ...(filter.kind === 'exact' && { action: filter.value }),
         ...(filter.kind === 'prefix' && { action: { startsWith: filter.value } }),
+        ...(hasGroupFilter && {
+          OR: safePrefixes.map((p) => ({ action: { startsWith: p } })),
+        }),
+        ...(entityIdFilter && entityIdFilter.length > 0 && { entityId: entityIdFilter }),
       };
       // For lead_activities the action is `lead.<type>`, so prefix
       // filters on that half of the stream are mapped to a `type`
       // filter where it makes sense, and the row is dropped entirely
       // when the filter is for a non-lead namespace (e.g. `auth.*`).
+      // D5.11 — entityId filter AND group-prefix filter ALSO drop
+      // the activities half: lead_activities has its own `leadId`
+      // column (not `entityId`), and the governance-event prefixes
+      // we accept (rbac.*, role.*, user.scope.*, *.export.*) are
+      // all in `audit_events`.
       const activitiesEnabled =
-        filter.kind === 'none' ||
-        (filter.kind === 'exact' && filter.value.startsWith('lead.')) ||
-        (filter.kind === 'prefix' && 'lead.'.startsWith(filter.value));
+        !entityIdFilter &&
+        !hasGroupFilter &&
+        (filter.kind === 'none' ||
+          (filter.kind === 'exact' && filter.value.startsWith('lead.')) ||
+          (filter.kind === 'prefix' && 'lead.'.startsWith(filter.value)));
       const activityWhere: Prisma.LeadActivityWhereInput = {
         ...(opts.before && { createdAt: { lt: opts.before } }),
         ...(filter.kind === 'exact' &&
@@ -198,7 +256,22 @@ export class AuditService {
       ];
 
       rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      return rows.slice(0, limit);
+      const sliced = rows.slice(0, limit);
+      // D5.12-B — apply WhatsApp activity payload redaction to
+      // every audit row whose payload carries a
+      // `whatsapp_handover` / `whatsapp_handover_summary` event.
+      // The redactor mutates ONLY the payload sub-keys
+      // (`fromUserId` / `toUserId` / `summary` / `body`) — every
+      // other column passes through. Surgical, no row-count
+      // change.
+      if (this.whatsappVisibility && opts.userClaims) {
+        const visibility = await this.whatsappVisibility.resolveConversationVisibility(
+          opts.userClaims,
+        );
+        const helper = this.whatsappVisibility;
+        return sliced.map((r) => helper.applyAuditRowPayload(r, visibility));
+      }
+      return sliced;
     });
   }
 }

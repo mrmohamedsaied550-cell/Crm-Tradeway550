@@ -7,11 +7,13 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { decryptSecret } from '../common/crypto';
 import { normalizeE164 } from '../crm/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { MetaCloudProvider } from './meta-cloud.provider';
 import type { InboundMessage, WhatsAppAccountConfig, WhatsAppProvider } from './whatsapp.provider';
@@ -113,6 +115,27 @@ export class WhatsAppService {
      * working without RoleScope wiring.
      */
     @Optional() private readonly scopeContext?: ScopeContextService,
+    /**
+     * Phase D5 — D5.12-A: WhatsApp visibility resolver. Applies
+     * field-permission + transfer-mode redaction to read paths
+     * (`listConversations`, `findConversationById`,
+     * `listConversationMessages`). Optional so legacy fixtures
+     * keep compiling; production wiring (`WhatsAppModule` via the
+     * `@Global` `RbacModule`) always provides it.
+     */
+    @Optional() private readonly visibility?: WhatsAppVisibilityService,
+    /**
+     * Phase D5 — D5.13: audit sink for the dedicated
+     * `whatsapp.handover.completed` verb emitted alongside the
+     * existing `LeadActivity` rows. The audit row carries
+     * structural metadata only (`conversationId`, `leadId`,
+     * `mode`, `notify`, `hasSummary`) — never `fromUserId`,
+     * `toUserId`, or the summary text itself. Optional so legacy
+     * fixtures (which build a thin WhatsAppService for routing /
+     * inbound tests) keep compiling; production wiring
+     * (`WhatsAppModule`) provides the real instance.
+     */
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -825,6 +848,14 @@ export class WhatsAppService {
     // own / team / company / country scope holders (locked decision §1);
     // admins surface them via the review queue.
     const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
+    // D5.12-A — resolve the caller's whatsapp.conversation visibility
+    // ONCE per request; applied to each row below. When the
+    // visibility service isn't wired (legacy fixtures / inbound
+    // path with no claims), every row passes through unchanged.
+    const visibility =
+      userClaims && this.visibility
+        ? await this.visibility.resolveConversationVisibility(userClaims)
+        : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const baseWhere: Prisma.WhatsAppConversationWhereInput = {
         ...(opts.accountId && { accountId: opts.accountId }),
@@ -834,7 +865,7 @@ export class WhatsAppService {
       const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
         ? { AND: [baseWhere, scopeWhere] }
         : baseWhere;
-      const [items, total] = await Promise.all([
+      const [rawItems, total] = await Promise.all([
         tx.whatsAppConversation.findMany({
           where,
           orderBy: { lastMessageAt: 'desc' },
@@ -859,6 +890,25 @@ export class WhatsAppService {
         }),
         tx.whatsAppConversation.count({ where }),
       ]);
+      // D5.12-A — apply per-row redaction: null-out lastMessageText
+      // when the preview predates a handover assignedAt AND the
+      // role can't see prior agent messages, and strip
+      // assignmentSource / assignedTo.email when internal metadata
+      // is denied. Row count is preserved.
+      let items = rawItems;
+      if (visibility !== null && this.visibility) {
+        const helper = this.visibility;
+        items = await Promise.all(
+          rawItems.map(async (row) => {
+            const mode = await helper.resolveTransferMode(tx, {
+              id: row.id,
+              leadId: row.leadId,
+              assignmentSource: row.assignmentSource,
+            });
+            return helper.applyConversationListRow(row, visibility, mode);
+          }),
+        );
+      }
       return { items, total, limit: opts.limit ?? 50, offset: opts.offset ?? 0 };
     });
   }
@@ -875,6 +925,10 @@ export class WhatsAppService {
     // Phase C — C10B-4: out-of-scope direct access returns null so
     // the controller maps to a clean 404 (no scope leak).
     const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
+    const visibility =
+      userClaims && this.visibility
+        ? await this.visibility.resolveConversationVisibility(userClaims)
+        : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
         ? { AND: [{ id }, scopeWhere] }
@@ -891,8 +945,21 @@ export class WhatsAppService {
         },
       });
       if (!row) return null;
-      if (row.leadId !== null) return row;
-      return await this.maybeAutoLinkLead(tx, row);
+      const linked = row.leadId !== null ? row : await this.maybeAutoLinkLead(tx, row);
+      if (!linked) return null;
+      // D5.12-A — apply detail-shape redaction (top-level
+      // `priorMessagesHidden` / `handoverChainHidden` /
+      // `historyHidden` flags + null'd lastMessageText preview /
+      // assignmentSource / email).
+      if (visibility !== null && this.visibility) {
+        const mode = await this.visibility.resolveTransferMode(tx, {
+          id: linked.id,
+          leadId: linked.leadId,
+          assignmentSource: linked.assignmentSource,
+        });
+        return this.visibility.applyConversationDetailRow(linked, visibility, mode);
+      }
+      return linked;
     });
   }
 
@@ -912,22 +979,56 @@ export class WhatsAppService {
     userClaims?: ScopeUserClaims,
   ) {
     const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
+    const visibility =
+      userClaims && this.visibility
+        ? await this.visibility.resolveConversationVisibility(userClaims)
+        : null;
     return this.prisma.withTenant(tenantId, async (tx) => {
       // Phase C — C10B-4: gate on conversation visibility before
       // returning any messages.
       const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
         ? { AND: [{ id: conversationId }, scopeWhere] }
         : { id: conversationId };
+      // D5.12-A — load assignmentSource + assignedAt so the
+      // visibility helper can resolve transfer mode + apply the
+      // prior-message cutoff. Pre-D5.12-A queries selected only
+      // id/phone/leadId; the extra columns are tiny scalars on the
+      // same row.
       const conversation = await tx.whatsAppConversation.findFirst({
         where,
-        select: { id: true, phone: true, leadId: true },
+        select: {
+          id: true,
+          phone: true,
+          leadId: true,
+          assignmentSource: true,
+          assignedAt: true,
+        },
       });
       if (!conversation) return null;
       if (conversation.leadId === null) {
         await this.maybeAutoLinkLead(tx, conversation);
       }
+      // D5.12-A — DB-level cutoff: when the visibility rules say
+      // "hide prior messages" AND a handover assignedAt timestamp
+      // exists, the SQL filter excludes older rows so the message
+      // list NEVER ships them. Hidden rows do not leak via count,
+      // pagination, or any other channel.
+      let createdAtCutoff: Date | null = null;
+      if (visibility !== null && this.visibility) {
+        const mode = await this.visibility.resolveTransferMode(tx, {
+          id: conversation.id,
+          leadId: conversation.leadId,
+          assignmentSource: conversation.assignmentSource,
+        });
+        if (this.visibility.shouldHidePriorMessages(visibility, mode)) {
+          createdAtCutoff = conversation.assignedAt ?? null;
+        }
+      }
       return tx.whatsAppMessage.findMany({
-        where: { conversationId },
+        where: {
+          conversationId,
+          ...(createdAtCutoff && { createdAt: { gte: createdAtCutoff } }),
+        },
         orderBy: { createdAt: 'asc' },
         take: opts.limit ?? 200,
       });
@@ -1295,22 +1396,58 @@ export class WhatsAppService {
         });
       }
 
+      // D5.13 — emit a dedicated `whatsapp.handover.completed`
+      // audit row alongside the LeadActivity rows. The
+      // governance audit feed filters on action-prefix groups
+      // (D5.11); the dedicated verb lets the `whatsapp_handover`
+      // chip light up cleanly without payload-key matching. The
+      // payload carries STRUCTURAL metadata only — no
+      // `fromUserId` / `toUserId` (gated by REST field
+      // permissions), no `summary` text (gated by the
+      // `whatsapp.conversation.handoverSummary` field
+      // permission — see D5.12-B). The flag `hasSummary`
+      // signals whether a summary note exists without echoing
+      // its content.
+      if (this.audit) {
+        await this.audit.writeInTx(tx, tenantId, {
+          action: 'whatsapp.handover.completed',
+          entityType: 'whatsapp_conversation',
+          entityId: conversationId,
+          actorUserId: opts.actorUserId ?? null,
+          payload: {
+            conversationId,
+            leadId: lead.id,
+            mode: opts.mode,
+            notify: opts.notify ?? false,
+            hasSummary: Boolean(opts.summary && opts.summary.length > 0),
+          },
+        });
+      }
+
       // P2-02 — notify the new assignee that a conversation just
       // landed in their lap. Self-handover (testing) doesn't bell.
+      //
+      // D5.13 — Notification body MUST stay neutral. The summary
+      // text (when present) can quote prior-agent or customer
+      // content; we never put it in the body. The recipient reads
+      // the full handover note through the lead timeline, where
+      // the `whatsapp_handover_summary` activity is already gated
+      // by the `whatsapp.conversation.handoverSummary` field
+      // permission (see D5.12-B). The payload also DROPS
+      // `fromUserId` — clients re-fetch the canonical record via
+      // the (already-redacted) REST endpoints when they need the
+      // identity. The structural fields (`conversationId`,
+      // `leadId`, `mode`) stay so the bell can deep-link.
       if (this.notifications && opts.newAssigneeId !== opts.actorUserId) {
         await this.notifications.createInTx(tx, tenantId, {
           recipientUserId: opts.newAssigneeId,
           kind: 'whatsapp.handover',
           title: 'WhatsApp conversation handed to you',
-          body:
-            opts.mode === 'summary' && opts.summary
-              ? opts.summary.slice(0, 200)
-              : `Mode: ${opts.mode}`,
+          body: `Transfer mode: ${opts.mode}`,
           payload: {
             conversationId,
             leadId: lead.id,
             mode: opts.mode,
-            fromUserId,
           },
         });
       }

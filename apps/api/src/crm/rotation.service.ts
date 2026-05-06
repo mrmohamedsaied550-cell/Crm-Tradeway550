@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { DistributionService } from '../distribution/distribution.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  OwnershipVisibilityService,
+  type RotationVisibility,
+} from '../rbac/ownership-visibility.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
@@ -97,6 +101,7 @@ export class RotationService {
     @Optional() private readonly distribution?: DistributionService,
     @Optional() private readonly scopeContext?: ScopeContextService,
     @Optional() private readonly audit?: AuditService,
+    @Optional() private readonly ownership?: OwnershipVisibilityService,
   ) {}
 
   /**
@@ -300,26 +305,32 @@ export class RotationService {
 
   /**
    * List rotation history for a lead, sanitised by the caller's
-   * permission level.
+   * field-permission grants.
    *
-   * Visibility:
-   *   - Caller has `lead.write` (TL+ / Ops / Account Manager /
-   *     Super Admin via roles.registry.ts) ⇒ returns full rows
-   *     including `fromUser`, `toUser`, `actor`, `reasonCode`, `notes`.
-   *   - Otherwise (sales / activation / driving agents) ⇒ from/to
-   *     user objects are stripped, `notes` is stripped, `reasonCode`
-   *     stays (it's a stable enum-like code, not free-text). The
-   *     activity timeline copy on the same surface uses neutral
-   *     "Rotated to you" / "Handled previously" labels rendered
-   *     client-side.
+   * Phase D5 — D5.7: visibility is now driven by the
+   * `field_permissions` table, not the `lead.write` capability.
+   * Each catalogue field on the `rotation` resource gates one
+   * column of the response — `rotation.fromUser`, `rotation.toUser`,
+   * `rotation.actor`, `rotation.notes`, etc. An admin can grant a
+   * role "see rotation history" without `lead.write`, or revoke the
+   * visibility from a role that holds `lead.write`. Default deny
+   * rows for `sales_agent` / `activation_agent` / `driving_agent`
+   * are installed by migration 0040 + the seed so the pre-D5.7
+   * UX is preserved (sales agents see neutral handover copy with
+   * no actor names).
+   *
+   * Per-field nullification is applied at the service layer rather
+   * than via the FieldRedactionInterceptor because the response
+   * shape carries a derived `canSeeOwners` UX hint that the client
+   * uses to render "Hidden by your role" badges; the interceptor
+   * would strip the field but leave no signal for the UI.
+   *
+   * `canSeeOwners` is derived from the per-field gates — `true`
+   * when `fromUser`, `toUser`, AND `actor` are all visible. Mirrors
+   * the pre-D5.7 single-boolean contract for client compatibility.
    *
    * Out-of-scope leads surface as `lead.not_found` (same contract
    * as `LeadsService.findByIdInScopeOrThrow`).
-   *
-   * TODO (forward, per D3 plan §8): introduce a dedicated capability
-   * `lead.previous_owner.read` (or field-level
-   * `lead.rotationHistoryOwner` permission) so the gate stops
-   * piggy-backing on `lead.write`. Tracked for D5 / Final UX Audit.
    */
   async listRotationsForLead(
     leadId: string,
@@ -342,7 +353,11 @@ export class RotationService {
   }> {
     const tenantId = requireTenantId();
     const lead = await this.findVisibleLeadOrThrow(leadId, userClaims);
-    const canSeeOwners = await this.userCanSeeOwnershipHistory(userClaims);
+    const visibility = this.ownership
+      ? await this.ownership.resolveRotationVisibility(userClaims)
+      : ALL_ROTATION_FIELDS_VISIBLE;
+    const canSeeOwners =
+      visibility.canReadFromUser && visibility.canReadToUser && visibility.canReadActor;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       const rows = await tx.leadRotationLog.findMany({
@@ -361,17 +376,17 @@ export class RotationService {
           actor: { select: { id: true, name: true } },
         },
       });
-      const rotations = rows.map((r) =>
-        canSeeOwners
-          ? r
-          : {
-              ...r,
-              fromUser: null,
-              toUser: null,
-              actor: null,
-              notes: null,
-            },
-      );
+      // Per-field nullification — preserve row count, mask only the
+      // denied columns. Notes is text; the user / actor objects are
+      // FK joins. `reasonCode` + `handoverMode` + `trigger` always
+      // stay because they are operational context, not PII.
+      const rotations = rows.map((r) => ({
+        ...r,
+        fromUser: visibility.canReadFromUser ? r.fromUser : null,
+        toUser: visibility.canReadToUser ? r.toUser : null,
+        actor: visibility.canReadActor ? r.actor : null,
+        notes: visibility.canReadNotes ? r.notes : null,
+      }));
       return { leadId, canSeeOwners, rotations };
     });
   }
@@ -464,35 +479,24 @@ export class RotationService {
           : 'system';
     return `Lead rotated (${which}, ${mode} transfer)`;
   }
-
-  /**
-   * Phase D3 — D3.4: previous-owner / rotation-history privilege check.
-   *
-   * Same `lead.write` gate D2.6 keys on for the attempts surface.
-   * Granted to TL / Account Manager / Ops / Super Admin via
-   * `TEAM_LEAD_EXTRAS`; sales / activation / driving agents do NOT
-   * hold it. Falls back to `false` (conservative) when the role
-   * lookup fails so a transient DB error never leaks owner data.
-   *
-   * TODO (forward): introduce a dedicated capability
-   * `lead.previous_owner.read` (or a field-level permission on
-   * `lead.rotationHistoryOwner`) so the gate stops piggy-backing on
-   * `lead.write`. Tracked for D5 / Final UX & User Stories Audit.
-   */
-  private async userCanSeeOwnershipHistory(userClaims: ScopeUserClaims): Promise<boolean> {
-    try {
-      const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
-        tx.role.findUnique({
-          where: { id: userClaims.roleId },
-          include: {
-            capabilities: { include: { capability: { select: { code: true } } } },
-          },
-        }),
-      );
-      const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
-      return codes.includes('lead.write');
-    } catch {
-      return false;
-    }
-  }
 }
+
+/**
+ * Phase D5 — D5.7: rotation-visibility fallback for the
+ * `OwnershipVisibilityService`-less optional injection path.
+ *
+ * `RotationService.ownership` is `@Optional()` so test fixtures that
+ * stand the service up without the full RBAC module compile. When
+ * the optional dependency is missing (and ONLY then), every column
+ * is visible — the test must opt into denied rows by injecting an
+ * `OwnershipVisibilityService` stub. Production wiring always
+ * provides the real service via `RbacModule.@Global`, so this
+ * fallback never runs in a deployed instance.
+ */
+const ALL_ROTATION_FIELDS_VISIBLE: RotationVisibility = {
+  canReadFromUser: true,
+  canReadToUser: true,
+  canReadActor: true,
+  canReadNotes: true,
+  canReadInternalPayload: true,
+};

@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadReviewService } from '../crm/lead-review.service';
+import { serializeCsv } from '../rbac/csv-serializer';
+import type { StructuredExport } from '../rbac/export-contract';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { AuditService } from '../audit/audit.service';
@@ -196,61 +198,177 @@ export class PartnerReconciliationService {
    * computation as `list` but skips the slice. Operators that
    * need a different cohort filter via the same query params.
    */
+  /**
+   * @deprecated D5.6B — kept as a thin shim around
+   * `buildStructuredExport(...)` so any internal caller compiled
+   * against the old signature still works. Production callers
+   * route through the controller, which now returns the
+   * structured shape directly to the ExportInterceptor; this
+   * method survives only to keep the existing test fixtures /
+   * imports compiling. A later cleanup chunk can delete it.
+   */
   async exportCsv(filters: ReconciliationFilters, userClaims: ScopeUserClaims): Promise<string> {
+    const structured = await this.buildStructuredExport(filters, userClaims);
+    return serializeCsv(structured);
+  }
+
+  /**
+   * D5.6B — structured export builder. Returns a `StructuredExport`
+   * the ExportInterceptor consumes for column-level redaction +
+   * canonical CSV serialisation. Each column carries the catalogue
+   * `(resource, field)` pair so a deny rule on `lead.phone` (for
+   * example) strips the `phone` column from the reconciliation
+   * download even though the export's primary resource is
+   * `partner.reconciliation`.
+   *
+   * Byte-equality with the legacy `exportCsv` output is pinned by
+   * golden-file tests in `d5-6b-export-wiring.test.ts`. The column
+   * order, label spelling, comment preamble, ISO 8601 timestamp
+   * formatting, and number stringification are deliberately
+   * matched so a redaction-free export under the new path produces
+   * the same bytes as D4.
+   */
+  async buildStructuredExport(
+    filters: ReconciliationFilters,
+    userClaims: ScopeUserClaims,
+  ): Promise<StructuredExport> {
     const result = await this.list(
       { ...filters, limit: PartnerReconciliationService.MAX_LIMIT },
       userClaims,
     );
-    const lines: string[] = [];
-    lines.push(`# Trade Way / Captain Masr CRM — partner reconciliation export`);
-    lines.push(`# generated: ${result.generatedAt}`);
-    if (filters.partnerSourceId) lines.push(`# partnerSourceId: ${filters.partnerSourceId}`);
-    if (filters.category) lines.push(`# category: ${filters.category}`);
-    lines.push(
-      [
-        'category',
-        'partner_source',
-        'phone',
-        'crm_name',
-        'crm_stage',
-        'crm_lifecycle',
-        'crm_active_date',
-        'crm_dft_date',
-        'crm_trip_count',
-        'partner_status',
-        'partner_active_date',
-        'partner_dft_date',
-        'partner_trip_count',
-        'last_sync_at',
-        'severity',
-        'lead_id',
-        'captain_id',
-      ].join(','),
-    );
-    for (const item of result.items) {
-      lines.push(
-        [
-          item.category,
-          csvEscape(item.partnerSourceName),
-          csvEscape(item.phone),
-          csvEscape(item.crmName ?? ''),
-          csvEscape(item.crmStage ?? ''),
-          csvEscape(item.crmLifecycleState ?? ''),
-          csvEscape(item.crmActiveDate ? item.crmActiveDate.toISOString() : ''),
-          csvEscape(item.crmDftDate ? item.crmDftDate.toISOString() : ''),
-          item.crmTripCount?.toString() ?? '',
-          csvEscape(item.partnerStatus ?? ''),
-          csvEscape(item.partnerActiveDate ? item.partnerActiveDate.toISOString() : ''),
-          csvEscape(item.partnerDftDate ? item.partnerDftDate.toISOString() : ''),
-          item.partnerTripCount?.toString() ?? '',
-          csvEscape(item.lastSyncAt ? item.lastSyncAt.toISOString() : ''),
-          item.severity,
-          item.leadId ?? '',
-          item.captainId ?? '',
-        ].join(','),
-      );
-    }
-    return lines.join('\n');
+
+    const comments: string[] = [];
+    comments.push('# Trade Way / Captain Masr CRM — partner reconciliation export');
+    comments.push(`# generated: ${result.generatedAt}`);
+    if (filters.partnerSourceId) comments.push(`# partnerSourceId: ${filters.partnerSourceId}`);
+    if (filters.category) comments.push(`# category: ${filters.category}`);
+
+    return {
+      format: 'csv',
+      filename: `partner-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`,
+      comments,
+      columns: [
+        // category lives on the reconciliation resource itself.
+        {
+          key: 'category',
+          label: 'category',
+          resource: 'partner.reconciliation',
+          field: 'category',
+        },
+        // partner_source name is sourced from the verification projection.
+        {
+          key: 'partner_source',
+          label: 'partner_source',
+          resource: 'partner.verification',
+          field: 'partnerSourceName',
+        },
+        // CRM identity / lead-side columns inherit from `lead`.
+        { key: 'phone', label: 'phone', resource: 'lead', field: 'phone', sensitive: true },
+        { key: 'crm_name', label: 'crm_name', resource: 'lead', field: 'name' },
+        { key: 'crm_stage', label: 'crm_stage', resource: 'lead', field: 'lifecycleState' },
+        { key: 'crm_lifecycle', label: 'crm_lifecycle', resource: 'lead', field: 'lifecycleState' },
+        // CRM operational dates / trip count come off the captain.
+        {
+          key: 'crm_active_date',
+          label: 'crm_active_date',
+          resource: 'captain',
+          field: 'activatedAt',
+          sensitive: true,
+        },
+        {
+          key: 'crm_dft_date',
+          label: 'crm_dft_date',
+          resource: 'captain',
+          field: 'dftAt',
+          sensitive: true,
+        },
+        {
+          key: 'crm_trip_count',
+          label: 'crm_trip_count',
+          resource: 'captain',
+          field: 'tripCount',
+          sensitive: true,
+        },
+        // Partner-side projection columns.
+        {
+          key: 'partner_status',
+          label: 'partner_status',
+          resource: 'partner.verification',
+          field: 'partnerStatus',
+          sensitive: true,
+        },
+        {
+          key: 'partner_active_date',
+          label: 'partner_active_date',
+          resource: 'partner.verification',
+          field: 'partnerActiveDate',
+          sensitive: true,
+        },
+        {
+          key: 'partner_dft_date',
+          label: 'partner_dft_date',
+          resource: 'partner.verification',
+          field: 'partnerDftDate',
+          sensitive: true,
+        },
+        {
+          key: 'partner_trip_count',
+          label: 'partner_trip_count',
+          resource: 'partner.verification',
+          field: 'tripCount',
+          sensitive: true,
+        },
+        {
+          key: 'last_sync_at',
+          label: 'last_sync_at',
+          resource: 'partner_source',
+          field: 'lastSyncAt',
+        },
+        // Severity is reconciliation-native.
+        {
+          key: 'severity',
+          label: 'severity',
+          resource: 'partner.reconciliation',
+          field: 'severity',
+        },
+        // ID columns — non-redactable (URL deep-links). Catalogue
+        // already declares `redactable: false`; we set the flag
+        // here too as defence in depth.
+        {
+          key: 'lead_id',
+          label: 'lead_id',
+          resource: 'lead',
+          field: 'id',
+          redactable: false,
+        },
+        {
+          key: 'captain_id',
+          label: 'captain_id',
+          resource: 'captain',
+          field: 'id',
+          redactable: false,
+        },
+      ],
+      rows: result.items.map((item) => ({
+        category: item.category,
+        partner_source: item.partnerSourceName,
+        phone: item.phone,
+        crm_name: item.crmName ?? '',
+        crm_stage: item.crmStage ?? '',
+        crm_lifecycle: item.crmLifecycleState ?? '',
+        crm_active_date: item.crmActiveDate ? item.crmActiveDate.toISOString() : '',
+        crm_dft_date: item.crmDftDate ? item.crmDftDate.toISOString() : '',
+        crm_trip_count: item.crmTripCount?.toString() ?? '',
+        partner_status: item.partnerStatus ?? '',
+        partner_active_date: item.partnerActiveDate ? item.partnerActiveDate.toISOString() : '',
+        partner_dft_date: item.partnerDftDate ? item.partnerDftDate.toISOString() : '',
+        partner_trip_count: item.partnerTripCount?.toString() ?? '',
+        last_sync_at: item.lastSyncAt ? item.lastSyncAt.toISOString() : '',
+        severity: item.severity,
+        lead_id: item.leadId ?? '',
+        captain_id: item.captainId ?? '',
+      })),
+    };
   }
 
   /**
@@ -655,13 +773,6 @@ function sameDay(a: Date, b: Date): boolean {
     a.getUTCMonth() === b.getUTCMonth() &&
     a.getUTCDate() === b.getUTCDate()
   );
-}
-
-function csvEscape(s: string): string {
-  if (s === null || s === undefined) return '';
-  const t = String(s);
-  if (/[",\n]/.test(t)) return `"${t.replace(/"/g, '""')}"`;
-  return t;
 }
 
 function emptyCounts(): Record<ReconciliationCategory, number> {

@@ -3,9 +3,11 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionCacheService } from '../rbac/permission-cache.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { hashPassword } from '../identity/password.util';
 import type { CreateUserDto, ListUsersQueryDto, UpdateUserDto, UserStatus } from './org.dto';
@@ -47,7 +49,17 @@ const SAFE_USER_SELECT = {
  */
 @Injectable()
 export class AdminUsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /**
+     * Phase D5 — D5.1: optional permission-cache invalidator. When
+     * provided, every user-mutation that affects the resolver
+     * output (role change, team change) clears the user's cached
+     * permission bundle. @Optional so existing tests that build
+     * AdminUsersService without the RBAC module keep compiling.
+     */
+    @Optional() private readonly permissionCache?: PermissionCacheService,
+  ) {}
 
   // ───────────────────────────────────────────────────────────────────────
   // read / list
@@ -183,13 +195,19 @@ export class AdminUsersService {
     const tenantId = requireTenantId();
     await this.findByIdOrThrow(id);
     await this.assertRoleInTenant(roleId);
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const updated = await this.prisma.withTenant(tenantId, (tx) =>
       tx.user.update({
         where: { id },
         data: { roleId },
         select: SAFE_USER_SELECT,
       }),
     );
+    // Phase D5 — D5.1: a role swap changes every dimension of the
+    // resolver output (capabilities, scopes, field permissions).
+    // Clear all cached entries for this user so the next request
+    // resolves under the new role.
+    this.permissionCache?.invalidateUser(id, tenantId);
+    return updated;
   }
 
   /**
@@ -203,13 +221,19 @@ export class AdminUsersService {
     if (teamId !== null) {
       await this.assertTeamInTenant(teamId);
     }
-    return this.prisma.withTenant(tenantId, (tx) =>
+    const updated = await this.prisma.withTenant(tenantId, (tx) =>
       tx.user.update({
         where: { id },
         data: { teamId },
         select: SAFE_USER_SELECT,
       }),
     );
+    // Phase D5 — D5.1: a team change re-keys the team-scope
+    // resolution path (ScopeContextService.resolveScopeFilter
+    // line 281). Clear cached entries so the next request sees
+    // the new teammate set.
+    this.permissionCache?.invalidateUser(id, tenantId);
+    return updated;
   }
 
   /** Set the user's status to one of `active | invited | disabled`. Idempotent. */

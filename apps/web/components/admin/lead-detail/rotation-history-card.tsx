@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { ArrowRightLeft, Clock } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { RedactedFieldBadge } from '@/components/ui/redacted-field-badge';
 import { ApiError, leadsApi } from '@/lib/api';
 import type { RotationHistoryResponse } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
@@ -74,10 +75,17 @@ export function RotationHistoryCard({ leadId }: { leadId: string }): JSX.Element
       </header>
 
       {!canSee ? (
-        // Sales-agent collapsed view: a single neutral chip + count.
-        <p className="text-xs italic text-ink-secondary">
-          {t('historyRedacted', { count: data.rotations.length })}
-        </p>
+        // Phase D5 — D5.7 / D5.9: collapsed view when fromUser /
+        // toUser / actor are server-redacted. Show the existing
+        // count-based chip plus the standard RedactedFieldBadge so
+        // the user gets consistent copy across every "hidden by
+        // your role" surface.
+        <div className="flex flex-col gap-1">
+          <p className="text-xs italic text-ink-secondary">
+            {t('historyRedacted', { count: data.rotations.length })}
+          </p>
+          <RedactedFieldBadge resource="rotation" field="fromUser" />
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
           {data.rotations.map((r) => (

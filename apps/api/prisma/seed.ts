@@ -144,6 +144,33 @@ async function seedRolesAndMappings(
           skipDuplicates: true,
         });
       }
+
+      // Phase D5 — D5.7: ownership-history field-permission defaults.
+      // Sales / Activation / Driving agents get explicit deny rows on
+      // every rotation owner-history field AND on lead.previousOwner /
+      // lead.ownerHistory. This replaces the pre-D5.7 hardcoded
+      // `lead.write` gate that previously blocked these surfaces; the
+      // new gate consults `field_permissions` directly so admins can
+      // override per-role without granting edit permissions.
+      // Migration 0040 installs the same rows for existing tenants;
+      // this seed entry covers fresh-tenant creation + re-runs.
+      if (
+        def.code === 'sales_agent' ||
+        def.code === 'activation_agent' ||
+        def.code === 'driving_agent'
+      ) {
+        await tx.fieldPermission.createMany({
+          data: D5_7_OWNERSHIP_HISTORY_DENIES.map(([resource, field]) => ({
+            tenantId,
+            roleId: role.id,
+            resource,
+            field,
+            canRead: false,
+            canWrite: false,
+          })),
+          skipDuplicates: true,
+        });
+      }
     }
   });
   // eslint-disable-next-line no-console
@@ -168,6 +195,48 @@ const SALES_AGENT_FIELD_DENIES: ReadonlyArray<readonly [resource: string, field:
   ['lead', 'id'],
   ['lead', 'attribution.campaign'],
   ['lead', 'source'],
+];
+
+/**
+ * Phase D5 — D5.7: default deny rows for the agent cohort
+ * (`sales_agent` / `activation_agent` / `driving_agent`) on every
+ * rotation owner-history field + the lead-side previous-owner
+ * surfaces. Mirrors the pre-D5.7 hardcoded gate so the migration +
+ * seed preserve the existing UX without requiring per-tenant admin
+ * configuration. TL+ / Ops / Account Manager / Super Admin keep
+ * full visibility because no deny row is written for them.
+ *
+ * D5.8 — extended with `lead.outOfScopeAttemptCount` (hides the
+ * count of attempts outside the caller's scope on
+ * `GET /leads/:id/attempts`) + `lead.review.ownerContext` /
+ * `lead.review.partnerContext` (dormant defence-in-depth that
+ * activates if an admin ever grants `lead.review.read` to a
+ * custom agent role). The `rotation.handoverSummary` entry was
+ * removed because the schema carries no `handover_summary` column
+ * and no response surface emits the field — migration 0041
+ * deletes the dead rows from existing tenants.
+ */
+const D5_7_OWNERSHIP_HISTORY_DENIES: ReadonlyArray<readonly [resource: string, field: string]> = [
+  ['rotation', 'fromUser'],
+  ['rotation', 'toUser'],
+  ['rotation', 'actor'],
+  ['rotation', 'notes'],
+  ['rotation', 'internalPayload'],
+  ['lead', 'previousOwner'],
+  ['lead', 'ownerHistory'],
+  ['lead', 'outOfScopeAttemptCount'],
+  ['lead.review', 'ownerContext'],
+  ['lead.review', 'partnerContext'],
+  // D5.12-A — WhatsApp conversation field-permission defaults.
+  // Migration 0042 installs the same rows for existing tenants;
+  // these entries cover fresh-tenant creation + re-runs. The
+  // conversationHistory + handoverSummary fields are gated at
+  // the read-path layer (transfer-mode floor) instead, so they
+  // are NOT denied at the field-permission row.
+  ['whatsapp.conversation', 'handoverChain'],
+  ['whatsapp.conversation', 'priorAgentMessages'],
+  ['whatsapp.conversation', 'reviewNotes'],
+  ['whatsapp.conversation', 'internalMetadata'],
 ];
 
 // ───────────────────────────────────────────────────────────────────────

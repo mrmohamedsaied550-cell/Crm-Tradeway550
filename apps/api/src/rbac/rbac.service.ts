@@ -12,6 +12,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 import type { CapabilityCode } from './capabilities.registry';
+import { PermissionCacheService } from './permission-cache.service';
+import { RoleVersionService, type RoleVersionTriggerAction } from './role-version.service';
 import { ROLE_DEFINITIONS, type RoleCode, ALL_ROLE_CODES } from './roles.registry';
 import type {
   CreateRoleDto,
@@ -95,6 +97,26 @@ export class RbacService {
      * dependency is missing.
      */
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D5 — D5.1: permission cache invalidator. @Optional so
+     * existing test fixtures (which build RbacService directly)
+     * keep compiling without wiring it. When provided, every
+     * mutation that affects a role's resolved permissions calls
+     * `permissionCache.invalidateRole(...)` so the next
+     * resolver lookup sees fresh data.
+     */
+    @Optional() private readonly permissionCache?: PermissionCacheService,
+    /**
+     * Phase D5 — D5.15-B: role version recorder. @Optional so the
+     * existing test fixtures (which construct RbacService with a
+     * subset of deps) keep compiling. When provided, every
+     * successful write path (create / update / duplicate /
+     * putRoleScopes / putRoleFieldPermissions) appends a
+     * structural snapshot to `role_versions` inside the SAME tx
+     * as the role write. The recorder skips no-op saves so the
+     * history stays compact.
+     */
+    @Optional() private readonly roleVersions?: RoleVersionService,
   ) {}
 
   /**
@@ -109,6 +131,48 @@ export class RbacService {
       );
     }
     return this.audit;
+  }
+
+  /**
+   * Phase D5 — D5.15-B: append a role version snapshot inside the
+   * same tx as the role write. Reloads the role with its
+   * capabilities + scopes + field permissions so the snapshot is
+   * a complete structural mirror. Best-effort: when the version
+   * recorder isn't wired (legacy fixtures), the call is a no-op
+   * and the role write succeeds unchanged.
+   */
+  private async recordVersionForRole(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    roleId: string,
+    triggerAction: RoleVersionTriggerAction,
+    actorUserId: string | null,
+    extra?: {
+      reason?: string | null;
+      revertedFromVersionId?: string | null;
+      revertedFromVersionNumber?: number | null;
+    },
+  ): Promise<void> {
+    if (!this.roleVersions) return;
+    const reloaded = await tx.role.findUnique({
+      where: { id: roleId },
+      include: {
+        capabilities: { include: { capability: { select: { code: true } } } },
+        scopes: { select: { resource: true, scope: true } },
+        fieldPermissions: {
+          select: { resource: true, field: true, canRead: true, canWrite: true },
+        },
+      },
+    });
+    if (!reloaded) return;
+    await this.roleVersions.recordVersion(tx, tenantId, {
+      role: this.shapeRole(reloaded),
+      triggerAction,
+      actorUserId,
+      reason: extra?.reason ?? null,
+      revertedFromVersionId: extra?.revertedFromVersionId ?? null,
+      revertedFromVersionNumber: extra?.revertedFromVersionNumber ?? null,
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -330,6 +394,11 @@ export class RbacService {
         },
       });
 
+      // D5.15-B — first version snapshot. The diff is computed
+      // against an empty baseline so the History row reads
+      // "granted: <every cap on the new role>".
+      await this.recordVersionForRole(tx, tenantId, created.id, 'create', actorUserId);
+
       const reloaded = await tx.role.findUnique({
         where: { id: created.id },
         include: {
@@ -432,6 +501,11 @@ export class RbacService {
         });
       }
 
+      // D5.15-B — append a version snapshot when the diff is
+      // real. The recorder skips no-op saves so re-pressing Save
+      // with the same capability set doesn't pollute history.
+      await this.recordVersionForRole(tx, tenantId, id, 'update', actorUserId);
+
       const reloaded = await tx.role.findUnique({
         where: { id },
         include: {
@@ -442,6 +516,10 @@ export class RbacService {
           },
         },
       });
+      // Phase D5 — D5.1: invalidate the resolver cache for this role
+      // so the next request sees the new bundle. Safe no-op when the
+      // cache provider isn't wired (older test fixtures).
+      this.permissionCache?.invalidateRole(id, tenantId);
       return this.shapeRole(reloaded!);
     });
   }
@@ -490,6 +568,11 @@ export class RbacService {
         actorUserId,
         payload: { code: role.code },
       });
+      // Phase D5 — D5.1: drop any cached resolutions for the deleted
+      // role. New entries can't be written for it (the resolver's
+      // zero-bundle path skips caching) but lingering hits would
+      // serve stale capabilities.
+      this.permissionCache?.invalidateRole(id, tenantId);
     });
   }
 
@@ -605,6 +688,11 @@ export class RbacService {
         },
       });
 
+      // D5.15-B — first version snapshot for the new (custom)
+      // role. Diffed against empty baseline; the History row
+      // shows the full inherited grant set.
+      await this.recordVersionForRole(tx, tenantId, created.id, 'duplicate', actorUserId);
+
       const reloaded = await tx.role.findUnique({
         where: { id: created.id },
         include: {
@@ -690,10 +778,17 @@ export class RbacService {
         payload: { changes, requested: dto.scopes },
       });
 
+      // D5.15-B — version snapshot. Recorder skips no-ops, so a
+      // PUT that re-sends identical scope rows does not append.
+      await this.recordVersionForRole(tx, tenantId, id, 'scopes', actorUserId);
+
       const after = await tx.roleScope.findMany({
         where: { roleId: id },
         select: { resource: true, scope: true },
       });
+      // Phase D5 — D5.1: scope changes invalidate every cached
+      // resolution for this role.
+      this.permissionCache?.invalidateRole(id, tenantId);
       return after.map((r) => ({
         resource: r.resource as RoleScopeResource,
         scope: r.scope as RoleScopeValue,
@@ -769,6 +864,13 @@ export class RbacService {
           afterCount: dto.permissions.length,
         },
       });
+
+      // D5.15-B — version snapshot. Recorder skips no-ops.
+      await this.recordVersionForRole(tx, tenantId, id, 'field_permissions', actorUserId);
+
+      // Phase D5 — D5.1: field-permission changes invalidate every
+      // cached resolution for this role.
+      this.permissionCache?.invalidateRole(id, tenantId);
 
       return dto.permissions.map((p) => ({
         resource: p.resource,

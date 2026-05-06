@@ -86,8 +86,16 @@ import type {
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
   PartnerMappingReadiness,
+  RoleChangePreviewResult,
+  RoleDependencyAnalysis,
+  RolePreviewResult,
   RoleScopeRow,
   RoleSummary,
+  RoleTemplateDetail,
+  RoleTemplatePreviewResult,
+  RoleTemplateSummary,
+  RoleVersionDetail,
+  RoleVersionListResult,
   RotationHistoryResponse,
   RotationOutcome,
   HandoverMode,
@@ -504,6 +512,15 @@ export const rolesApi = {
       level?: number;
       description?: string | null;
       capabilities?: string[];
+      /**
+       * Phase D5 — D5.14: typed-confirmation phrase. Required
+       * when the capability diff would trigger a critical
+       * lockout warning (self-lockout / last-keeper). The
+       * exact phrase ships back through the
+       * `role.dependency.confirmation_required` 400 response
+       * so the client can render the typed-confirmation modal.
+       */
+      confirmation?: string;
     },
   ): Promise<RoleDetail> =>
     apiFetch<RoleDetail>(`/rbac/roles/${id}`, { method: 'PATCH', body: input }),
@@ -525,6 +542,97 @@ export const rolesApi = {
     apiFetch<RoleFieldPermissionRow[]>(`/rbac/roles/${id}/field-permissions`, {
       method: 'PUT',
       body: { permissions },
+    }),
+  /**
+   * Phase D5 — D5.10: role permission preview. Read-only debugger
+   * that returns the effective permission shape of a tenant role.
+   * Backed by `permission.preview` capability + the in-service
+   * super-admin sandwich. NOT impersonation — no session is
+   * generated, no row data flows through.
+   */
+  preview: (id: string): Promise<RolePreviewResult> =>
+    apiFetch<RolePreviewResult>(`/rbac/roles/${id}/preview`),
+  /**
+   * Phase D5 — D5.14: dependency / lockout / high-risk analysis
+   * for a proposed capability set on this role. Read-only —
+   * NEVER writes capabilities. Drives the inline hints +
+   * grouped warnings + typed-confirmation modal in the role
+   * editor's capability matrix tab.
+   */
+  dependencyCheck: (id: string, capabilities: string[]): Promise<RoleDependencyAnalysis> =>
+    apiFetch<RoleDependencyAnalysis>(`/rbac/roles/${id}/dependency-check`, {
+      method: 'POST',
+      body: { capabilities },
+    }),
+  /**
+   * Phase D5 — D5.15-A: structural change-set preview. Returns a
+   * read-only diff plus the D5.14 dependency analysis. Drives
+   * the "Review changes" modal in the role editor's capabilities
+   * tab. Any subset of `{ capabilities, scopes, fieldPermissions }`
+   * is accepted; omitted axes are treated as unchanged.
+   */
+  changePreview: (
+    id: string,
+    input: {
+      capabilities?: readonly string[];
+      scopes?: readonly RoleScopeRow[];
+      fieldPermissions?: readonly RoleFieldPermissionRow[];
+    },
+  ): Promise<RoleChangePreviewResult> =>
+    apiFetch<RoleChangePreviewResult>(`/rbac/roles/${id}/change-preview`, {
+      method: 'POST',
+      body: input,
+    }),
+  /**
+   * Phase D5 — D5.15-B: paginated role version history. Latest
+   * first; structural metadata only.
+   */
+  listVersions: (id: string): Promise<RoleVersionListResult> =>
+    apiFetch<RoleVersionListResult>(`/rbac/roles/${id}/versions`),
+  getVersion: (id: string, versionId: string): Promise<RoleVersionDetail> =>
+    apiFetch<RoleVersionDetail>(`/rbac/roles/${id}/versions/${versionId}`),
+  /**
+   * Phase D5 — D5.15-B: typed-confirm revert. Routes through the
+   * same D5.14 dependency-check + D5.15-A change-preview chain
+   * the regular role builder uses, so the revert can never
+   * bypass the lockout safety guard.
+   */
+  revertVersion: (
+    id: string,
+    versionId: string,
+    input: { confirmation?: string; reason?: string } = {},
+  ): Promise<RoleVersionDetail> =>
+    apiFetch<RoleVersionDetail>(`/rbac/roles/${id}/versions/${versionId}/revert`, {
+      method: 'POST',
+      body: input,
+    }),
+  /**
+   * Phase D5 — D5.16: curated role templates. Drives the
+   * "Create from template" flow on /admin/roles. Templates are a
+   * read-only registry shipped with the product; tenant-specific
+   * templates are not in scope today.
+   */
+  listTemplates: (): Promise<{ templates: readonly RoleTemplateSummary[] }> =>
+    apiFetch<{ templates: readonly RoleTemplateSummary[] }>('/rbac/role-templates'),
+  getTemplate: (code: string): Promise<RoleTemplateDetail> =>
+    apiFetch<RoleTemplateDetail>(`/rbac/role-templates/${code}`),
+  previewTemplate: (code: string): Promise<RoleTemplatePreviewResult> =>
+    apiFetch<RoleTemplatePreviewResult>(`/rbac/role-templates/${code}/preview`, {
+      method: 'POST',
+      body: {},
+    }),
+  createFromTemplate: (input: {
+    templateCode: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    descriptionEn?: string | null;
+    descriptionAr?: string | null;
+    confirmation?: string;
+  }): Promise<RoleDetail> =>
+    apiFetch<RoleDetail>('/rbac/roles/from-template', {
+      method: 'POST',
+      body: input,
     }),
 };
 
@@ -1370,9 +1478,44 @@ export interface AuditRow {
   createdAt: string;
 }
 
+/**
+ * Phase D5 — D5.11: allow-listed audit-action group entry. Drives
+ * the chip strip on /admin/audit.
+ */
+export interface AuditActionGroupEntry {
+  /** SAFE allow-list code (snake_case). */
+  readonly code: string;
+  /** Canonical action prefixes the server ORs into the filter. */
+  readonly actionPrefixes: readonly string[];
+}
+
 export const auditApi = {
-  list: (query: { limit?: number; before?: string } = {}): Promise<AuditRow[]> =>
-    apiFetch<AuditRow[]>('/audit', { query }),
+  list: (
+    query: {
+      limit?: number;
+      before?: string;
+      action?: string;
+      /**
+       * Phase D5 — D5.11: allow-listed group code (rbac /
+       * tenant_export / etc.). The server validates against
+       * `AUDIT_ACTION_GROUPS`; unknown codes throw
+       * `audit.action_prefix.unknown`.
+       */
+      actionPrefix?: string;
+      /**
+       * Phase D5 — D5.11: narrow to one specific audit_event row
+       * (drops the lead_activities half of the stream).
+       */
+      entityId?: string;
+    } = {},
+  ): Promise<AuditRow[]> => apiFetch<AuditRow[]>('/audit', { query }),
+  /**
+   * Phase D5 — D5.11: list the allow-listed action groups so the
+   * chip strip renders against the same source of truth the server
+   * enforces.
+   */
+  listActionGroups: (): Promise<{ groups: readonly AuditActionGroupEntry[] }> =>
+    apiFetch<{ groups: readonly AuditActionGroupEntry[] }>('/audit/action-groups'),
 };
 
 // ───────────────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RedactedFieldBadge } from '@/components/ui/redacted-field-badge';
 import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/whatsapp';
 import type { ReviewReason, ReviewResolution, WhatsAppConversationReview } from '@/lib/api-types';
@@ -133,6 +134,23 @@ export function ReviewCard({
           </Link>
         ) : null}
       </div>
+
+      {/* D5.13 — server-side redaction transparency. The
+          conversation embedded on the review row had its
+          internal metadata (assignedToId / assignmentSource)
+          stripped by the `whatsapp.conversation.internalMetadata`
+          field permission. The review-card surface doesn't
+          render those fields directly today, but we surface the
+          fact so the operator never wonders why something looks
+          incomplete. Calm, non-alarming — the badge ships its
+          own muted styling. Server is the source of truth. */}
+      {review.internalMetadataHidden ? (
+        <RedactedFieldBadge
+          resource="whatsapp.conversation"
+          field="internalMetadata"
+          variant="block"
+        />
+      ) : null}
 
       {/* 3. Recent context snippets */}
       {recentMessages.length > 0 ? (

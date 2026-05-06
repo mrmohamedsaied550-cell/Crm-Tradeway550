@@ -1,17 +1,18 @@
 /**
- * Phase C — C4: field catalogue.
+ * Phase C — C4 (foundation) / Phase D5 — D5.2 (extension): field
+ * catalogue.
  *
  * The static contract for which (resource, field) pairs are gateable
  * through the field-permission matrix. Two readers consume this:
  *
- *   1. FieldFilterService (this commit) — when a runtime payload is
- *      stripped, the catalogue is informational only; the actual
- *      decision comes from the per-tenant `field_permissions` table
- *      written by C2's role builder.
+ *   1. FieldFilterService — when a runtime payload is stripped, the
+ *      catalogue is informational only; the actual decision comes
+ *      from the per-tenant `field_permissions` table written by the
+ *      role builder.
  *
- *   2. Admin UI matrix (C8) — renders one column per entry per
- *      resource with metadata (sensitive flag, default state) so the
- *      operator knows what they're toggling.
+ *   2. Admin role-editor matrix UI — renders one row per entry per
+ *      resource with metadata (group, sensitive flag, default state)
+ *      so the operator knows what they're toggling.
  *
  * Field paths use dot-notation for nested JSON (e.g.
  * `attribution.campaign`) and match the field strings stored in
@@ -20,22 +21,131 @@
  *
  * Default behaviour for fields NOT in the catalogue: read=TRUE /
  * write=TRUE — restrictions are explicit denials, not whitelists.
- * This keeps the existing 495 tests passing without seed gymnastics.
+ *
+ * D5.2 extends the catalogue from lead-only coverage (~23 entries)
+ * to fourteen CRM resources (~110 entries). D5.2 itself does NOT
+ * wire any service to the new entries — the catalogue is ahead of
+ * the runtime so the role-editor UI can already surface the new
+ * (resource, field) pairs while later D5.x chunks roll out the
+ * redaction interceptor that consults them.
+ *
+ * Decisions locked in at D5.2:
+ *
+ *   • `lead.id` is NOT redactable. The UUID is part of the deep-link
+ *     URL; hiding it adds no real protection. Marked `redactable: false`.
+ *
+ *   • Raw partner credentials are NEVER catalogued — the safe
+ *     metadata (`hasCredentials`, `credentialUpdatedAt`,
+ *     `connectionStatus`) is the gateable surface; the encrypted
+ *     blob never leaves the server.
+ *
+ *   • `defaultRead` stays `true` for every entry to preserve the D4
+ *     allow-by-default contract. Sensitive flags drive the UI
+ *     warning + a future strict-mode tenant setting; they do NOT
+ *     hide fields at runtime today.
+ *
+ *   • `defaultWrite` is `false` for read-only / system-managed fields
+ *     (e.g. `auditEvents`, `partnerSnapshotId`, `dftAt`) so a
+ *     role-builder accidentally enabling write on them won't
+ *     succeed unless an explicit FieldPermission row is created
+ *     AND a service-layer write path is wired (D5.x).
  *
  * Adding a field later: append to FIELD_CATALOGUE; no migration
  * needed because the field_permissions table is keyed by string,
  * not enum.
  */
 
-export type CatalogueResource = 'lead';
+/**
+ * Closed list of resources the matrix UI knows about. Open-string
+ * resource values are still accepted at the DTO layer
+ * (PutRoleFieldPermissionsSchema uses `z.string()`), so a tenant
+ * can persist deny rows for a resource not in this list — they
+ * simply won't render in the role editor.
+ */
+export type CatalogueResource =
+  | 'lead'
+  | 'lead.activity'
+  | 'lead.review'
+  | 'rotation'
+  | 'followup'
+  | 'captain'
+  | 'captain.document'
+  | 'captain.trip'
+  | 'contact'
+  | 'partner_source'
+  | 'partner.verification'
+  | 'partner.evidence'
+  | 'partner.reconciliation'
+  | 'partner.commission'
+  | 'whatsapp.conversation'
+  | 'whatsapp.account'
+  | 'whatsapp.message'
+  | 'whatsapp.template'
+  | 'report'
+  | 'audit'
+  | 'org.user'
+  | 'pipeline'
+  | 'pipeline.stage'
+  | 'bonus.rule'
+  | 'bonus.accrual'
+  | 'competition'
+  | 'notification'
+  | 'tenant';
+
+/**
+ * Logical sub-grouping inside a resource. The role editor groups
+ * the matrix table by `group` so 100+ rows scan as 6–8 sections.
+ */
+export type CatalogueGroup =
+  | 'identity'
+  | 'attribution'
+  | 'lifecycle'
+  | 'org'
+  | 'assignment'
+  | 'sla'
+  | 'ownership_history'
+  | 'commercial'
+  | 'commission'
+  | 'partner_data'
+  | 'partner_milestone'
+  | 'partner_evidence'
+  | 'partner_config'
+  | 'reconciliation'
+  | 'timeline'
+  | 'review'
+  | 'rotation'
+  | 'followup'
+  | 'documents'
+  | 'whatsapp_basic'
+  | 'whatsapp_history'
+  | 'whatsapp_review'
+  | 'whatsapp_routing'
+  | 'whatsapp_template'
+  | 'report_shape'
+  | 'report_metrics'
+  | 'audit_meta'
+  | 'audit_payload'
+  | 'system'
+  | 'raw'
+  | 'pipeline_config'
+  | 'bonus_config'
+  | 'bonus_payout'
+  | 'competition_config'
+  | 'notification_meta'
+  | 'tenant_meta'
+  | 'trip_ledger';
 
 export interface FieldCatalogueEntry {
   readonly resource: CatalogueResource;
   /** Dot-path under the resource shape. */
   readonly field: string;
+  /** Sub-group used by the role editor to chunk the matrix. */
+  readonly group: CatalogueGroup;
   /**
-   * Sensitive fields are highlighted in the admin matrix UI (C8) so
-   * the operator can spot PII / financial values at a glance.
+   * Sensitive fields are highlighted in the role editor so the
+   * operator can spot PII / financial / audit-grade fields at a
+   * glance. They also become the candidate set for a future
+   * tenant-wide "strict deny by default" mode.
    */
   readonly sensitive: boolean;
   /** Behaviour when no field_permission row exists. */
@@ -43,213 +153,3968 @@ export interface FieldCatalogueEntry {
   readonly defaultWrite: boolean;
   /** Short human-friendly label for the matrix UI (en). */
   readonly labelEn: string;
+  /** Arabic label — RTL/AR locale picker. */
+  readonly labelAr: string;
+  /**
+   * D5.2 — when `false`, the runtime redaction interceptor (D5.3)
+   * MUST NOT strip this field even if a deny row is present. Used
+   * for fields whose redaction would break referential integrity
+   * (e.g. `lead.id` is part of the URL). Default: `true`.
+   */
+  readonly redactable?: boolean;
 }
 
 /**
- * Initial catalogue — Lead resource only. C10 will add captain /
- * follow-up / WhatsApp.conversation entries.
- *
- * Lead.id is included even though it's a primary key: sales_agent's
- * seeded deny rule exists for it (per the approved plan), so the
- * runtime filter must be willing to strip it. The admin UI will
- * mark it sensitive so admins know the implication of toggling.
+ * Helper — declared once so the literal-array entries below stay
+ * compact. Every catalogue entry runs through this so the inferred
+ * type is exactly `FieldCatalogueEntry`.
  */
-export const FIELD_CATALOGUE: readonly FieldCatalogueEntry[] = [
-  // Identity / contact
-  {
+function entry(e: FieldCatalogueEntry): FieldCatalogueEntry {
+  return e;
+}
+
+// ─── lead (existing 23 + D5.2 additions) ────────────────────────────
+
+const LEAD_ENTRIES: readonly FieldCatalogueEntry[] = [
+  // Identity
+  entry({
     resource: 'lead',
     field: 'id',
+    group: 'identity',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Lead ID',
-  },
-  {
+    labelAr: 'معرّف العميل',
+    redactable: false,
+  }),
+  entry({
     resource: 'lead',
     field: 'name',
+    group: 'identity',
     sensitive: false,
     defaultRead: true,
     defaultWrite: true,
     labelEn: 'Name',
-  },
-  {
+    labelAr: 'الاسم',
+  }),
+  entry({
     resource: 'lead',
     field: 'phone',
+    group: 'identity',
     sensitive: true,
     defaultRead: true,
     defaultWrite: true,
     labelEn: 'Phone',
-  },
-  {
+    labelAr: 'الهاتف',
+  }),
+  entry({
     resource: 'lead',
     field: 'email',
+    group: 'identity',
     sensitive: true,
     defaultRead: true,
     defaultWrite: true,
     labelEn: 'Email',
-  },
-  // Source + attribution payload (each leaf gateable)
-  {
+    labelAr: 'البريد الإلكتروني',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'notes',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Notes',
+    labelAr: 'ملاحظات',
+  }),
+
+  // Attribution
+  entry({
     resource: 'lead',
     field: 'source',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Source (flat)',
-  },
-  {
+    labelAr: 'المصدر',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'campaignName',
+    group: 'attribution',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Campaign name',
+    labelAr: 'اسم الحملة',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution (whole payload)',
-  },
-  {
+    labelAr: 'الإسناد (الحمولة الكاملة)',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.source',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · source',
-  },
-  {
+    labelAr: 'الإسناد · المصدر',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.subSource',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · sub-source',
-  },
-  {
+    labelAr: 'الإسناد · المصدر الفرعي',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.campaign',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · campaign',
-  },
-  {
+    labelAr: 'الإسناد · الحملة',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.adSet',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · ad set',
-  },
-  {
+    labelAr: 'الإسناد · المجموعة الإعلانية',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.ad',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · ad',
-  },
-  {
+    labelAr: 'الإسناد · الإعلان',
+  }),
+  entry({
     resource: 'lead',
     field: 'attribution.utm',
+    group: 'attribution',
     sensitive: true,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Attribution · UTM',
-  },
-  // Lifecycle + lost-reason context
-  {
+    labelAr: 'الإسناد · UTM',
+  }),
+
+  // Lifecycle
+  entry({
     resource: 'lead',
     field: 'lifecycleState',
+    group: 'lifecycle',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Lifecycle',
-  },
-  {
+    labelAr: 'دورة الحياة',
+  }),
+  entry({
     resource: 'lead',
     field: 'lostReasonId',
+    group: 'lifecycle',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Lost reason',
-  },
-  {
+    labelAr: 'سبب الفقد',
+  }),
+  entry({
     resource: 'lead',
     field: 'lostNote',
+    group: 'lifecycle',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Lost note',
-  },
+    labelAr: 'ملاحظة الفقد',
+  }),
+
   // Org scope
-  {
+  entry({
     resource: 'lead',
     field: 'companyId',
+    group: 'org',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Company',
-  },
-  {
+    labelAr: 'الشركة',
+  }),
+  entry({
     resource: 'lead',
     field: 'countryId',
+    group: 'org',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Country',
-  },
-  {
+    labelAr: 'الدولة',
+  }),
+  entry({
     resource: 'lead',
     field: 'pipelineId',
+    group: 'org',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Pipeline',
-  },
-  // Assignment + ownership
-  {
+    labelAr: 'خط الأنابيب',
+  }),
+
+  // Assignment
+  entry({
     resource: 'lead',
     field: 'assignedToId',
+    group: 'assignment',
     sensitive: false,
     defaultRead: true,
     defaultWrite: true,
     labelEn: 'Assignee',
-  },
-  {
+    labelAr: 'المُسنَد إليه',
+  }),
+  entry({
     resource: 'lead',
     field: 'createdById',
+    group: 'assignment',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Created by',
-  },
-  // SLA / scheduling
-  {
+    labelAr: 'أنشأه',
+  }),
+
+  // SLA
+  entry({
     resource: 'lead',
     field: 'slaStatus',
+    group: 'sla',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'SLA status',
-  },
-  {
+    labelAr: 'حالة الـ SLA',
+  }),
+  entry({
     resource: 'lead',
     field: 'slaDueAt',
+    group: 'sla',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'SLA due',
-  },
-  {
+    labelAr: 'موعد الـ SLA',
+  }),
+  entry({
     resource: 'lead',
     field: 'nextActionDueAt',
+    group: 'sla',
     sensitive: false,
     defaultRead: true,
     defaultWrite: false,
     labelEn: 'Next action due',
-  },
-] as const;
+    labelAr: 'موعد الإجراء التالي',
+  }),
 
-export const CATALOGUE_RESOURCES = ['lead'] as const satisfies readonly CatalogueResource[];
+  // Ownership history (D2 / D3 adjacent). D5.7 retired the
+  // hardcoded `userCanSeeOwnershipHistory` (lead.write) gate; these
+  // entries are now the canonical visibility surface for the lead-
+  // attempts + lead-detail owner-history surfaces, consulted by
+  // `OwnershipVisibilityService.canReadPreviousOwner` /
+  // `canReadOwnerHistory`.
+  entry({
+    resource: 'lead',
+    field: 'previousOwner',
+    group: 'ownership_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Previous owner',
+    labelAr: 'المالك السابق',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'ownerHistory',
+    group: 'ownership_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Owner history',
+    labelAr: 'سجل الملاك',
+  }),
+  // D5.8 — out-of-scope attempt count. Drives the
+  // "N previous attempts are outside your access" hint on
+  // `GET /leads/:id/attempts`. Denying this field hides the
+  // count entirely from the response so the existence of
+  // out-of-scope attempts is no longer leaked. Migration 0041 +
+  // the seed install default deny rows for the agent cohort.
+  entry({
+    resource: 'lead',
+    field: 'outOfScopeAttemptCount',
+    group: 'ownership_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Out-of-scope attempt count',
+    labelAr: 'عدد المحاولات خارج الصلاحية',
+  }),
+
+  // Partner-derived projections (read-only on the lead row)
+  entry({
+    resource: 'lead',
+    field: 'partnerVerification',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner verification (cached)',
+    labelAr: 'التحقق من الشريك (مخزّن)',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'partnerMergeActions',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner merge actions',
+    labelAr: 'إجراءات دمج الشريك',
+  }),
+
+  // Commercial / financial
+  entry({
+    resource: 'lead',
+    field: 'commissionFields',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission fields (lead-side)',
+    labelAr: 'حقول العمولة (جانب العميل)',
+  }),
+
+  // Embedded / derived collections
+  entry({
+    resource: 'lead',
+    field: 'timeline',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Timeline (activity)',
+    labelAr: 'الجدول الزمني (النشاط)',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'auditEvents',
+    group: 'audit_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Audit events on this lead',
+    labelAr: 'أحداث التدقيق على هذا العميل',
+  }),
+];
+
+// ─── lead.activity ─────────────────────────────────────────────────
+
+const LEAD_ACTIVITY_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'lead.activity',
+    field: 'type',
+    group: 'timeline',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Activity type',
+    labelAr: 'نوع النشاط',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'actor',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Actor (who did it)',
+    labelAr: 'المنفّذ',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'notes',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Activity notes',
+    labelAr: 'ملاحظات النشاط',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'payload',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Activity payload (raw)',
+    labelAr: 'حمولة النشاط (خام)',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'partnerMergeBeforeAfter',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner merge before/after diff',
+    labelAr: 'فرق قبل/بعد دمج الشريك',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'rotationReason',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Rotation reason',
+    labelAr: 'سبب الدوران',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'stageStatusNotes',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage-status notes',
+    labelAr: 'ملاحظات حالة المرحلة',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'systemDetails',
+    group: 'system',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'System / debug details',
+    labelAr: 'تفاصيل النظام',
+  }),
+];
+
+// ─── lead.review (TL Review Queue) ─────────────────────────────────
+
+const LEAD_REVIEW_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'lead.review',
+    field: 'reason',
+    group: 'review',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Review reason',
+    labelAr: 'سبب المراجعة',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'reasonPayload',
+    group: 'review',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reason payload (structured)',
+    labelAr: 'حمولة السبب (مهيكلة)',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'resolution',
+    group: 'review',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Resolution',
+    labelAr: 'القرار',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'resolutionNotes',
+    group: 'review',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Resolution notes',
+    labelAr: 'ملاحظات القرار',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'assignedTl',
+    group: 'review',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Assigned TL',
+    labelAr: 'قائد الفريق المُسنَد',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'ownerContext',
+    group: 'review',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Owner context',
+    labelAr: 'سياق المالك',
+  }),
+  entry({
+    resource: 'lead.review',
+    field: 'partnerContext',
+    group: 'review',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner context (D4.8)',
+    labelAr: 'سياق الشريك (D4.8)',
+  }),
+];
+
+// ─── rotation ──────────────────────────────────────────────────────
+
+const ROTATION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'rotation',
+    field: 'fromUser',
+    group: 'rotation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'From user',
+    labelAr: 'من المستخدم',
+  }),
+  entry({
+    resource: 'rotation',
+    field: 'toUser',
+    group: 'rotation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'To user',
+    labelAr: 'إلى المستخدم',
+  }),
+  entry({
+    resource: 'rotation',
+    field: 'actor',
+    group: 'rotation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Rotation actor',
+    labelAr: 'منفّذ الدوران',
+  }),
+  entry({
+    resource: 'rotation',
+    field: 'reason',
+    group: 'rotation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reason code',
+    labelAr: 'رمز السبب',
+  }),
+  entry({
+    resource: 'rotation',
+    field: 'notes',
+    group: 'rotation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Rotation notes',
+    labelAr: 'ملاحظات الدوران',
+  }),
+  entry({
+    resource: 'rotation',
+    field: 'handoverMode',
+    group: 'rotation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Handover mode',
+    labelAr: 'وضع التسليم',
+  }),
+  // D5.8 — `rotation.handoverSummary` was previously catalogued
+  // here but `LeadRotationLog` carries no `handover_summary`
+  // column (the schema only has `notes` for free text) and no
+  // RotationService response surface emits it. Cataloguing it
+  // would expose a role-builder UI toggle for a field that does
+  // not exist in any payload, misleading admins. Migration 0041
+  // deletes the dead `field_permissions` rows that migration
+  // 0040 left behind. The whatsapp.conversation.handoverSummary
+  // entry below is a separate WhatsApp-specific concept and
+  // remains in the catalogue (D5.8 does not touch WhatsApp).
+  entry({
+    resource: 'rotation',
+    field: 'internalPayload',
+    group: 'raw',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Internal payload (raw)',
+    labelAr: 'الحمولة الداخلية (خام)',
+  }),
+];
+
+// ─── followup ──────────────────────────────────────────────────────
+
+const FOLLOWUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'followup',
+    field: 'dueAt',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Due at',
+    labelAr: 'تاريخ الاستحقاق',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'type',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Type',
+    labelAr: 'النوع',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'note',
+    group: 'followup',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Note',
+    labelAr: 'ملاحظة',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'outcome',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Outcome',
+    labelAr: 'النتيجة',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'owner',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Owner',
+    labelAr: 'المالك',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'snoozeReason',
+    group: 'followup',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Snooze reason',
+    labelAr: 'سبب التأجيل',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'internalPayload',
+    group: 'raw',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Internal payload (raw)',
+    labelAr: 'الحمولة الداخلية (خام)',
+  }),
+];
+
+// ─── captain ───────────────────────────────────────────────────────
+
+const CAPTAIN_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'captain',
+    field: 'id',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Captain ID',
+    labelAr: 'معرّف الكابتن',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain',
+    field: 'name',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Name',
+    labelAr: 'الاسم',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'phone',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Phone',
+    labelAr: 'الهاتف',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'activatedAt',
+    group: 'commercial',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Active date',
+    labelAr: 'تاريخ التفعيل',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'dftAt',
+    group: 'commercial',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'DFT date',
+    labelAr: 'تاريخ DFT',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'tripCount',
+    group: 'commercial',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'CRM trip count',
+    labelAr: 'عدد رحلات النظام',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'partnerMilestoneRisk',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner milestone risk',
+    labelAr: 'خطر علامات الشريك',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'commissionAmount',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission amount',
+    labelAr: 'مبلغ العمولة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'commissionStatus',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission status',
+    labelAr: 'حالة العمولة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'documentStatus',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Document status',
+    labelAr: 'حالة المستندات',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'owner',
+    group: 'assignment',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Owner / team',
+    labelAr: 'المالك / الفريق',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'notes',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Notes',
+    labelAr: 'ملاحظات',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'auditEvents',
+    group: 'audit_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Audit events',
+    labelAr: 'أحداث التدقيق',
+  }),
+];
+
+// ─── contact ───────────────────────────────────────────────────────
+
+const CONTACT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'contact',
+    field: 'id',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Contact ID',
+    labelAr: 'معرّف جهة الاتصال',
+    redactable: false,
+  }),
+  entry({
+    resource: 'contact',
+    field: 'name',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Display name',
+    labelAr: 'اسم العرض',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'phone',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Phone (canonical)',
+    labelAr: 'الهاتف (قياسي)',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'alternatePhones',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Alternate phones',
+    labelAr: 'أرقام بديلة',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'whatsappProfileName',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'WhatsApp profile name',
+    labelAr: 'اسم ملف واتساب',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'source',
+    group: 'attribution',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Source',
+    labelAr: 'المصدر',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'linkedLeads',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Linked leads',
+    labelAr: 'العملاء المرتبطون',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'linkedCaptains',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Linked captains',
+    labelAr: 'الكباتن المرتبطون',
+  }),
+  entry({
+    resource: 'contact',
+    field: 'rawMetadata',
+    group: 'raw',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Raw provider metadata',
+    labelAr: 'بيانات المزوّد الخام',
+  }),
+];
+
+// ─── partner_source ────────────────────────────────────────────────
+
+const PARTNER_SOURCE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner_source',
+    field: 'displayName',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Display name',
+    labelAr: 'الاسم المعروض',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'partnerCode',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner code',
+    labelAr: 'رمز الشريك',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'company',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Company',
+    labelAr: 'الشركة',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'country',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Country',
+    labelAr: 'الدولة',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'adapter',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Adapter',
+    labelAr: 'المحوّل',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'schedule',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Schedule (cron + kind)',
+    labelAr: 'الجدولة',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'tabConfig',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Tab config',
+    labelAr: 'إعدادات التبويب',
+  }),
+  // NOTE — raw `credentials` is intentionally NOT catalogued. Only
+  // safe metadata about credentials is gateable.
+  entry({
+    resource: 'partner_source',
+    field: 'credentialsMetadata',
+    group: 'partner_config',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Credentials metadata (hasCredentials, updatedAt)',
+    labelAr: 'بيانات وصفية لبيانات الاعتماد',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'connectionStatus',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Connection status',
+    labelAr: 'حالة الاتصال',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'lastSyncAt',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last sync at',
+    labelAr: 'آخر مزامنة',
+  }),
+  entry({
+    resource: 'partner_source',
+    field: 'syncHistory',
+    group: 'partner_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Sync history',
+    labelAr: 'سجل المزامنة',
+  }),
+];
+
+// ─── partner.verification ──────────────────────────────────────────
+
+const PARTNER_VERIFICATION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerStatus',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner status',
+    labelAr: 'حالة الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerActiveDate',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner active date',
+    labelAr: 'تاريخ التفعيل عند الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerDftDate',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner DFT date',
+    labelAr: 'تاريخ DFT عند الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'tripCount',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner trip count',
+    labelAr: 'عدد رحلات الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'lastTripAt',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last trip at',
+    labelAr: 'آخر رحلة',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'verificationStatus',
+    group: 'partner_data',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Verification status',
+    labelAr: 'حالة التحقق',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'warnings',
+    group: 'partner_data',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Warnings',
+    labelAr: 'تحذيرات',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerSourceName',
+    group: 'partner_data',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner source name',
+    labelAr: 'اسم مصدر الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerSnapshotId',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner snapshot id',
+    labelAr: 'معرّف لقطة الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'partnerRecordId',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner record id',
+    labelAr: 'معرّف سجل الشريك',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'milestoneProgress',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Milestone progress',
+    labelAr: 'تقدّم العلامات',
+  }),
+  entry({
+    resource: 'partner.verification',
+    field: 'commissionRisk',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission risk',
+    labelAr: 'خطر العمولة',
+  }),
+];
+
+// ─── partner.evidence ──────────────────────────────────────────────
+
+const PARTNER_EVIDENCE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner.evidence',
+    field: 'kind',
+    group: 'partner_evidence',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Evidence kind',
+    labelAr: 'نوع الدليل',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'capturedBy',
+    group: 'partner_evidence',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Captured by',
+    labelAr: 'بواسطة',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'notes',
+    group: 'partner_evidence',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Evidence notes',
+    labelAr: 'ملاحظات الدليل',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'partnerSnapshotId',
+    group: 'partner_evidence',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner snapshot id',
+    labelAr: 'معرّف لقطة الشريك',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'partnerRecordId',
+    group: 'partner_evidence',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner record id',
+    labelAr: 'معرّف سجل الشريك',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'fileName',
+    group: 'partner_evidence',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'File name',
+    labelAr: 'اسم الملف',
+  }),
+  entry({
+    resource: 'partner.evidence',
+    field: 'storageRef',
+    group: 'partner_evidence',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Storage reference',
+    labelAr: 'مرجع التخزين',
+  }),
+];
+
+// ─── partner.reconciliation ────────────────────────────────────────
+
+const PARTNER_RECONCILIATION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'category',
+    group: 'reconciliation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Category',
+    labelAr: 'الفئة',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'crmValues',
+    group: 'reconciliation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'CRM values',
+    labelAr: 'قيم النظام',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'partnerValues',
+    group: 'reconciliation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner values',
+    labelAr: 'قيم الشريك',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'recommendedAction',
+    group: 'reconciliation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Recommended action',
+    labelAr: 'الإجراء الموصى به',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'severity',
+    group: 'reconciliation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Severity',
+    labelAr: 'الخطورة',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'exportColumns',
+    group: 'reconciliation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'CSV export columns',
+    labelAr: 'أعمدة تصدير CSV',
+  }),
+  entry({
+    resource: 'partner.reconciliation',
+    field: 'partnerRecordRef',
+    group: 'reconciliation',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner record reference',
+    labelAr: 'مرجع سجل الشريك',
+  }),
+];
+
+// ─── partner.commission ─────────────────────────────────────────────
+//
+// D5.6B — fields surfaced by the commission progress / risk CSVs.
+// The CSVs ship per-captain commission progress (target trips,
+// current milestone, days left in the window, risk band) and the
+// risk-only filtered variant. Catalogue entries here let an admin
+// deny commission-window fields per role — Finance keeps `risk` /
+// `target_trips` / `current_milestone`; non-finance roles can be
+// configured to lose the column. The cap on the export endpoint is
+// `partner.commission.export` (D5.6A); this catalogue resource
+// gives column-level redaction the right anchor.
+
+const PARTNER_COMMISSION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner.commission',
+    field: 'partnerSourceName',
+    group: 'partner_milestone',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner source name',
+    labelAr: 'اسم مصدر الشريك',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'configCode',
+    group: 'partner_milestone',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Milestone config code',
+    labelAr: 'رمز إعداد العلامة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'anchorAt',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Anchor (window start)',
+    labelAr: 'بداية النافذة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'windowEndsAt',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Window ends at',
+    labelAr: 'نهاية النافذة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'daysLeft',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Days remaining',
+    labelAr: 'الأيام المتبقية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'targetTrips',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Target trips',
+    labelAr: 'عدد الرحلات الهدف',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'currentMilestone',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Current milestone',
+    labelAr: 'العلامة الحالية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'nextMilestone',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Next milestone',
+    labelAr: 'العلامة التالية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'risk',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission risk band',
+    labelAr: 'مستوى خطر العمولة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'needsPush',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Needs push (commission action required)',
+    labelAr: 'يتطلب دفع عمولة',
+  }),
+];
+
+// ─── whatsapp.conversation ─────────────────────────────────────────
+
+const WHATSAPP_CONVERSATION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'contactPhone',
+    group: 'whatsapp_basic',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Contact phone',
+    labelAr: 'هاتف جهة الاتصال',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'lastMessagePreview',
+    group: 'whatsapp_basic',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last message preview',
+    labelAr: 'معاينة آخر رسالة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'conversationHistory',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Conversation history',
+    labelAr: 'سجل المحادثة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'handoverSummary',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Handover summary',
+    labelAr: 'ملخص التسليم',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'handoverChain',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Handover chain',
+    labelAr: 'سلسلة التسليم',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'priorAgentMessages',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Prior-agent messages',
+    labelAr: 'رسائل الموظف السابق',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'reviewNotes',
+    group: 'whatsapp_review',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Review notes',
+    labelAr: 'ملاحظات المراجعة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'internalMetadata',
+    group: 'raw',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Internal metadata',
+    labelAr: 'بيانات وصفية داخلية',
+  }),
+];
+
+// ─── report ────────────────────────────────────────────────────────
+
+const REPORT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'report',
+    field: 'columns',
+    group: 'report_shape',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Columns',
+    labelAr: 'الأعمدة',
+  }),
+  entry({
+    resource: 'report',
+    field: 'filters',
+    group: 'report_shape',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: true,
+    labelEn: 'Filters',
+    labelAr: 'الفلاتر',
+  }),
+  entry({
+    resource: 'report',
+    field: 'exportRows',
+    group: 'report_shape',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Export rows',
+    labelAr: 'صفوف التصدير',
+  }),
+  entry({
+    resource: 'report',
+    field: 'financialMetrics',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Financial metrics',
+    labelAr: 'مقاييس مالية',
+  }),
+  entry({
+    resource: 'report',
+    field: 'commissionMetrics',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission metrics',
+    labelAr: 'مقاييس العمولات',
+  }),
+  entry({
+    resource: 'report',
+    field: 'sourceBreakdown',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Source breakdown',
+    labelAr: 'تفصيل المصدر',
+  }),
+  entry({
+    resource: 'report',
+    field: 'campaignBreakdown',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Campaign breakdown',
+    labelAr: 'تفصيل الحملات',
+  }),
+  // D5.6C — fine-grained per-metric entries used by the section/key/value
+  // reports CSV. Each catalogued field maps to one or more
+  // `(section, key)` rows in the export. Denying one of these
+  // entries removes the matching metric line(s) from the CSV
+  // output without touching the rest. Activations + conversion
+  // rate are flagged sensitive (commercial) so a Finance vs
+  // non-Finance separation can target them.
+  entry({
+    resource: 'report',
+    field: 'summary.totalLeads',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · total leads',
+    labelAr: 'الملخص · إجمالي العملاء المحتملين',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.overdue',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · overdue',
+    labelAr: 'الملخص · متأخر',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.dueToday',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · due today',
+    labelAr: 'الملخص · مستحق اليوم',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.followupsPending',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · follow-ups pending',
+    labelAr: 'الملخص · متابعات قيد الانتظار',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.followupsDone',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · follow-ups completed',
+    labelAr: 'الملخص · متابعات منتهية',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.activations',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · activations (commercial)',
+    labelAr: 'الملخص · التفعيلات (تجاري)',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.conversionRate',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · conversion rate (commercial)',
+    labelAr: 'الملخص · معدل التحويل (تجاري)',
+  }),
+  entry({
+    resource: 'report',
+    field: 'stageBuckets',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Per-stage funnel buckets',
+    labelAr: 'دلاء قمع المراحل',
+  }),
+  entry({
+    resource: 'report',
+    field: 'leadsCreatedTimeseries',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Leads-created daily time-series',
+    labelAr: 'متسلسلة العملاء المحتملين اليومية',
+  }),
+];
+
+// ─── audit ─────────────────────────────────────────────────────────
+
+const AUDIT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'audit',
+    field: 'action',
+    group: 'audit_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Action',
+    labelAr: 'الإجراء',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'actor',
+    group: 'audit_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Actor',
+    labelAr: 'المنفّذ',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'entity',
+    group: 'audit_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Entity',
+    labelAr: 'الكيان',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'payload',
+    group: 'audit_payload',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Payload (raw)',
+    labelAr: 'الحمولة (خام)',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'beforeAfter',
+    group: 'audit_payload',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Before/after diff',
+    labelAr: 'فرق قبل/بعد',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'ipAddress',
+    group: 'audit_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'IP address',
+    labelAr: 'عنوان IP',
+  }),
+  entry({
+    resource: 'audit',
+    field: 'userAgent',
+    group: 'audit_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'User agent',
+    labelAr: 'وكيل المستخدم',
+  }),
+];
+
+// ─── D5.6D-1 — tenant backup coverage ──────────────────────────────
+//
+// The tenant backup export (`GET /admin/backup/export`) emits every
+// scalar column of seventeen tables. The catalogue below covers
+// every emitted (resource, field) pair so:
+//
+//   1. The role-builder matrix UI can render a deny toggle for any
+//      backup-emitted field once D5.6D-2 wires backup-specific
+//      redaction.
+//   2. The D5.6D-1 catalogue-coverage test (`every backup column
+//      has a catalogue entry`) holds — a future schema column added
+//      to a backup table without a catalogue entry will fail the
+//      test until the entry is added too.
+//   3. ID and FK fields required to round-trip a restore (and which
+//      D5.6D-2's restore-rejection guard will require) carry
+//      `redactable: false` so a deny rule cannot accidentally strip
+//      them from a backup file.
+//
+// Convention:
+//   • column key on the StructuredExport row matches the Prisma
+//     column name; `column.field` matches the catalogue entry
+//     verbatim. Both are equal — no logical/physical aliasing —
+//     so a deny rule on `lead.phone` strips the `phone` column
+//     from the leads backup table directly.
+//   • Raw secrets (`User.passwordHash`, `User.mfaSecret`,
+//     `WhatsAppAccount.accessToken`, `WhatsAppAccount.appSecret`,
+//     `WhatsAppAccount.verifyToken`) are NEVER catalogued — they
+//     are stripped at the BackupService boundary and never leave
+//     the API. Cataloguing them would expose a UI toggle for a
+//     field that does not exist in any export.
+
+// Missing 'lead' fields surfaced by the leads backup table.
+const LEAD_BACKUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'lead',
+    field: 'tenantId',
+    group: 'org',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead',
+    field: 'stageId',
+    group: 'org',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage id',
+    labelAr: 'معرّف المرحلة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead',
+    field: 'contactId',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Contact id',
+    labelAr: 'معرّف جهة الاتصال',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead',
+    field: 'primaryConversationId',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Primary conversation id',
+    labelAr: 'معرّف المحادثة الأساسية',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'lastResponseAt',
+    group: 'sla',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last response at',
+    labelAr: 'آخر رد',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'slaThreshold',
+    group: 'sla',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'SLA threshold',
+    labelAr: 'عتبة SLA',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'slaThresholdAt',
+    group: 'sla',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'SLA threshold at',
+    labelAr: 'وقت عتبة SLA',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'lastRotatedAt',
+    group: 'rotation',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last rotated at',
+    labelAr: 'آخر دوران',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'currentStageStatusId',
+    group: 'assignment',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Current stage-status id',
+    labelAr: 'معرّف حالة المرحلة الحالية',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead',
+    field: 'lastActivityAt',
+    group: 'timeline',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last activity at',
+    labelAr: 'آخر نشاط',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'attemptIndex',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Attempt index',
+    labelAr: 'رقم المحاولة',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'previousLeadId',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Previous lead id',
+    labelAr: 'معرّف العميل السابق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead',
+    field: 'reactivatedAt',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reactivated at',
+    labelAr: 'تاريخ إعادة التنشيط',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'reactivatedById',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reactivated by id',
+    labelAr: 'معرّف منفّذ إعادة التنشيط',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'reactivationRule',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reactivation rule',
+    labelAr: 'قاعدة إعادة التنشيط',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'partnerVerificationCache',
+    group: 'partner_data',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner verification cache (raw)',
+    labelAr: 'ذاكرة التحقق من الشريك (خام)',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'lead',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// Missing 'lead.activity' fields surfaced by the leadActivities backup table.
+const LEAD_ACTIVITY_BACKUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'lead.activity',
+    field: 'id',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Activity id',
+    labelAr: 'معرّف النشاط',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'leadId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Lead id',
+    labelAr: 'معرّف العميل',
+    redactable: false,
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'body',
+    group: 'timeline',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Activity body (raw text)',
+    labelAr: 'نص النشاط (خام)',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'actionSource',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Action source',
+    labelAr: 'مصدر الإجراء',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'createdById',
+    group: 'timeline',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created by id',
+    labelAr: 'معرّف منشئ النشاط',
+  }),
+  entry({
+    resource: 'lead.activity',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+];
+
+// Missing 'followup' fields surfaced by the leadFollowUps backup table.
+const FOLLOWUP_BACKUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'followup',
+    field: 'id',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Follow-up id',
+    labelAr: 'معرّف المتابعة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'followup',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'followup',
+    field: 'leadId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Lead id',
+    labelAr: 'معرّف العميل',
+    redactable: false,
+  }),
+  entry({
+    resource: 'followup',
+    field: 'actionType',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Action type',
+    labelAr: 'نوع الإجراء',
+  }),
+  // NOTE — `followup.note` is already in FOLLOWUP_ENTRIES above
+  // (the existing read-path entry). Not re-added here so the
+  // catalogue uniqueness invariant holds.
+  entry({
+    resource: 'followup',
+    field: 'completedAt',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Completed at',
+    labelAr: 'تاريخ الإكمال',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'snoozedUntil',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Snoozed until',
+    labelAr: 'مؤجَّلة حتى',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'actionSource',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Action source',
+    labelAr: 'مصدر الإجراء',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'assignedToId',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Assigned to id',
+    labelAr: 'معرّف المسنَد إليه',
+    redactable: false,
+  }),
+  entry({
+    resource: 'followup',
+    field: 'createdById',
+    group: 'followup',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created by id',
+    labelAr: 'معرّف المنشئ',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'followup',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// Missing 'captain' fields surfaced by the captains backup table.
+const CAPTAIN_BACKUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'captain',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain',
+    field: 'leadId',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Lead id',
+    labelAr: 'معرّف العميل',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain',
+    field: 'teamId',
+    group: 'assignment',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Team id',
+    labelAr: 'معرّف الفريق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain',
+    field: 'status',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'onboardingStatus',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Onboarding status',
+    labelAr: 'حالة التهيئة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'hasIdCard',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Has id card',
+    labelAr: 'يمتلك بطاقة هوية',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'hasLicense',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Has license',
+    labelAr: 'يمتلك رخصة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'hasVehicleRegistration',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Has vehicle registration',
+    labelAr: 'يمتلك رخصة المركبة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'firstTripAt',
+    group: 'commercial',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'First trip at',
+    labelAr: 'أول رحلة',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'captain',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// Missing 'whatsapp.conversation' fields surfaced by the whatsappConversations backup table.
+const WHATSAPP_CONVERSATION_BACKUP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'id',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Conversation id',
+    labelAr: 'معرّف المحادثة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'accountId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Account id',
+    labelAr: 'معرّف الحساب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'phone',
+    group: 'whatsapp_basic',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Other party phone',
+    labelAr: 'هاتف الطرف الآخر',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'status',
+    group: 'whatsapp_basic',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'lastMessageAt',
+    group: 'whatsapp_basic',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last message at',
+    labelAr: 'آخر رسالة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'lastMessageText',
+    group: 'whatsapp_basic',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last message text',
+    labelAr: 'نص آخر رسالة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'lastInboundAt',
+    group: 'whatsapp_basic',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Last inbound at',
+    labelAr: 'آخر رسالة واردة',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'leadId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Lead id',
+    labelAr: 'معرّف العميل',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'contactId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Contact id',
+    labelAr: 'معرّف جهة الاتصال',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'assignedToId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Assigned to id',
+    labelAr: 'معرّف المُسنَد إليه',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'teamId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Team id',
+    labelAr: 'معرّف الفريق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'companyId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Company id',
+    labelAr: 'معرّف الشركة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'countryId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Country id',
+    labelAr: 'معرّف الدولة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'assignmentSource',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Assignment source',
+    labelAr: 'مصدر الإسناد',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'assignedAt',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Assigned at',
+    labelAr: 'تاريخ الإسناد',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'whatsapp.conversation',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── org.user (USERS table — sensitive credentials are NEVER catalogued) ───
+//
+// `passwordHash`, `mfaSecret`, `failedLoginCount`, `lockedUntil`,
+// and `lastAssignedAt` are intentionally NOT catalogued because the
+// BackupService does not emit them. They are stripped at the DB
+// `select` boundary AND the catalogue mirrors that exclusion so no
+// admin role-builder UI ever surfaces a deny toggle for a field
+// that does not exist in any export.
+
+const ORG_USER_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'org.user',
+    field: 'id',
+    group: 'identity',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'User id',
+    labelAr: 'معرّف المستخدم',
+    redactable: false,
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'email',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Email',
+    labelAr: 'البريد الإلكتروني',
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'name',
+    group: 'identity',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Name',
+    labelAr: 'الاسم',
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'status',
+    group: 'lifecycle',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'roleId',
+    group: 'org',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Role id',
+    labelAr: 'معرّف الدور',
+    redactable: false,
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'org.user',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── pipeline ───────────────────────────────────────────────────────
+
+const PIPELINE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'pipeline',
+    field: 'id',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Pipeline id',
+    labelAr: 'معرّف خط الأنابيب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'pipeline',
+    field: 'name',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Pipeline name',
+    labelAr: 'اسم خط الأنابيب',
+  }),
+  entry({
+    resource: 'pipeline',
+    field: 'isDefault',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Is default',
+    labelAr: 'افتراضي',
+  }),
+  entry({
+    resource: 'pipeline',
+    field: 'isActive',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Is active',
+    labelAr: 'نشط',
+  }),
+];
+
+// ─── pipeline.stage ────────────────────────────────────────────────
+
+const PIPELINE_STAGE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'pipeline.stage',
+    field: 'id',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage id',
+    labelAr: 'معرّف المرحلة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'pipeline.stage',
+    field: 'pipelineId',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Pipeline id',
+    labelAr: 'معرّف خط الأنابيب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'pipeline.stage',
+    field: 'code',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage code',
+    labelAr: 'رمز المرحلة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'pipeline.stage',
+    field: 'name',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage name',
+    labelAr: 'اسم المرحلة',
+  }),
+  entry({
+    resource: 'pipeline.stage',
+    field: 'order',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Stage order',
+    labelAr: 'ترتيب المرحلة',
+  }),
+  entry({
+    resource: 'pipeline.stage',
+    field: 'isTerminal',
+    group: 'pipeline_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Is terminal',
+    labelAr: 'مرحلة نهائية',
+  }),
+];
+
+// ─── captain.document ──────────────────────────────────────────────
+
+const CAPTAIN_DOCUMENT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'captain.document',
+    field: 'id',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Document id',
+    labelAr: 'معرّف المستند',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'captainId',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Captain id',
+    labelAr: 'معرّف الكابتن',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'kind',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Document kind',
+    labelAr: 'نوع المستند',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'storageRef',
+    group: 'documents',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Storage reference',
+    labelAr: 'مرجع التخزين',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'fileName',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'File name',
+    labelAr: 'اسم الملف',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'mimeType',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'MIME type',
+    labelAr: 'نوع MIME',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'sizeBytes',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Size (bytes)',
+    labelAr: 'الحجم (بايت)',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'status',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'expiresAt',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Expires at',
+    labelAr: 'تاريخ الانتهاء',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'reviewerUserId',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reviewer id',
+    labelAr: 'معرّف المراجِع',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'reviewedAt',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reviewed at',
+    labelAr: 'تاريخ المراجعة',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'reviewNotes',
+    group: 'documents',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Review notes',
+    labelAr: 'ملاحظات المراجعة',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'uploadedById',
+    group: 'documents',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Uploaded by id',
+    labelAr: 'معرّف الرافع',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'captain.document',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── captain.trip ──────────────────────────────────────────────────
+
+const CAPTAIN_TRIP_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'captain.trip',
+    field: 'id',
+    group: 'trip_ledger',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Trip row id',
+    labelAr: 'معرّف صف الرحلة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'captainId',
+    group: 'trip_ledger',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Captain id',
+    labelAr: 'معرّف الكابتن',
+    redactable: false,
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'tripId',
+    group: 'trip_ledger',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'External trip id',
+    labelAr: 'معرّف الرحلة الخارجي',
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'occurredAt',
+    group: 'trip_ledger',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Occurred at',
+    labelAr: 'وقت حدوث الرحلة',
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'payload',
+    group: 'trip_ledger',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Trip payload (raw)',
+    labelAr: 'حمولة الرحلة (خام)',
+  }),
+  entry({
+    resource: 'captain.trip',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+];
+
+// ─── whatsapp.account ──────────────────────────────────────────────
+// Raw `accessToken`, `appSecret`, `verifyToken` are NEVER catalogued
+// (BackupService strips them at the DB `select` boundary and they
+// never appear in any export).
+
+const WHATSAPP_ACCOUNT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'whatsapp.account',
+    field: 'id',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Account id',
+    labelAr: 'معرّف الحساب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'provider',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Provider',
+    labelAr: 'المزوّد',
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'phoneNumber',
+    group: 'whatsapp_routing',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Phone number',
+    labelAr: 'رقم الهاتف',
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'phoneNumberId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Phone number id (Meta)',
+    labelAr: 'معرّف رقم الهاتف (ميتا)',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'displayName',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Display name',
+    labelAr: 'الاسم المعروض',
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'isActive',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Is active',
+    labelAr: 'نشط',
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'whatsapp.account',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── whatsapp.message ──────────────────────────────────────────────
+
+const WHATSAPP_MESSAGE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'whatsapp.message',
+    field: 'id',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Message id',
+    labelAr: 'معرّف الرسالة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'accountId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Account id',
+    labelAr: 'معرّف الحساب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'conversationId',
+    group: 'whatsapp_routing',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Conversation id',
+    labelAr: 'معرّف المحادثة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'phone',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Other party phone',
+    labelAr: 'هاتف الطرف الآخر',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'text',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Message text',
+    labelAr: 'نص الرسالة',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'direction',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Direction',
+    labelAr: 'الاتجاه',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'messageType',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Message type',
+    labelAr: 'نوع الرسالة',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'mediaUrl',
+    group: 'whatsapp_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Media URL',
+    labelAr: 'رابط الوسائط',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'mediaMimeType',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Media MIME type',
+    labelAr: 'نوع MIME للوسائط',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'templateName',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Template name',
+    labelAr: 'اسم القالب',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'templateLanguage',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Template language',
+    labelAr: 'لغة القالب',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'providerMessageId',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Provider message id',
+    labelAr: 'معرّف رسالة المزوّد',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'status',
+    group: 'whatsapp_history',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'whatsapp.message',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+];
+
+// ─── whatsapp.template ─────────────────────────────────────────────
+
+const WHATSAPP_TEMPLATE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'whatsapp.template',
+    field: 'id',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Template id',
+    labelAr: 'معرّف القالب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'accountId',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Account id',
+    labelAr: 'معرّف الحساب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'name',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Template name',
+    labelAr: 'اسم القالب',
+    redactable: false,
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'language',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Language',
+    labelAr: 'اللغة',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'category',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Category',
+    labelAr: 'الفئة',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'bodyText',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Body text',
+    labelAr: 'نص القالب',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'variableCount',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Variable count',
+    labelAr: 'عدد المتغيرات',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'status',
+    group: 'whatsapp_template',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'whatsapp.template',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── bonus.rule ────────────────────────────────────────────────────
+
+const BONUS_RULE_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'bonus.rule',
+    field: 'id',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Bonus rule id',
+    labelAr: 'معرّف قاعدة المكافأة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'companyId',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Company id',
+    labelAr: 'معرّف الشركة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'countryId',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Country id',
+    labelAr: 'معرّف الدولة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'teamId',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Team id',
+    labelAr: 'معرّف الفريق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'roleId',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Role id',
+    labelAr: 'معرّف الدور',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'bonusType',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Bonus type',
+    labelAr: 'نوع المكافأة',
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'trigger',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Trigger',
+    labelAr: 'المُحفِّز',
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'amount',
+    group: 'bonus_config',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Amount',
+    labelAr: 'المبلغ',
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'isActive',
+    group: 'bonus_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Is active',
+    labelAr: 'نشط',
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'bonus.rule',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── bonus.accrual ─────────────────────────────────────────────────
+
+const BONUS_ACCRUAL_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'bonus.accrual',
+    field: 'id',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Accrual id',
+    labelAr: 'معرّف الاستحقاق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'bonusRuleId',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Bonus rule id',
+    labelAr: 'معرّف قاعدة المكافأة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'recipientUserId',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Recipient user id',
+    labelAr: 'معرّف المستلم',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'captainId',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Captain id',
+    labelAr: 'معرّف الكابتن',
+    redactable: false,
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'triggerKind',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Trigger kind',
+    labelAr: 'نوع المُحفِّز',
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'amount',
+    group: 'bonus_payout',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Amount',
+    labelAr: 'المبلغ',
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'status',
+    group: 'bonus_payout',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'payload',
+    group: 'bonus_payout',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Payload (raw)',
+    labelAr: 'الحمولة (خام)',
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'bonus.accrual',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── competition ───────────────────────────────────────────────────
+
+const COMPETITION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'competition',
+    field: 'id',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Competition id',
+    labelAr: 'معرّف المسابقة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'competition',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'competition',
+    field: 'name',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Name',
+    labelAr: 'الاسم',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'companyId',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Company id',
+    labelAr: 'معرّف الشركة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'competition',
+    field: 'countryId',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Country id',
+    labelAr: 'معرّف الدولة',
+    redactable: false,
+  }),
+  entry({
+    resource: 'competition',
+    field: 'teamId',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Team id',
+    labelAr: 'معرّف الفريق',
+    redactable: false,
+  }),
+  entry({
+    resource: 'competition',
+    field: 'startDate',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Start date',
+    labelAr: 'تاريخ البدء',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'endDate',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'End date',
+    labelAr: 'تاريخ الانتهاء',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'metric',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Metric',
+    labelAr: 'المقياس',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'reward',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Reward',
+    labelAr: 'المكافأة',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'status',
+    group: 'competition_config',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Status',
+    labelAr: 'الحالة',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+  entry({
+    resource: 'competition',
+    field: 'updatedAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Updated at',
+    labelAr: 'تاريخ التحديث',
+  }),
+];
+
+// ─── notification ──────────────────────────────────────────────────
+
+const NOTIFICATION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'notification',
+    field: 'id',
+    group: 'notification_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Notification id',
+    labelAr: 'معرّف الإشعار',
+    redactable: false,
+  }),
+  entry({
+    resource: 'notification',
+    field: 'tenantId',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'notification',
+    field: 'recipientUserId',
+    group: 'notification_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Recipient id',
+    labelAr: 'معرّف المستلم',
+    redactable: false,
+  }),
+  entry({
+    resource: 'notification',
+    field: 'kind',
+    group: 'notification_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Kind',
+    labelAr: 'النوع',
+  }),
+  entry({
+    resource: 'notification',
+    field: 'title',
+    group: 'notification_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Title',
+    labelAr: 'العنوان',
+  }),
+  entry({
+    resource: 'notification',
+    field: 'body',
+    group: 'notification_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Body',
+    labelAr: 'النص',
+  }),
+  entry({
+    resource: 'notification',
+    field: 'payload',
+    group: 'notification_meta',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Payload (raw)',
+    labelAr: 'الحمولة (خام)',
+  }),
+  entry({
+    resource: 'notification',
+    field: 'readAt',
+    group: 'notification_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Read at',
+    labelAr: 'تاريخ القراءة',
+  }),
+  entry({
+    resource: 'notification',
+    field: 'createdAt',
+    group: 'system',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Created at',
+    labelAr: 'تاريخ الإنشاء',
+  }),
+];
+
+// ─── tenant (top-level backup metadata) ────────────────────────────
+
+const TENANT_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'tenant',
+    field: 'id',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant id',
+    labelAr: 'معرّف المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'tenant',
+    field: 'code',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant code',
+    labelAr: 'رمز المستأجر',
+    redactable: false,
+  }),
+  entry({
+    resource: 'tenant',
+    field: 'name',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Tenant name',
+    labelAr: 'اسم المستأجر',
+  }),
+  entry({
+    resource: 'tenant',
+    field: 'exportedAt',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Exported at',
+    labelAr: 'تاريخ التصدير',
+    redactable: false,
+  }),
+  entry({
+    resource: 'tenant',
+    field: 'schemaVersion',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Schema version',
+    labelAr: 'إصدار المخطط',
+    redactable: false,
+  }),
+  entry({
+    resource: 'tenant',
+    field: 'rowCap',
+    group: 'tenant_meta',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Row cap',
+    labelAr: 'حد الصفوف',
+    redactable: false,
+  }),
+];
+
+// ─── master catalogue ──────────────────────────────────────────────
+
+export const FIELD_CATALOGUE: readonly FieldCatalogueEntry[] = [
+  ...LEAD_ENTRIES,
+  ...LEAD_ACTIVITY_ENTRIES,
+  ...LEAD_REVIEW_ENTRIES,
+  ...ROTATION_ENTRIES,
+  ...FOLLOWUP_ENTRIES,
+  ...CAPTAIN_ENTRIES,
+  ...CONTACT_ENTRIES,
+  ...PARTNER_SOURCE_ENTRIES,
+  ...PARTNER_VERIFICATION_ENTRIES,
+  ...PARTNER_EVIDENCE_ENTRIES,
+  ...PARTNER_RECONCILIATION_ENTRIES,
+  ...PARTNER_COMMISSION_ENTRIES,
+  ...WHATSAPP_CONVERSATION_ENTRIES,
+  ...REPORT_ENTRIES,
+  ...AUDIT_ENTRIES,
+  // D5.6D-1 — backup catalogue coverage:
+  ...LEAD_BACKUP_ENTRIES,
+  ...LEAD_ACTIVITY_BACKUP_ENTRIES,
+  ...FOLLOWUP_BACKUP_ENTRIES,
+  ...CAPTAIN_BACKUP_ENTRIES,
+  ...WHATSAPP_CONVERSATION_BACKUP_ENTRIES,
+  ...ORG_USER_ENTRIES,
+  ...PIPELINE_ENTRIES,
+  ...PIPELINE_STAGE_ENTRIES,
+  ...CAPTAIN_DOCUMENT_ENTRIES,
+  ...CAPTAIN_TRIP_ENTRIES,
+  ...WHATSAPP_ACCOUNT_ENTRIES,
+  ...WHATSAPP_MESSAGE_ENTRIES,
+  ...WHATSAPP_TEMPLATE_ENTRIES,
+  ...BONUS_RULE_ENTRIES,
+  ...BONUS_ACCRUAL_ENTRIES,
+  ...COMPETITION_ENTRIES,
+  ...NOTIFICATION_ENTRIES,
+  ...TENANT_ENTRIES,
+];
+
+export const CATALOGUE_RESOURCES = [
+  'lead',
+  'lead.activity',
+  'lead.review',
+  'rotation',
+  'followup',
+  'captain',
+  'captain.document',
+  'captain.trip',
+  'contact',
+  'partner_source',
+  'partner.verification',
+  'partner.evidence',
+  'partner.reconciliation',
+  'partner.commission',
+  'whatsapp.conversation',
+  'whatsapp.account',
+  'whatsapp.message',
+  'whatsapp.template',
+  'report',
+  'audit',
+  'org.user',
+  'pipeline',
+  'pipeline.stage',
+  'bonus.rule',
+  'bonus.accrual',
+  'competition',
+  'notification',
+  'tenant',
+] as const satisfies readonly CatalogueResource[];
 
 /** O(1) lookup: tenants pass `(resource, field)` to test gateability. */
 export function isCatalogued(resource: string, field: string): boolean {
   return FIELD_CATALOGUE.some((c) => c.resource === resource && c.field === field);
+}
+
+/**
+ * D5.2 — Returns true when the catalogued entry forbids redaction
+ * at the runtime layer (only `lead.id` and `captain.id` /
+ * `contact.id` today, because the UUIDs are part of route paths).
+ *
+ * Fields not in the catalogue are treated as redactable (default
+ * true) — the runtime is free to strip them, but no role-builder
+ * UI knows about them so a deny row is never written.
+ */
+export function isRedactable(resource: string, field: string): boolean {
+  const found = FIELD_CATALOGUE.find((c) => c.resource === resource && c.field === field);
+  if (!found) return true;
+  return found.redactable !== false;
 }

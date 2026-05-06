@@ -21,6 +21,7 @@ import { CurrentUser } from '../identity/current-user.decorator';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 /**
@@ -109,6 +110,7 @@ export class LeadsController {
 
   @Get('leads')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('lead')
   @ApiOperation({ summary: 'List leads with filters + pagination' })
   list(@Query() query: ListLeadsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.list(query, claimsToScope(user));
@@ -153,6 +155,7 @@ export class LeadsController {
 
   @Get('leads/:id')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('lead')
   @ApiOperation({ summary: 'Get a lead by id (scope-aware)' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.findByIdInScopeOrThrow(id, claimsToScope(user));
@@ -251,6 +254,7 @@ export class LeadsController {
 
   @Get('leads/:id/activities')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('lead.activity')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
   activities(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.listActivities(id, claimsToScope(user));
@@ -368,6 +372,7 @@ export class LeadsController {
 
   @Get('leads/:id/rotations')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('rotation')
   @ApiOperation({ summary: 'List rotation history for a lead (visibility-gated)' })
   listRotations(
     @Param('id', new ParseUUIDPipe()) id: string,

@@ -15,7 +15,9 @@ import { DuplicateDecisionService } from '../duplicates/duplicate-decision.servi
 import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
 import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
+import { OwnershipVisibilityService } from '../rbac/ownership-visibility.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
+import { WhatsAppVisibilityService } from '../rbac/whatsapp-visibility.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
 import { buildAttribution } from './attribution.util';
@@ -134,6 +136,27 @@ export class LeadsService {
      * @Global DuplicatesModule) always provides it.
      */
     @Optional() private readonly duplicateDecision?: DuplicateDecisionService,
+    /**
+     * Phase D5 — D5.7: previous-owner / owner-history visibility
+     * resolver. Consults the `field_permissions` table for
+     * `lead.previousOwner` / `lead.ownerHistory` deny rows.
+     * Replaces the pre-D5.7 hardcoded `lead.write` capability
+     * check that piggy-backed on edit permissions. @Optional so
+     * legacy fixtures keep compiling; production wiring (CrmModule
+     * via the @Global RbacModule) always provides it.
+     */
+    @Optional() private readonly ownershipVisibility?: OwnershipVisibilityService,
+    /**
+     * Phase D5 — D5.12-B: WhatsApp activity payload redactor.
+     * Walks `LeadActivity` rows in `listActivities` and strips
+     * sensitive sub-keys (`fromUserId` / `toUserId` / `summary`)
+     * from `whatsapp_handover` + `whatsapp_handover_summary`
+     * payloads when the role's `whatsapp.conversation` deny rules
+     * require it. @Optional so legacy fixtures keep compiling;
+     * production wiring (CrmModule via the @Global RbacModule)
+     * always provides it.
+     */
+    @Optional() private readonly whatsappVisibility?: WhatsAppVisibilityService,
   ) {}
 
   /**
@@ -767,13 +790,27 @@ export class LeadsService {
   ): Promise<{
     attempts: AttemptHistoryRow[];
     totalAttempts: number;
-    outOfScopeCount: number;
+    /**
+     * Phase D5 — D5.8: count of predecessor attempts outside the
+     * caller's scope. Set to `null` when the role's
+     * `lead.outOfScopeAttemptCount` field-permission is denied so
+     * the existence of out-of-scope attempts is no longer leaked.
+     * The UI can still render a generic "older attempts may
+     * exist" hint based on `null` vs. `0`/positive number.
+     */
+    outOfScopeCount: number | null;
     currentLeadId: string;
   }> {
     const tenantId = requireTenantId();
     // 1. Visibility gate. Throws 404 if out of scope.
     const lead = await this.findByIdInScopeOrThrow(leadId, userClaims);
     const contactId = lead.contactId;
+
+    // D5.8 — out-of-scope count visibility. Resolved once per
+    // request; applied at every return path below.
+    const canSeeOutOfScopeCount = this.ownershipVisibility
+      ? await this.ownershipVisibility.canReadOutOfScopeAttemptCount(userClaims)
+      : true;
 
     // 2. No contact → single-row history.
     if (!contactId) {
@@ -787,17 +824,24 @@ export class LeadsService {
         return {
           attempts: this.applyOwnerVisibilityToAttempts(single.attempts, leadId, false),
           totalAttempts: single.attempts.length,
-          outOfScopeCount: 0,
+          // No contact ⇒ single attempt ⇒ no out-of-scope rows
+          // exist; the count is genuinely 0 regardless of the
+          // visibility gate. Keeping it gated mirrors the
+          // contract for the multi-attempt path so the UI can
+          // treat `null` as "hidden" everywhere.
+          outOfScopeCount: canSeeOutOfScopeCount ? 0 : null,
           currentLeadId: leadId,
         };
       });
     }
 
-    // Phase D2 — D2.6: previous-owner visibility gate. Sales agents
-    // (no `lead.assign` capability) must not see the names of agents
-    // who handled the predecessors. The CURRENT row keeps its owner
-    // intact so the agent still sees their own assignment; only the
-    // predecessor rows are stripped. TL+ / ops keep full history.
+    // Phase D2 — D2.6 / Phase D5 — D5.7: previous-owner visibility
+    // gate via the field-permission backed
+    // `OwnershipVisibilityService`. Sales agents must not see the
+    // names of agents who handled the predecessors. The CURRENT
+    // row keeps its owner intact so the agent still sees their own
+    // assignment; only the predecessor rows are stripped. TL+ /
+    // ops keep full history.
     const canSeePreviousOwner = await this.userCanSeePreviousOwner(userClaims);
     const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
@@ -810,6 +854,7 @@ export class LeadsService {
         leadId: null,
         scopeWhere,
       });
+      const rawOutOfScopeCount = Math.max(0, totalAttempts - visible.attempts.length);
       return {
         attempts: this.applyOwnerVisibilityToAttempts(
           visible.attempts,
@@ -817,46 +862,30 @@ export class LeadsService {
           canSeePreviousOwner,
         ),
         totalAttempts,
-        outOfScopeCount: Math.max(0, totalAttempts - visible.attempts.length),
+        outOfScopeCount: canSeeOutOfScopeCount ? rawOutOfScopeCount : null,
         currentLeadId: leadId,
       };
     });
   }
 
-  /** Phase D2 — D2.6: previous-owner privilege check.
-   *  Returns true when the role carries `lead.write` — granted to
-   *  TL / Account Manager / Ops / Super Admin (`TEAM_LEAD_EXTRAS`),
-   *  NOT to sales / activation / driving agents. Pure DB read,
-   *  RLS-pinned to the current tenant. Falls back to `false`
-   *  (conservative) when the role lookup fails so a transient error
-   *  never leaks an owner.
+  /** Phase D2 — D2.6 / Phase D5 — D5.7: previous-owner visibility check.
    *
-   *  Why not `lead.assign`? `AGENT_ACTIONS` grants `lead.assign` to
-   *  every agent role (sales / activation / driving), so using it
-   *  here would silently expose previous owners to sales agents —
-   *  the exact violation D2.6's product rule prohibits. `lead.write`
-   *  matches the exact "TL+" cohort the spec names.
+   *  Driven by the `field_permissions` table on `lead.previousOwner`,
+   *  resolved via `OwnershipVisibilityService`. Replaces the pre-D5.7
+   *  hardcoded `lead.write` gate so an admin can grant "see previous
+   *  owners" to a role without granting edit permissions, or revoke
+   *  the visibility from a TL who holds `lead.write`. Default deny
+   *  rows for `sales_agent` / `activation_agent` / `driving_agent`
+   *  are installed by migration 0040 + the seed so the pre-D5.7 UX
+   *  is preserved (sales agents see neutral handover history).
    *
-   *  TODO (forward): introduce a dedicated capability — e.g.
-   *  `lead.previous_owner.read` — or a field-level permission on
-   *  `lead.previousAttemptOwner` so the previous-owner cohort can
-   *  be configured per-tenant without piggy-backing on `lead.write`.
-   *  Tracked in the Final UX / User Stories Audit deferred list. */
+   *  Falls back to `true` only when the optional dependency is
+   *  absent (legacy test fixtures). Production wiring always
+   *  provides the service via the @Global RbacModule, so this
+   *  fallback never runs in a deployed instance. */
   private async userCanSeePreviousOwner(userClaims: ScopeUserClaims): Promise<boolean> {
-    try {
-      const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
-        tx.role.findUnique({
-          where: { id: userClaims.roleId },
-          include: {
-            capabilities: { include: { capability: { select: { code: true } } } },
-          },
-        }),
-      );
-      const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
-      return codes.includes('lead.write');
-    } catch {
-      return false;
-    }
+    if (!this.ownershipVisibility) return true;
+    return this.ownershipVisibility.canReadPreviousOwner(userClaims);
   }
 
   /** Phase D2 — D2.6: strip `assignedTo` / `assignedToId` from every
@@ -1229,24 +1258,35 @@ export class LeadsService {
         },
       }),
     );
+    if (!userClaims) return rows;
     // Phase C — C4: an activity's `payload` JSON may mirror lead-
-    // shape fields (e.g. attribution.campaign was lifted into a
-    // payload by a future emitter). Apply the SAME lead-resource
-    // deny paths to each `payload` so the timeline can't leak a
-    // value the role isn't allowed to see directly. Today's
-    // emitters don't include any of the seeded sales_agent denies,
-    // so this is a defensive pass — but it ships now so future
-    // payload writers stay safe by default.
-    if (!userClaims || !this.fieldFilter) return rows;
-    const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
-    if (paths.length === 0) return rows;
-    return rows.map((row) => ({
-      ...row,
-      payload:
-        row.payload == null
-          ? row.payload
-          : (this.fieldFilter!.filterRead(row.payload, paths) as typeof row.payload),
-    }));
+    // shape fields. Apply lead-resource deny paths to each
+    // payload so the timeline can't leak a value the role isn't
+    // allowed to see directly.
+    let next = rows;
+    if (this.fieldFilter) {
+      const { paths } = await this.fieldFilter.listDeniedReadFields(userClaims, 'lead');
+      if (paths.length > 0) {
+        const filter = this.fieldFilter;
+        next = next.map((row) => ({
+          ...row,
+          payload:
+            row.payload == null
+              ? row.payload
+              : (filter.filterRead(row.payload, paths) as typeof row.payload),
+        }));
+      }
+    }
+    // Phase D5 — D5.12-B: redact WhatsApp handover sub-keys
+    // (`fromUserId` / `toUserId` / `summary`) on
+    // `whatsapp_handover` + `whatsapp_handover_summary` activity
+    // payloads. Surgical — non-WhatsApp rows pass through
+    // unchanged. Row count preserved.
+    if (this.whatsappVisibility) {
+      const visibility = await this.whatsappVisibility.resolveConversationVisibility(userClaims);
+      next = this.whatsappVisibility.applyActivityList(next, visibility);
+    }
+    return next;
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1386,13 +1426,15 @@ export class LeadsService {
 
     // P3-02 — push the new owner so their workspace lights up the
     // lead immediately. Skipped on unassign (no recipient).
+    // D5.13 — `fromUserId` is always null on the realtime channel;
+    // previous-owner identity is gated by REST field permissions.
     if (assigneeUserId && this.realtime) {
       try {
         this.realtime.emitToUser(tenantId, assigneeUserId, {
           type: 'lead.assigned',
           leadId: id,
           toUserId: assigneeUserId,
-          fromUserId: before.assignedToId ?? null,
+          fromUserId: null,
           reason: 'manual',
         });
       } catch {
@@ -1539,13 +1581,15 @@ export class LeadsService {
     });
 
     // P3-02 — push to the new owner (best-effort; never blocks).
+    // D5.13 — `fromUserId` is always null on the realtime channel;
+    // previous-owner identity is gated by REST field permissions.
     if (result.decision.chosenUserId && this.realtime) {
       try {
         this.realtime.emitToUser(tenantId, result.decision.chosenUserId, {
           type: 'lead.assigned',
           leadId: id,
           toUserId: result.decision.chosenUserId,
-          fromUserId: before.assignedToId ?? null,
+          fromUserId: null,
           reason: 'auto',
         });
       } catch {

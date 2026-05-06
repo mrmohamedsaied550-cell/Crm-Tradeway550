@@ -6,6 +6,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Clock, ExternalLink, EyeOff, Repeat2, ShieldCheck, UserCircle2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { RedactedFieldBadge } from '@/components/ui/redacted-field-badge';
 import { ApiError, leadsApi } from '@/lib/api';
 import type { AttemptHistoryResult, AttemptHistoryRow } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
@@ -30,6 +31,7 @@ import { cn } from '@/lib/utils';
  */
 export function AttemptsHistoryCard({ leadId }: { leadId: string }): JSX.Element | null {
   const t = useTranslations('admin.leads.detail.attempts');
+  const tCommon = useTranslations('common');
   const locale = useLocale();
   const [data, setData] = useState<AttemptHistoryResult | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -109,7 +111,16 @@ export function AttemptsHistoryCard({ leadId }: { leadId: string }): JSX.Element
         ))}
       </ul>
 
-      {data.outOfScopeCount > 0 ? (
+      {data.outOfScopeCount === null ? (
+        // Phase D5 — D5.8: the role's `lead.outOfScopeAttemptCount`
+        // is denied. Don't disclose whether out-of-scope attempts
+        // exist; render the generic "older attempts may be hidden"
+        // hint so the UI is honest without leaking the count.
+        <div className="flex items-start gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 text-[11px] italic text-ink-tertiary">
+          <EyeOff className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{tCommon('olderAttemptsHidden')}</span>
+        </div>
+      ) : data.outOfScopeCount > 0 ? (
         <div className="flex items-start gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 text-[11px] italic text-ink-tertiary">
           <EyeOff className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span>{t('outOfScope', { n: data.outOfScopeCount })}</span>
@@ -179,10 +190,11 @@ function AttemptRow({
             {attempt.assignedTo.name}
           </span>
         ) : ownerHidden ? (
-          <span className="inline-flex items-center gap-1 italic text-ink-tertiary">
-            <UserCircle2 className="h-3 w-3" aria-hidden="true" />
-            {t('handledPreviously')}
-          </span>
+          // Phase D5 — D5.7: predecessor owner stripped server-side
+          // by the field-permission gate on `lead.previousOwner`.
+          // Use the reusable RedactedFieldBadge so the copy stays
+          // consistent across every "hidden by your role" surface.
+          <RedactedFieldBadge resource="lead" field="previousOwner" />
         ) : (
           <span className="italic text-ink-tertiary">{t('unassigned')}</span>
         )}

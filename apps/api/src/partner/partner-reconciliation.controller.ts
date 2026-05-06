@@ -3,16 +3,13 @@ import {
   Body,
   Controller,
   Get,
-  Header,
   HttpCode,
   HttpStatus,
   Post,
   Query,
-  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { Response } from 'express';
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
@@ -20,7 +17,9 @@ import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
+import { ExportGate } from '../rbac/export-gate.decorator';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { isD4PartnerHubV1Enabled } from './d4-feature-flag';
@@ -70,6 +69,7 @@ export class PartnerReconciliationController {
 
   @Get()
   @RequireCapability('partner.reconciliation.read')
+  @ResourceFieldGate('partner.reconciliation')
   @ApiOperation({ summary: 'List partner reconciliation discrepancies' })
   list(
     @Query('partnerSourceId') partnerSourceId: string | undefined,
@@ -94,22 +94,53 @@ export class PartnerReconciliationController {
     );
   }
 
+  /**
+   * Phase D5 — D5.6B: governed CSV export.
+   *
+   * The handler returns a `StructuredExport` (built by the
+   * service); the global `ExportInterceptor` resolves the caller's
+   * permissions via PermissionResolverService, runs column-level
+   * redaction via ExportRedactionService, serialises to CSV via
+   * the canonical csv-serializer, sets download headers, writes a
+   * metadata-only audit row (action `partner.reconciliation
+   * .export.completed`), and returns the serialised string body
+   * that NestJS ships to the client.
+   *
+   * Capability gate: `partner.reconciliation.export` — separate
+   * from the JSON list endpoint's `partner.reconciliation.read`.
+   * D5.6A back-filled the new cap onto every role with
+   * `tenant.export`, so existing operators keep their CSV access.
+   * Sub-tenant.export roles no longer get the CSV download until
+   * an admin grants the new cap explicitly (the intended
+   * "see report without export" product separation).
+   *
+   * `inherits` declares every other resource whose deny rules also
+   * apply to columns in this export — `lead`, `captain`,
+   * `partner.verification`, `partner_source`. The redactor reads
+   * each column's `(resource, field)` pair against the resolver's
+   * combined deny map, so a `lead.phone` deny strips the `phone`
+   * column even though the export's primary resource is
+   * `partner.reconciliation`.
+   */
   @Get('export.csv')
-  @RequireCapability('partner.reconciliation.read')
-  @Header('Content-Type', 'text/csv; charset=utf-8')
-  @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'CSV export of partner reconciliation discrepancies' })
-  async exportCsv(
+  @RequireCapability('partner.reconciliation.export')
+  @ExportGate({
+    primary: 'partner.reconciliation',
+    inherits: ['lead', 'captain', 'partner.verification', 'partner_source'],
+    format: 'csv',
+    filename: () => `partner-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`,
+  })
+  @ApiOperation({ summary: 'CSV export of partner reconciliation discrepancies (governed)' })
+  exportCsv(
     @Query('partnerSourceId') partnerSourceId: string | undefined,
     @Query('companyId') companyId: string | undefined,
     @Query('countryId') countryId: string | undefined,
     @Query('category') category: string | undefined,
     @CurrentUser() user: AccessTokenClaims,
-    @Res() res: Response,
-  ): Promise<void> {
+  ) {
     this.assertEnabled();
     const cat = parseCategory(category);
-    const csv = await this.reconciliation.exportCsv(
+    return this.reconciliation.buildStructuredExport(
       {
         ...(partnerSourceId && { partnerSourceId }),
         ...(companyId && { companyId }),
@@ -118,9 +149,6 @@ export class PartnerReconciliationController {
       },
       this.toClaims(user),
     );
-    const filename = `partner-reconciliation-${new Date().toISOString().slice(0, 10)}.csv`;
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
   }
 
   @Post('open-review')

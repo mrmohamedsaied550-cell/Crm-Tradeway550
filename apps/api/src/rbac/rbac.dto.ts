@@ -112,10 +112,71 @@ export const UpdateRoleSchema = z
     level: z.number().int().min(0).max(100).optional(),
     description: descriptionShape,
     capabilities: z.array(capabilityCodeShape).optional(),
+    /**
+     * Phase D5 — D5.14: typed-confirmation phrase. Required when
+     * the capability diff would trigger a critical lockout
+     * warning (e.g. the actor is removing `roles.write` from
+     * their own role, or the role is the last keeper of a
+     * tenant-wide capability). The exact required phrase ships
+     * back to the client through the
+     * `role.dependency.confirmation_required` error response so
+     * the client can render the typed-confirmation modal.
+     *
+     * For non-critical changes the field is silently ignored.
+     */
+    confirmation: z.string().trim().min(0).max(64).optional(),
   })
   .strict()
-  .refine((v) => Object.keys(v).length > 0, 'PATCH body must include at least one field to update');
+  .refine((v) => {
+    const keys = Object.keys(v).filter((k) => k !== 'confirmation');
+    return keys.length > 0;
+  }, 'PATCH body must include at least one field to update');
 export type UpdateRoleDto = z.infer<typeof UpdateRoleSchema>;
+
+/**
+ * Phase D5 — D5.14: dependency-check endpoint body. Returns
+ * structural warnings without writing anything; the role builder
+ * UI calls this to render inline hints + group warnings by
+ * severity BEFORE the operator clicks save.
+ */
+export const RoleDependencyCheckSchema = z
+  .object({
+    /**
+     * The proposed capability set after save. The endpoint dedupes
+     * + validates each against the global registry so a typo
+     * surfaces with `role.capability_unknown`.
+     */
+    capabilities: z.array(capabilityCodeShape),
+  })
+  .strict();
+export type RoleDependencyCheckDto = z.infer<typeof RoleDependencyCheckSchema>;
+
+/**
+ * Phase D5 — D5.15-A: change-set preview endpoint body. Every
+ * field is OPTIONAL — when omitted, that axis is treated as
+ * unchanged in the diff. The role builder typically sends
+ * `capabilities` from the capability matrix; the scopes /
+ * field-permissions tabs can attach their own arrays so a single
+ * preview round-trip covers the whole role.
+ *
+ * The endpoint never writes — it builds the diff + risk summary
+ * + reused dependency analysis and returns the full
+ * `RoleChangePreviewResult`. The actual write still happens
+ * through the existing PATCH / PUT endpoints.
+ */
+export const RoleChangePreviewSchema = z
+  .object({
+    capabilities: z.array(capabilityCodeShape).optional(),
+    scopes: z.array(scopeRowShape).optional(),
+    fieldPermissions: z.array(fieldPermissionRowShape).optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.capabilities !== undefined || v.scopes !== undefined || v.fieldPermissions !== undefined,
+    'preview body must include at least one of capabilities / scopes / fieldPermissions',
+  );
+export type RoleChangePreviewDto = z.infer<typeof RoleChangePreviewSchema>;
 
 /** POST /rbac/roles/:id/duplicate — body. New code + names required. */
 export const DuplicateRoleSchema = z
@@ -143,6 +204,75 @@ export const PutRoleScopesSchema = z
     return true;
   }, 'each resource must appear at most once in scopes');
 export type PutRoleScopesDto = z.infer<typeof PutRoleScopesSchema>;
+
+/**
+ * Phase D5 — D5.16: create-role-from-template body. The new role's
+ * machine identifier (`code`) + display names are admin-supplied;
+ * the template provides the curated capabilities / scopes /
+ * field-permission set. The optional override fields let the
+ * picker pre-tweak the scope rows or the field-permission rows
+ * without a second round-trip through the role editor's tabs.
+ */
+const scopeRowShape_d516 = z
+  .object({
+    resource: z.enum(ROLE_SCOPE_RESOURCES),
+    scope: z.enum(ROLE_SCOPE_VALUES),
+  })
+  .strict();
+
+const fieldPermissionRowShape_d516 = z
+  .object({
+    resource: z.string().trim().min(1).max(64),
+    field: z.string().trim().min(1).max(128),
+    canRead: z.boolean(),
+    canWrite: z.boolean(),
+  })
+  .strict();
+
+export const CreateFromTemplateSchema = z
+  .object({
+    templateCode: codeShape,
+    code: codeShape,
+    nameEn: nameShape,
+    nameAr: nameShape,
+    descriptionEn: descriptionShape,
+    descriptionAr: descriptionShape,
+    /** Echoed when the template's caps trigger a critical D5.14 warning. */
+    confirmation: z.string().trim().min(0).max(64).optional(),
+    initialScopeOverrides: z.array(scopeRowShape_d516).optional(),
+    initialFieldPermissionOverrides: z.array(fieldPermissionRowShape_d516).optional(),
+  })
+  .strict();
+export type CreateFromTemplateDto = z.infer<typeof CreateFromTemplateSchema>;
+
+/**
+ * Phase D5 — D5.16: template preview body. Empty — the path
+ * carries the template code; the body is reserved for future
+ * "preview with proposed code/name overrides" extensions.
+ */
+export const RoleTemplatePreviewSchema = z.object({}).strict();
+export type RoleTemplatePreviewDto = z.infer<typeof RoleTemplatePreviewSchema>;
+
+/**
+ * Phase D5 — D5.15-B: revert endpoint body. The capability /
+ * scope / field-permission set ride from the snapshot the
+ * caller targets; the body only carries the (optional) typed
+ * confirmation phrase + reason. Critical lockout warnings
+ * (D5.14) gate the revert just like a regular save.
+ */
+export const RevertRoleVersionSchema = z
+  .object({
+    /**
+     * Echoed back when the revert diff produces a critical
+     * warning (self-lockout / last-keeper). Identical contract
+     * to the PATCH `confirmation` field from D5.14.
+     */
+    confirmation: z.string().trim().min(0).max(64).optional(),
+    /** Optional admin note for "why was this reverted". */
+    reason: z.string().trim().min(0).max(500).optional(),
+  })
+  .strict();
+export type RevertRoleVersionDto = z.infer<typeof RevertRoleVersionSchema>;
 
 /** PUT /rbac/roles/:id/field-permissions — body. */
 export const PutRoleFieldPermissionsSchema = z

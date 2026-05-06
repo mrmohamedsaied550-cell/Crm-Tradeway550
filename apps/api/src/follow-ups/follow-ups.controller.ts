@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { FollowUpsService } from './follow-ups.service';
@@ -50,6 +51,7 @@ export class FollowUpsController {
 
   @Get('follow-ups/mine')
   @RequireCapability('followup.read')
+  @ResourceFieldGate('followup')
   @ApiOperation({ summary: "List the calling user's follow-ups (default: pending only)" })
   mine(@Query() query: ListMyFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.followUps.listMine(user.sub, query, claimsToScope(user));
@@ -79,6 +81,7 @@ export class FollowUpsController {
    */
   @Get('follow-ups/calendar')
   @RequireCapability('followup.read')
+  @ResourceFieldGate('followup')
   @ApiOperation({ summary: 'List follow-ups in a date range (calendar feed)' })
   calendar(@Query() query: CalendarFollowUpsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.followUps.listInRange(
@@ -90,6 +93,7 @@ export class FollowUpsController {
 
   @Get('leads/:leadId/follow-ups')
   @RequireCapability('followup.read')
+  @ResourceFieldGate('followup')
   @ApiOperation({ summary: 'List every follow-up scheduled on this lead' })
   listForLead(
     @Param('leadId', new ParseUUIDPipe()) leadId: string,

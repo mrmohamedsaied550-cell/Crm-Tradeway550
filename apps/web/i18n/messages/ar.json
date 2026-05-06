@@ -1424,6 +1424,54 @@
       "emptyFilteredBody": "لا يوجد ما يطابق الفلتر الحالي ضمن الأحداث الأخيرة. أزل الفلتر لرؤية السجل الكامل.",
       "actorSystem": "النظام",
       "filterLabel": "الفلتر:",
+      "groupFilterLabel": "الحوكمة:",
+      "groups": {
+        "rbac": "الصلاحيات / معاينات الأدوار",
+        "role": "تغييرات الأدوار",
+        "user_scope": "تغييرات نطاق المستخدمين",
+        "tenant_export": "تصدير النسخ الاحتياطية للمستأجر",
+        "report_export": "تصدير التقارير",
+        "partner_recon_export": "تصدير مطابقة الشركاء",
+        "partner_commission_export": "تصدير عمولات الشركاء",
+        "whatsapp_handover": "تحويلات واتساب",
+        "export_governance": "كل أحداث حوكمة التصدير"
+      },
+      "actions": {
+        "rbac.role.previewed": "معاينة صلاحيات دور",
+        "role.create": "إنشاء دور",
+        "role.update": "تحديث دور",
+        "role.delete": "حذف دور",
+        "role.duplicate": "تكرار دور",
+        "role.capability.update": "تحديث صلاحيات الدور",
+        "role.scope.update": "تحديث نطاق بيانات الدور",
+        "role.field.update": "تحديث أذونات حقول الدور",
+        "user.scope.assign": "إسناد نطاق لمستخدم",
+        "user.scope.update": "تحديث نطاق مستخدم",
+        "user.scope.revoke": "إلغاء نطاق مستخدم",
+        "tenant.export.completed": "اكتمل تصدير نسخة المستأجر",
+        "report.export.completed": "اكتمل تصدير التقرير",
+        "partner.reconciliation.export.completed": "اكتمل تصدير مطابقة الشريك",
+        "partner.commission.export.completed": "اكتمل تصدير عمولات الشريك",
+        "lead.export.completed": "اكتمل تصدير العملاء",
+        "audit.export.completed": "اكتمل تصدير التدقيق",
+        "whatsapp.handover.completed": "اكتمل تحويل محادثة واتساب",
+        "rbac.role.dependency_check": "فحص اعتماديات الدور",
+        "rbac.role.dependency_warning_confirmed": "تأكيد تحذير اعتماديات الدور",
+        "rbac.role.change_previewed": "معاينة تغييرات الدور",
+        "rbac.role.version_created": "تسجيل نسخة من الدور",
+        "rbac.role.version_reverted": "إرجاع الدور إلى نسخة سابقة",
+        "rbac.role.template_previewed": "معاينة قالب دور",
+        "rbac.role.created_from_template": "إنشاء دور من قالب",
+        "field_write_denied": "تم رفض كتابة حقل"
+      },
+      "recentPreviews": {
+        "title": "معاينات الدور الأخيرة",
+        "subtitle": "آخر 25 صفًّا من سجل التدقيق لمعاينة هذا الدور.",
+        "empty": "لا توجد معاينات مسجّلة لهذا الدور بعد.",
+        "loadFailed": "تعذّر تحميل سجل المعاينات.",
+        "loading": "جارٍ التحميل…",
+        "anonymousActor": "النظام"
+      },
       "chips": {
         "all": "كل الأحداث",
         "lead.duplicate_decision": "قرارات التكرار",
@@ -1775,7 +1823,47 @@
         "info": "البيانات الأساسية",
         "capabilities": "مصفوفة الصلاحيات",
         "scopes": "نطاق البيانات",
-        "fields": "أذونات الحقول"
+        "fields": "أذونات الحقول",
+        "history": "السجل",
+        "preview": "معاينة"
+      },
+      "preview": {
+        "title": "ما يراه هذا الدور",
+        "subtitle": "معاينة للقراءة فقط ينشئها الخادم. لا توجد محاكاة هوية ولا جلسة جديدة — هذا عرض هيكلي لصلاحيات الدور.",
+        "loadFailed": "تعذّر تحميل معاينة الدور.",
+        "loading": "جارٍ تحميل المعاينة…",
+        "summaryHeader": "ملخص الدور",
+        "exportsHeader": "صلاحيات التصدير",
+        "exportsEmpty": "لا توجد صلاحيات تصدير لهذا الدور.",
+        "scopesHeader": "نطاق البيانات لكل مورد",
+        "scopesEmpty": "لا توجد نطاقات بيانات مهيّأة لهذا الدور.",
+        "scopeFallbackGlobal": "عام (افتراضي)",
+        "deniedReadHeader": "الحقول المخفية (قراءة مرفوضة)",
+        "deniedReadEmpty": "لا توجد حقول مخفية مهيّأة لهذا الدور.",
+        "deniedWriteHeader": "الحقول للقراءة فقط (كتابة مرفوضة)",
+        "deniedWriteEmpty": "لا توجد حقول للقراءة فقط مهيّأة لهذا الدور.",
+        "warningsHeader": "تنبيهات",
+        "warningsEmpty": "لا توجد تنبيهات — توزيع صلاحيات هذا الدور يبدو متوازنًا.",
+        "warnings": {
+          "has_export_capabilities": "هذا الدور يمتلك صلاحيات تصدير. يمكن للمستخدمين تصدير بيانات CSV / JSON خارج المنصة.",
+          "has_partner_data_access": "هذا الدور يستطيع رؤية بيانات الشركاء (التحقق / المصادر / التسوية).",
+          "has_partner_merge_capability": "هذا الدور يستطيع دمج بيانات الشركاء داخل النظام.",
+          "has_audit_payload_access": "هذا الدور يستطيع قراءة حمولات التدقيق الخام (لم يُهيّأ تنقيح حقل في التدقيق).",
+          "no_lead_read_capability": "هذا الدور لا يمتلك صلاحية lead.read — لن يرى المستخدمون أي عملاء محتملين.",
+          "has_hidden_owner_history_fields": "هذا الدور يخفي حقول سجل الملاك. لن يرى المستخدمون المالك السابق أو منفّذ الدوران أو ملاحظات الدوران.",
+          "has_super_admin_bypass": "هذا دور المشرف العام. يتجاوز كل قواعد أذونات الحقول."
+        },
+        "answers": {
+          "header": "إجابات سريعة",
+          "leadRead": "هل يستطيع قراءة العملاء؟",
+          "leadExport": "هل يستطيع تصدير العملاء / البيانات؟",
+          "previousOwner": "هل يستطيع رؤية المالك السابق؟",
+          "partnerData": "هل يستطيع رؤية بيانات الشركاء؟",
+          "partnerMerge": "هل يستطيع دمج بيانات الشركاء؟",
+          "auditPayload": "هل يستطيع رؤية حمولات التدقيق؟",
+          "yes": "نعم",
+          "no": "لا"
+        }
       },
       "form": {
         "code": "الرمز",
@@ -1806,6 +1894,195 @@
         "canRead": "قراءة",
         "canWrite": "كتابة",
         "sensitive": "حسّاس"
+      },
+      "templates": {
+        "picker": {
+          "openCta": "إنشاء من قالب"
+        },
+        "createdToast": "تم إنشاء ”{name}“ من قالب.",
+        "list": {
+          "title": "إنشاء دور من قالب",
+          "intro": "القوالب نقاط بداية آمنة ومُنتقاة. يحمل كل قالب أصغر مجموعة صلاحيات لازمة، ونطاق بيانات افتراضي معقول، ومنع رؤية الحقول الحساسة الافتراضي — أكثر أمانًا بكثير من نسخ دور نظامي ثم محاولة تجريده يدويًا من الصلاحيات الخطرة.",
+          "close": "إغلاق",
+          "capabilityCount": "{n} صلاحية",
+          "scopeCount": "{n} صفوف نطاق",
+          "safeBadge": "إعدادات افتراضية آمنة"
+        },
+        "categories": {
+          "agent": "الوكلاء",
+          "team_lead": "قادة الفِرق",
+          "admin": "المسؤولون",
+          "finance": "المالية",
+          "partner": "بيانات الشركاء",
+          "qa": "الجودة / المراجعة",
+          "viewer": "المشاهدون"
+        },
+        "preview": {
+          "title": "{name}",
+          "back": "رجوع",
+          "continue": "متابعة",
+          "safeNotice": "هذا القالب يأتي بإعدادات افتراضية آمنة. لا توجد صلاحيات تصدير ولا صلاحيات إدارية ولا صلاحيات عالية الخطورة افتراضيًا.",
+          "capabilities": "الصلاحيات ({n})",
+          "scopes": "نطاق البيانات الافتراضي",
+          "fieldDenies": "منع رؤية الحقول الافتراضي ({n})"
+        },
+        "form": {
+          "title": "اختر اسم الدور",
+          "back": "رجوع",
+          "create": "إنشاء الدور",
+          "intro": "يرث الدور الجديد البنية الهيكلية للقالب ”{template}“. يمكنك تعديل الصلاحيات أو النطاق أو أذونات الحقول لاحقًا من محرر الأدوار.",
+          "codeLabel": "رمز الدور",
+          "codeHint": "معرّف snake_case — أحرف صغيرة وأرقام وشرطات سفلية. يجب أن يكون فريدًا داخل هذا المستأجر.",
+          "nameEnLabel": "الاسم (إنجليزي)",
+          "nameArLabel": "الاسم (عربي)",
+          "descriptionLabel": "الوصف",
+          "typedConfirmation": {
+            "fieldLabel": "اكتب للتأكيد: {phrase}",
+            "fieldHint": "حسّاسة لحالة الأحرف. مطلوبة لأن هذا القالب يحمل تحذيرًا حرجًا."
+          }
+        },
+        "risks": {
+          "export_capability": "صلاحية تصدير",
+          "tenant_export": "تصدير المستأجر",
+          "partner_merge": "دمج بيانات الشريك",
+          "permission_admin": "إدارة الصلاحيات",
+          "permission_preview": "معاينة الصلاحيات",
+          "audit_read": "رؤية سجل التدقيق",
+          "high_privilege": "صلاحية عالية"
+        }
+      },
+      "history": {
+        "header": "سجل النسخ",
+        "subtitle": "تم تسجيل {count} نسخة. الأحدث أولًا.",
+        "actorSystem": "النظام",
+        "reasonPrefix": "ملاحظة:",
+        "actions": {
+          "viewDetails": "عرض التفاصيل",
+          "revert": "إرجاع"
+        },
+        "trigger": {
+          "create": "إنشاء",
+          "update": "تحديث الصلاحيات",
+          "duplicate": "تكرار",
+          "scopes": "تحديث النطاق",
+          "field_permissions": "تحديث أذونات الحقول",
+          "revert": "إرجاع"
+        },
+        "counts": {
+          "granted": "{n} مُضافة",
+          "revoked": "{n} مُزالة",
+          "fields": "{n} تغيير حقول",
+          "scopes": "{n} تغيير نطاق"
+        },
+        "risks": {
+          "exportCapabilityAdded": "إضافة تصدير",
+          "exportCapabilityRevoked": "إزالة تصدير",
+          "backupExportChanged": "تغيير نسخة احتياطية",
+          "auditVisibilityChanged": "تغيير رؤية التدقيق",
+          "ownerHistoryVisibilityChanged": "تغيير رؤية سجل المالك",
+          "permissionAdminChanged": "تغيير إدارة الصلاحيات",
+          "partnerMergeChanged": "تغيير دمج الشريك"
+        },
+        "empty": {
+          "title": "لا توجد نسخ مسجّلة لهذا الدور بعد.",
+          "body": "يتم تسجيل النسخ تلقائيًا في كل مرة تتغير فيها صلاحيات أو نطاق أو أذونات حقول الدور. احفظ تغييرًا في محرر الأدوار لبدء السجل."
+        },
+        "detail": {
+          "title": "النسخة v{version}",
+          "metadata": "بيانات الدور",
+          "capabilities": "الصلاحيات ({n})",
+          "scopes": "نطاق البيانات",
+          "fieldPermissions": "أذونات الحقول ({n})",
+          "emptyScopes": "لا توجد صفوف نطاق مسجّلة في هذه النسخة.",
+          "emptyFieldPermissions": "لا توجد أذونات حقول مسجّلة في هذه النسخة.",
+          "fields": {
+            "code": "الرمز",
+            "level": "المستوى",
+            "nameEn": "الاسم (إنجليزي)",
+            "nameAr": "الاسم (عربي)"
+          },
+          "close": "إغلاق"
+        },
+        "revert": {
+          "title": "الإرجاع إلى النسخة v{version}",
+          "intro": "الإرجاع يُعيد تشغيل لقطة النسخة v{version} عبر نفس سلسلة فحص الاعتماديات ومعاينة التغييرات. التحذيرات الحرجة لا تزال تتطلب تأكيدًا مكتوبًا.",
+          "reasonLabel": "السبب (اختياري)",
+          "reasonHint": "حتى 500 حرف. يُخزَّن في صف النسخة الجديد لمسار التدقيق.",
+          "typedConfirmation": {
+            "fieldLabel": "اكتب للتأكيد: {phrase}",
+            "fieldHint": "حسّاسة لحالة الأحرف. الزر يظل معطّلًا حتى تتطابق العبارة."
+          },
+          "typedConfirmationRequired": "يطال هذا الإرجاع تحذيرًا حرجًا للقفل. اكتب عبارة التأكيد للاستمرار.",
+          "actions": {
+            "cancel": "إلغاء",
+            "confirm": "إرجاع"
+          },
+          "successToast": "تم إرجاع الدور."
+        }
+      },
+      "review": {
+        "title": "مراجعة التغييرات — {role}",
+        "noChanges": "لا توجد تغييرات لحفظها. غيّر صلاحية أو نطاقًا لإجراء تعديلات.",
+        "actions": {
+          "cancel": "إلغاء",
+          "close": "إغلاق",
+          "confirmAndSave": "تأكيد وحفظ"
+        },
+        "typedConfirmation": {
+          "fieldLabel": "اكتب للتأكيد: {phrase}",
+          "fieldHint": "حسّاسة لحالة الأحرف. زر الحفظ يبقى معطّلًا حتى تتطابق العبارة."
+        },
+        "risks": {
+          "groupLabel": "محاور خطر التغيير",
+          "exportAdded": "أُضيفت صلاحية تصدير — يصبح بإمكان هذا الدور تصدير البيانات.",
+          "exportRevoked": "أُزيلت صلاحية تصدير — يفقد هذا الدور تصدير البيانات.",
+          "backupExport": "تغيير في صلاحيات النسخة الاحتياطية / تصدير المستأجر.",
+          "auditVisibility": "تغيير في رؤية سجل التدقيق.",
+          "ownerHistory": "تغيير في رؤية سجل المالك (المالك السابق / منفّذ الدوران).",
+          "permissionAdmin": "تغيير في إدارة الصلاحيات (الأدوار أو المعاينة).",
+          "partnerMerge": "تغيير في صلاحية دمج الشريك."
+        },
+        "capabilities": {
+          "header": "الصلاحيات",
+          "summaryLine": "{granted} مُضافة · {revoked} مُزالة · {unchanged} دون تغيير",
+          "granted": "مُضافة ({n})",
+          "revoked": "مُزالة ({n})"
+        },
+        "fields": {
+          "header": "أذونات الحقول",
+          "readDeniedAdded": "منع قراءة جديد ({n})",
+          "readDeniedRemoved": "إعادة فتح قراءة ({n})",
+          "writeDeniedAdded": "منع كتابة جديد ({n})",
+          "writeDeniedRemoved": "إعادة فتح كتابة ({n})"
+        },
+        "scopes": {
+          "header": "تغييرات نطاق البيانات"
+        }
+      },
+      "dependency": {
+        "panelTitle": "فحوصات الصلاحيات",
+        "countLine": "{critical} حرجة · {warning} تحذير · {info} معلومة",
+        "dependsOn": "تعتمد على: {codes}",
+        "warnings": {
+          "dependencyMissing": "{capability} يحتاج {dependsOn}. أضف صلاحية القراءة أو أزل صلاحية الكتابة قبل الحفظ.",
+          "highRisk": {
+            "export": "{capability} يُصدِّر بيانات خارج المنصّة. امنحه فقط لمن يحتاج تنزيل تقارير CSV / JSON.",
+            "partner_merge": "{capability} يكتب بيانات الشريك داخل بيانات الـ CRM. كل دمج يُسجَّل في التدقيق، ولكن لا يمكن التراجع عنه على مستوى الصف.",
+            "lockout_admin": "{capability} يمنح صلاحية إدارة الأدوار — أي مستخدم بهذا الدور يستطيع تغيير أي صلاحية لأي دور، بما في ذلك دوره.",
+            "permission_preview": "{capability} يكشف بنية الأدوار. منحه على نطاق واسع يُسرّب الوضع الأمني للمستأجر."
+          },
+          "selfLockout": "أنت تحذف {capability} من دورك الحالي. بعد الحفظ قد تفقد القدرة على إدارة الأدوار أو رؤية التدقيق أو الوصول إلى هذه الصفحة.",
+          "lastAdmin": "لا يوجد دور آخر في هذا المستأجر يحمل {capability}. إزالته تترك المستأجر دون مَن يُدير الأدوار.",
+          "systemImmutable": "هذا دور نظامي. لا يمكن حفظ التعديلات هنا — انسخ الدور أولًا لإنشاء نسخة قابلة للتخصيص."
+        },
+        "confirmModal": {
+          "title": "تأكيد تغيير دور حرج",
+          "intro": "هذا التغيير يحمل تحذيرات حرجة. اكتب عبارة التأكيد بدقّة للاستمرار.",
+          "fieldLabel": "اكتب العبارة: {phrase}",
+          "fieldHint": "حسّاسة لحالة الأحرف. الزر يظل معطّلًا حتى تتطابق العبارة.",
+          "cancel": "إلغاء",
+          "confirm": "احفظ مع التأكيد"
+        }
       }
     },
     "duplicateRules": {
@@ -2617,6 +2894,14 @@
   "common": {
     "comingSoon": "قادم في قطاع لاحق",
     "placeholder": "عنصر نائب",
-    "version": "الإصدار"
+    "version": "الإصدار",
+    "hiddenByRole": "مخفي حسب دورك",
+    "fieldHiddenByRole": "{field} مخفي حسب دورك",
+    "ownerDetailsHidden": "تفاصيل المالك مخفية حسب دورك",
+    "olderAttemptsHidden": "قد توجد محاولات أقدم لكنها مخفية حسب دورك.",
+    "reviewContextHidden": "بعض تفاصيل المراجعة مخفية حسب دورك.",
+    "whatsappPriorMessagesHidden": "الرسائل السابقة مخفية حسب دورك.",
+    "whatsappHandoverChainHidden": "تفاصيل التسليم مخفية حسب دورك.",
+    "whatsappHistoryHidden": "سجل المحادثة مخفي جزئيًا حسب دورك."
   }
 }

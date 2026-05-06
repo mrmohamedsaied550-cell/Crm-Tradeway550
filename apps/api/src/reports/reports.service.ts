@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { serializeCsv } from '../rbac/csv-serializer';
+import { REDACTION_FIELD_KEY, type StructuredExport } from '../rbac/export-contract';
 import { requireTenantId } from '../tenants/tenant-context';
 import type { ReportFiltersDto, TimeseriesQueryDto } from './report.dto';
 
@@ -218,37 +220,135 @@ export class ReportsService {
   }
 
   /**
-   * P2-11 — flatten the summary + a leads_created series into a
-   * single CSV blob. Header rows are commented (`#`) so a
-   * spreadsheet import keeps the data section clean.
+   * @deprecated D5.6C — kept as a thin shim around
+   * `buildStructuredExport(...)` so any internal caller compiled
+   * against the old signature still works. Production callers
+   * route through the controller which now returns the
+   * structured shape directly to the ExportInterceptor; this
+   * method survives only to keep existing test fixtures /
+   * imports compiling. A later cleanup chunk can delete it.
    */
   async exportCsv(filters: ReportFiltersDto): Promise<string> {
+    const structured = await this.buildStructuredExport(filters);
+    return serializeCsv(structured);
+  }
+
+  /**
+   * D5.6C — structured export builder for the manager-dashboard
+   * reports CSV. Returns the section/key/value variant
+   * (`format: 'csv-keyvalue'`) with each row carrying a private
+   * `__field` metadata that anchors the row to a specific
+   * catalogue field on the `report` resource:
+   *
+   *   summary,total_leads     → report.summary.totalLeads
+   *   summary,overdue         → report.summary.overdue
+   *   summary,due_today       → report.summary.dueToday
+   *   summary,followups_pending → report.summary.followupsPending
+   *   summary,followups_done  → report.summary.followupsDone
+   *   summary,activations     → report.summary.activations  (sensitive — commercial)
+   *   summary,conversion_rate → report.summary.conversionRate (sensitive — commercial)
+   *   stage,<stageCode>       → report.stageBuckets       (group)
+   *   leads_created,<date>    → report.leadsCreatedTimeseries (group)
+   *
+   * The redactor (`csv-keyvalue` branch in
+   * `ExportRedactionService`) drops rows whose `__field` appears
+   * in the role's deny list. So a Finance-vs-non-Finance role
+   * can hide `summary.activations` AND `summary.conversionRate`
+   * while keeping the rest, and an audit-only role can hide the
+   * whole `leadsCreatedTimeseries` group.
+   *
+   * Byte-equality with the legacy `exportCsv` output is pinned
+   * by golden-file tests in `d5-6c-reports-export.test.ts` —
+   * comments, the empty separator line, the `section,key,value`
+   * header, the integer-vs-empty-conversion-rate formatting, and
+   * the trailing newline are all preserved.
+   */
+  async buildStructuredExport(filters: ReportFiltersDto): Promise<StructuredExport> {
     const summary = await this.summary(filters);
     const series = await this.timeseries({ ...filters, metric: 'leads_created' });
-    const lines: string[] = [];
-    lines.push('# Trade Way / Captain Masr CRM — report export');
-    lines.push(`# generated_at,${new Date().toISOString()}`);
-    lines.push(`# from,${filters.from ?? ''}`);
-    lines.push(`# to,${filters.to ?? ''}`);
-    lines.push(`# companyId,${filters.companyId ?? ''}`);
-    lines.push(`# countryId,${filters.countryId ?? ''}`);
-    lines.push(`# teamId,${filters.teamId ?? ''}`);
-    lines.push('');
-    lines.push('section,key,value');
-    lines.push(`summary,total_leads,${summary.totalLeads}`);
-    lines.push(`summary,overdue,${summary.overdueCount}`);
-    lines.push(`summary,due_today,${summary.dueTodayCount}`);
-    lines.push(`summary,followups_pending,${summary.followUpsPending}`);
-    lines.push(`summary,followups_done,${summary.followUpsDone}`);
-    lines.push(`summary,activations,${summary.activations}`);
-    lines.push(`summary,conversion_rate,${summary.conversionRate ?? ''}`);
+
+    const rows: Record<string, unknown>[] = [
+      this.row('summary', 'total_leads', summary.totalLeads, 'summary.totalLeads'),
+      this.row('summary', 'overdue', summary.overdueCount, 'summary.overdue'),
+      this.row('summary', 'due_today', summary.dueTodayCount, 'summary.dueToday'),
+      this.row(
+        'summary',
+        'followups_pending',
+        summary.followUpsPending,
+        'summary.followupsPending',
+      ),
+      this.row('summary', 'followups_done', summary.followUpsDone, 'summary.followupsDone'),
+      this.row('summary', 'activations', summary.activations, 'summary.activations'),
+      this.row(
+        'summary',
+        'conversion_rate',
+        summary.conversionRate ?? '',
+        'summary.conversionRate',
+      ),
+    ];
+
     for (const s of summary.leadsByStage) {
-      lines.push(`stage,${csvEscape(s.stageCode)},${s.count}`);
+      rows.push(this.row('stage', s.stageCode, s.count, 'stageBuckets'));
     }
     for (const p of series.points) {
-      lines.push(`leads_created,${p.date},${p.count}`);
+      rows.push(this.row('leads_created', p.date, p.count, 'leadsCreatedTimeseries'));
     }
-    return lines.join('\n') + '\n';
+
+    return {
+      format: 'csv-keyvalue',
+      filename: `crm-report-${new Date().toISOString().slice(0, 10)}.csv`,
+      comments: [
+        '# Trade Way / Captain Masr CRM — report export',
+        `# generated_at,${new Date().toISOString()}`,
+        `# from,${filters.from ?? ''}`,
+        `# to,${filters.to ?? ''}`,
+        `# companyId,${filters.companyId ?? ''}`,
+        `# countryId,${filters.countryId ?? ''}`,
+        `# teamId,${filters.teamId ?? ''}`,
+        '',
+      ],
+      // The three columns are structural anchors. They are
+      // declared with `redactable: false` so an admin can never
+      // strip the `section`/`key`/`value` columns themselves —
+      // redaction in csv-keyvalue is row-level (drop a metric)
+      // not column-level (drop a column).
+      columns: [
+        {
+          key: 'section',
+          label: 'section',
+          resource: 'report',
+          field: '_meta',
+          redactable: false,
+        },
+        { key: 'key', label: 'key', resource: 'report', field: '_meta', redactable: false },
+        {
+          key: 'value',
+          label: 'value',
+          resource: 'report',
+          field: '_meta',
+          redactable: false,
+        },
+      ],
+      rows,
+      // Match the legacy `lines.join('\n') + '\n'` byte
+      // convention so a flag-off run is byte-identical to D5.5
+      // output.
+      trailingNewline: true,
+    };
+  }
+
+  private row(
+    section: string,
+    key: string,
+    value: number | string,
+    field: string,
+  ): Record<string, unknown> {
+    return {
+      section,
+      key,
+      value,
+      [REDACTION_FIELD_KEY]: field,
+    };
   }
 }
 
@@ -338,9 +438,4 @@ function bucketByDay(from: Date, to: Date, rows: Array<{ at: Date | null }>): Ti
     cursor += 24 * 60 * 60 * 1000;
   }
   return out;
-}
-
-function csvEscape(s: string): string {
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
 }

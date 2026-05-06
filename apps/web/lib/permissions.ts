@@ -64,6 +64,71 @@ export function can(resource: string, action: string): boolean {
 }
 
 /**
+ * Phase D5 — D5.9: read-side check using the new
+ * `deniedReadFieldsByResource` projection shipped by /auth/me.
+ * Returns true iff the calling user's role is allowed to SEE the
+ * given (resource, field).
+ *
+ *   • cache missing                     → permissive (true). The
+ *                                          server is the source of
+ *                                          truth; UI rendering a
+ *                                          field the API stripped
+ *                                          shows up as null/empty
+ *                                          but never as a security
+ *                                          failure.
+ *   • super-admin                       → permissive (empty deny
+ *                                          maps).
+ *   • role's deny list includes field   → deny (false).
+ *   • field absent from deny list       → permissive (true).
+ *
+ * Falls back to the legacy `fieldPermissions` flat-list scan for
+ * sessions whose cached `/auth/me` predates D5.9 (the projection
+ * is optional on the wire).
+ */
+export function canReadField(resource: string, field: string): boolean {
+  const me = getCachedMe();
+  if (!me) return true;
+  if (me.deniedReadFieldsByResource) {
+    const denied = me.deniedReadFieldsByResource[resource];
+    return !denied?.includes(field);
+  }
+  return canSeeField(resource, field);
+}
+
+/**
+ * Phase D5 — D5.9: write-side mirror of `canReadField`. Use to
+ * disable / make readOnly form inputs that the server would strip
+ * via C5/D5.x write filters anyway. Same fall-back chain as
+ * `canReadField`.
+ */
+export function canWriteField(resource: string, field: string): boolean {
+  const me = getCachedMe();
+  if (!me) return true;
+  if (me.deniedWriteFieldsByResource) {
+    const denied = me.deniedWriteFieldsByResource[resource];
+    return !denied?.includes(field);
+  }
+  return canEditField(resource, field);
+}
+
+/**
+ * Phase D5 — D5.9: convenience inverse of `canReadField`. Use to
+ * decide whether to render `<RedactedFieldBadge>` for a field. The
+ * server is still the source of truth — the badge is a UX hint
+ * only.
+ */
+export function isFieldDenied(resource: string, field: string): boolean {
+  return !canReadField(resource, field);
+}
+
+/**
+ * Phase D5 — D5.9: re-export `hasCapability` from the auth module
+ * so consumers can `import { hasCapability } from '@/lib/permissions'`
+ * alongside the field helpers without two import lines.
+ */
+export { hasCapability } from './auth';
+
+/**
  * Field-level READ check. Returns true iff the calling user's role
  * is allowed to SEE the given (resource, field). When no
  * `field_permissions` row exists for the field, default is permissive
@@ -99,12 +164,16 @@ export function canEditField(resource: string, field: string): boolean {
 
 /**
  * Returns the calling user's data scope for the given resource.
- * Today: returns `'global'` because the `/auth/me` payload doesn't
- * yet carry per-resource scope values (a future server-side
- * extension under the C-series). Forward-compatible signature so
- * callers can already structure code around the eventual values.
+ * Phase D5 — D5.9: now reads `me.scopesByResource` which the server
+ * derives from `role_scopes`. Falls back to `'global'` for
+ * resources without an explicit row (server-side default) and for
+ * sessions whose cached `/auth/me` predates D5.9.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- forward-compatible signature
-export function getScope(_resource: string): ScopeKind {
+export function getScope(resource: string): ScopeKind {
+  const me = getCachedMe();
+  const value = me?.scopesByResource?.[resource];
+  if (value === 'own' || value === 'team' || value === 'company' || value === 'country') {
+    return value;
+  }
   return 'global';
 }

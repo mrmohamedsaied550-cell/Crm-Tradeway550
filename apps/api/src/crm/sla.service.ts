@@ -513,11 +513,14 @@ export class SlaService {
           results.push(result);
           if (this.realtime && result.outcome === 'reassigned' && result.toUserId) {
             try {
+              // D5.13 — `fromUserId` is always null on the realtime
+              // channel; previous-owner identity is gated by REST
+              // field permissions.
               this.realtime.emitToUser(tenantId, result.toUserId, {
                 type: 'lead.assigned',
                 leadId: result.leadId,
                 toUserId: result.toUserId,
-                fromUserId: result.fromUserId,
+                fromUserId: null,
                 reason: 'sla_breach',
               });
             } catch {
@@ -672,20 +675,25 @@ export class SlaService {
           });
           // P2-02 — bell the new owner so they pick it up immediately,
           // and the prior owner so they know they lost it.
+          // D5.13 — notification payloads carry only structural
+          // navigation fields (`leadId`, `mode`). Previous-owner /
+          // new-owner identity is gated by REST field permissions;
+          // clients re-fetch the canonical lead via /leads/:id when
+          // the recipient needs to render the chain.
           if (this.notifications) {
             await this.notifications.createInTx(tx, tenantId, {
               recipientUserId: pickedId,
               kind: 'sla.breach',
               title: 'Lead reassigned to you (SLA breach)',
               body: `You picked up a breached lead from another agent.`,
-              payload: { leadId: fresh.id, fromUserId, mode: 'reassigned' },
+              payload: { leadId: fresh.id, mode: 'reassigned' },
             });
             await this.notifications.createInTx(tx, tenantId, {
               recipientUserId: fromUserId,
               kind: 'sla.breach',
               title: 'Your lead was reassigned (SLA breach)',
               body: `It was past its response window.`,
-              payload: { leadId: fresh.id, toUserId: pickedId, mode: 'reassigned' },
+              payload: { leadId: fresh.id, mode: 'reassigned' },
             });
           }
           return {
@@ -725,11 +733,14 @@ export class SlaService {
         // unassigned_breached because nothing changed for any user.
         if (this.realtime && result.outcome === 'reassigned' && result.toUserId) {
           try {
+            // D5.13 — `fromUserId` is always null on the realtime
+            // channel; previous-owner identity is gated by REST
+            // field permissions.
             this.realtime.emitToUser(tenantId, result.toUserId, {
               type: 'lead.assigned',
               leadId: result.leadId,
               toUserId: result.toUserId,
-              fromUserId: result.fromUserId,
+              fromUserId: null,
               reason: 'sla_breach',
             });
           } catch {
@@ -998,20 +1009,24 @@ export class SlaService {
           where: { id: pickedId },
           data: { lastAssignedAt: now },
         });
+        // D5.13 — same neutralisation as the legacy SLA path: the
+        // notification payload only carries `leadId` + `mode`.
+        // Previous-owner / new-owner identity is gated by REST
+        // field permissions on /leads/:id.
         if (this.notifications) {
           await this.notifications.createInTx(tx, tenantId, {
             recipientUserId: pickedId,
             kind: 'sla.breach',
             title: 'Lead reassigned to you (SLA breach)',
             body: `You picked up a breached lead from another agent.`,
-            payload: { leadId, fromUserId, mode: 'reassigned' },
+            payload: { leadId, mode: 'reassigned' },
           });
           await this.notifications.createInTx(tx, tenantId, {
             recipientUserId: fromUserId,
             kind: 'sla.breach',
             title: 'Your lead was reassigned (SLA breach)',
             body: `It was past its response window.`,
-            payload: { leadId, toUserId: pickedId, mode: 'reassigned' },
+            payload: { leadId, mode: 'reassigned' },
           });
         }
       });
