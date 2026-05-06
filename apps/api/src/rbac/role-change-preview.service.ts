@@ -2,7 +2,6 @@ import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 
 import { AuditService } from '../audit/audit.service';
 
-import { HIGH_RISK_CAPABILITIES } from './capability-dependencies';
 import {
   RbacService,
   type RoleFieldPermissionRow,
@@ -14,7 +13,20 @@ import {
   TYPED_CONFIRMATION_PHRASE,
   type DependencyAnalysis,
 } from './role-dependency.service';
+import {
+  computeRiskSummary as computeRiskSummaryFromHelpers,
+  type FieldPermissionPair as FieldPermissionPairHelper,
+  type RoleRiskSummary,
+} from './role-change-preview.helpers';
 import type { RoleScopeResource, RoleScopeValue } from './rbac.dto';
+
+// Re-export the pure helper so existing callers + tests that import
+// `computeRiskSummary` from this file keep working unchanged. The
+// IMPLEMENTATION lives in `role-change-preview.helpers.ts` to avoid
+// a CJS module-load cycle with `RoleVersionService` → this file →
+// `RoleDependencyService` → `RbacService` (see helpers file for
+// the full diagnosis).
+export { computeRiskSummaryFromHelpers as computeRiskSummary };
 
 /**
  * Phase D5 — D5.15-A: structural change-set preview for the role
@@ -84,10 +96,10 @@ export interface RoleChangePreviewInput {
   readonly actor: { readonly userId: string; readonly roleId: string };
 }
 
-export interface FieldPermissionPair {
-  readonly resource: string;
-  readonly field: string;
-}
+// `FieldPermissionPair` lives in the pure helpers file so the
+// version recorder can import it without dragging the class graph.
+// Re-export here as a stable alias for D5.15-A external callers.
+export type FieldPermissionPair = FieldPermissionPairHelper;
 
 export interface ScopeChangeRow {
   readonly resource: RoleScopeResource;
@@ -125,51 +137,15 @@ export interface RoleChangePreviewResult {
   readonly severityCounts: DependencyAnalysis['severityCounts'];
   readonly requiresTypedConfirmation: boolean;
   readonly typedConfirmationPhrase: string;
-  readonly riskSummary: {
-    readonly exportCapabilityAdded: boolean;
-    readonly exportCapabilityRevoked: boolean;
-    readonly ownerHistoryVisibilityChanged: boolean;
-    readonly auditVisibilityChanged: boolean;
-    readonly backupExportChanged: boolean;
-    readonly permissionAdminChanged: boolean;
-    readonly partnerMergeChanged: boolean;
-  };
+  readonly riskSummary: RoleRiskSummary;
   readonly hasChanges: boolean;
 }
 
-/**
- * Field-perm pairs that mean "this role's view of operational
- * history changes". Surfaces the `ownerHistoryVisibilityChanged`
- * flag whenever any of these `(resource, field)` entries appears
- * in the read or write deny diff.
- */
-const OWNER_HISTORY_FIELDS: ReadonlyArray<FieldPermissionPair> = [
-  { resource: 'lead', field: 'previousOwner' },
-  { resource: 'lead', field: 'ownerHistory' },
-  { resource: 'rotation', field: 'fromUser' },
-  { resource: 'rotation', field: 'toUser' },
-  { resource: 'rotation', field: 'actor' },
-  { resource: 'rotation', field: 'notes' },
-  { resource: 'whatsapp.conversation', field: 'priorAgentMessages' },
-  { resource: 'whatsapp.conversation', field: 'handoverChain' },
-];
-
-/**
- * Audit-visibility-relevant pairs. Toggled when ANY of `audit.read`
- * is granted/revoked or these field rows enter/leave the deny set.
- */
-const AUDIT_VISIBILITY_FIELDS: ReadonlyArray<FieldPermissionPair> = [
-  { resource: 'audit', field: 'payload' },
-  { resource: 'audit', field: 'beforeAfter' },
-];
-
-const PERMISSION_ADMIN_CAPS: ReadonlySet<string> = new Set(['roles.write', 'permission.preview']);
-
-const BACKUP_EXPORT_CAPS: ReadonlySet<string> = new Set([
-  'tenant.export',
-  'lead.export',
-  'audit.export',
-]);
+// Pure constants (`OWNER_HISTORY_FIELDS`, `AUDIT_VISIBILITY_FIELDS`,
+// `PERMISSION_ADMIN_CAPS`, `BACKUP_EXPORT_CAPS`) and the
+// `computeRiskSummary` body live in `role-change-preview.helpers.ts`
+// to break a CJS module-load cycle. See the helpers file for the
+// full diagnosis.
 
 @Injectable()
 export class RoleChangePreviewService {
@@ -215,7 +191,7 @@ export class RoleChangePreviewService {
       actor: input.actor,
     });
 
-    const riskSummary = computeRiskSummary({
+    const riskSummary = computeRiskSummaryFromHelpers({
       capabilityChanges,
       fieldChanges,
     });
@@ -288,7 +264,12 @@ export class RoleChangePreviewService {
             input.result.changes.scopes.removed.length,
           warningCount: input.result.warnings.length,
           requiresTypedConfirmation: input.result.requiresTypedConfirmation,
-          riskFlags: input.result.riskSummary,
+          // `RoleRiskSummary` is structurally a flat object of
+          // booleans — Prisma's `InputJsonObject` accepts it, but
+          // TypeScript's named-interface vs index-signature check
+          // needs the explicit cast (matches the existing pattern
+          // in role-version.service.ts).
+          riskFlags: input.result.riskSummary as unknown as Record<string, boolean>,
         },
       });
     } catch {
@@ -420,70 +401,9 @@ function diffScopes(
   return { changed, added, removed };
 }
 
-/**
- * Phase D5 — D5.15-B: also exported so the version recorder can
- * derive the same risk flags from a pre/post snapshot pair without
- * round-tripping through the preview's current-state diff (which
- * would return zeros after the write has landed).
- */
-export function computeRiskSummary(input: {
-  capabilityChanges: RoleChangePreviewResult['changes']['capabilities'];
-  fieldChanges: RoleChangePreviewResult['changes']['fieldPermissions'];
-}): RoleChangePreviewResult['riskSummary'] {
-  const grantedSet = new Set(input.capabilityChanges.granted);
-  const revokedSet = new Set(input.capabilityChanges.revoked);
-
-  let exportCapabilityAdded = false;
-  let exportCapabilityRevoked = false;
-  let backupExportChanged = false;
-  let permissionAdminChanged = false;
-  let partnerMergeChanged = false;
-  let auditCapToggled = false;
-
-  for (const c of grantedSet) {
-    if (HIGH_RISK_CAPABILITIES[c] === 'export') exportCapabilityAdded = true;
-    if (BACKUP_EXPORT_CAPS.has(c)) backupExportChanged = true;
-    if (PERMISSION_ADMIN_CAPS.has(c)) permissionAdminChanged = true;
-    if (c === 'partner.merge.write') partnerMergeChanged = true;
-    if (c === 'audit.read' || c === 'audit.export') auditCapToggled = true;
-  }
-  for (const c of revokedSet) {
-    if (HIGH_RISK_CAPABILITIES[c] === 'export') exportCapabilityRevoked = true;
-    if (BACKUP_EXPORT_CAPS.has(c)) backupExportChanged = true;
-    if (PERMISSION_ADMIN_CAPS.has(c)) permissionAdminChanged = true;
-    if (c === 'partner.merge.write') partnerMergeChanged = true;
-    if (c === 'audit.read' || c === 'audit.export') auditCapToggled = true;
-  }
-
-  const ownerHistoryVisibilityChanged = touches(input.fieldChanges, OWNER_HISTORY_FIELDS);
-  const auditVisibilityChanged =
-    auditCapToggled || touches(input.fieldChanges, AUDIT_VISIBILITY_FIELDS);
-
-  return {
-    exportCapabilityAdded,
-    exportCapabilityRevoked,
-    ownerHistoryVisibilityChanged,
-    auditVisibilityChanged,
-    backupExportChanged,
-    permissionAdminChanged,
-    partnerMergeChanged,
-  };
-}
-
-function touches(
-  fieldChanges: RoleChangePreviewResult['changes']['fieldPermissions'],
-  pairs: ReadonlyArray<FieldPermissionPair>,
-): boolean {
-  const set = new Set(pairs.map((p) => `${p.resource}::${p.field}`));
-  for (const list of [
-    fieldChanges.readDeniedAdded,
-    fieldChanges.readDeniedRemoved,
-    fieldChanges.writeDeniedAdded,
-    fieldChanges.writeDeniedRemoved,
-  ]) {
-    for (const p of list) {
-      if (set.has(`${p.resource}::${p.field}`)) return true;
-    }
-  }
-  return false;
-}
+// `computeRiskSummary` was relocated to
+// `role-change-preview.helpers.ts` (pure helpers, no class imports)
+// to break the CJS module-load cycle described at the top of this
+// file. The export at the top of this file re-exports it under the
+// same name so existing callers (RoleVersionService → helpers
+// directly; tests importing from this file) keep working.

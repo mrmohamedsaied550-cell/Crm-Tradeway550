@@ -6,7 +6,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 import type { RoleWithCapabilities } from './rbac.service';
-import { computeRiskSummary, type RoleChangePreviewResult } from './role-change-preview.service';
+// HOTFIX — import the pure helpers file directly (NOT
+// `role-change-preview.service.ts`). The service file transitively
+// pulls in `RoleDependencyService` → `RbacService`, which closes
+// a CJS module-load cycle and crashes Nest DI at boot with
+//   "Nest can't resolve dependencies of the RoleDependencyService
+//   (PrismaService, ?, AuditService)".
+// The helpers file has zero class imports and is safe to load
+// from anywhere.
+import { computeRiskSummary, type RoleRiskSummary } from './role-change-preview.helpers';
 
 /**
  * Phase D5 — D5.15-B: role version history.
@@ -86,7 +94,7 @@ export interface RoleVersionChangeSummary {
     added: ReadonlyArray<{ resource: string; scope: string }>;
     removed: ReadonlyArray<{ resource: string; scope: string }>;
   };
-  riskFlags: RoleChangePreviewResult['riskSummary'];
+  riskFlags: RoleRiskSummary;
 }
 
 export interface RoleVersionListItem {
@@ -229,7 +237,7 @@ export class RoleVersionService {
             revokedCount: summary.revokedCapabilities.length,
             fieldChangeCount: countFieldChanges(summary.fieldPermissionChanges),
             scopeChangeCount: countScopeChanges(summary.scopeChanges),
-            riskFlags: summary.riskFlags,
+            riskFlags: summary.riskFlags as unknown as Record<string, boolean>,
             ...(input.revertedFromVersionId !== undefined && input.revertedFromVersionId !== null
               ? { revertedFromVersionId: input.revertedFromVersionId }
               : {}),
@@ -408,7 +416,7 @@ export class RoleVersionService {
     revokedCount: number;
     fieldChangeCount: number;
     scopeChangeCount: number;
-    riskFlags: RoleChangePreviewResult['riskSummary'];
+    riskFlags: RoleRiskSummary;
   }): Promise<void> {
     if (!this.audit) return;
     try {
@@ -427,7 +435,7 @@ export class RoleVersionService {
           revokedCount: input.revokedCount,
           fieldChangeCount: input.fieldChangeCount,
           scopeChangeCount: input.scopeChangeCount,
-          riskFlags: input.riskFlags,
+          riskFlags: input.riskFlags as unknown as Record<string, boolean>,
         },
       });
     } catch {
