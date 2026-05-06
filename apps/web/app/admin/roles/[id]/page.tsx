@@ -11,11 +11,14 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
+import { DependencyWarningsPanel } from '@/components/admin/roles/dependency-warnings-panel';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
+import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
 import { ApiError, rolesApi } from '@/lib/api';
 import type {
   CapabilityCatalogueEntry,
   FieldCatalogueEntry,
+  RoleDependencyAnalysis,
   RoleDetail,
   RoleFieldPermissionRow,
   RoleScopeRow,
@@ -337,6 +340,15 @@ function CapabilitiesTab({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Phase D5 — D5.14: dependency analysis state. The panel is
+  // re-fetched on every selection change (debounced) so the
+  // operator sees inline hints + grouped warnings as they toggle
+  // capability checkboxes. Save consults
+  // `analysis.requiresTypedConfirmation` to decide whether to
+  // open the typed-confirmation modal.
+  const [analysis, setAnalysis] = useState<RoleDependencyAnalysis | null>(null);
+  const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
+
   // Group by module prefix (lead.*, whatsapp.*, etc.) — capability
   // codes are dot-separated; the prefix before the first '.' is the
   // module bucket.
@@ -373,18 +385,64 @@ function CapabilitiesTab({
     });
   }
 
-  async function onSubmit(): Promise<void> {
+  // D5.14 — debounced dependency-check refresh. The endpoint is
+  // read-only so the cost is small and the UX gain (inline hints
+  // as you toggle) is large. On role/system roles the analysis
+  // surfaces the system_immutable warning automatically.
+  useEffect(() => {
+    if (role.isSystem) {
+      setAnalysis(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const sorted = Array.from(selected).sort();
+      rolesApi
+        .dependencyCheck(role.id, sorted)
+        .then((res) => setAnalysis(res))
+        .catch(() => {
+          // Best-effort. The save flow re-runs the analysis on
+          // the server side regardless; a transient client
+          // failure here doesn't compromise the gate.
+          setAnalysis(null);
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [role.id, role.isSystem, selected]);
+
+  async function persist(confirmation?: string): Promise<void> {
     setSubmitting(true);
     setError(null);
     try {
-      await rolesApi.update(role.id, { capabilities: Array.from(selected).sort() });
+      await rolesApi.update(role.id, {
+        capabilities: Array.from(selected).sort(),
+        ...(confirmation !== undefined && { confirmation }),
+      });
       toast({ tone: 'success', title: t('savedToast') });
+      setConfirmModalOpen(false);
       await onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      // D5.14 — the typed-confirmation gate returns this error
+      // code when a critical change is attempted without the
+      // phrase. Open the modal so the operator can confirm.
+      if (err instanceof ApiError && err.code === 'role.dependency.confirmation_required') {
+        const raw = err.raw as { analysis?: RoleDependencyAnalysis } | undefined;
+        if (raw?.analysis) setAnalysis(raw.analysis);
+        setConfirmModalOpen(true);
+        setError(null);
+      } else {
+        setError(err instanceof ApiError ? err.message : String(err));
+      }
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function onSubmit(): Promise<void> {
+    if (analysis?.requiresTypedConfirmation) {
+      setConfirmModalOpen(true);
+      return;
+    }
+    await persist();
   }
 
   return (
@@ -443,6 +501,7 @@ function CapabilitiesTab({
           </section>
         );
       })}
+      <DependencyWarningsPanel analysis={analysis} />
       {editable ? (
         <div className="flex items-center justify-end">
           <Button onClick={() => void onSubmit()} loading={submitting}>
@@ -451,6 +510,13 @@ function CapabilitiesTab({
           </Button>
         </div>
       ) : null}
+      <TypedConfirmationModal
+        open={confirmModalOpen}
+        analysis={analysis}
+        loading={submitting}
+        onCancel={() => setConfirmModalOpen(false)}
+        onConfirm={(phrase) => void persist(phrase)}
+      />
     </div>
   );
 }

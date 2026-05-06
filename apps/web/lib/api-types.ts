@@ -150,6 +150,45 @@ export interface CapabilityCatalogueEntry {
 }
 
 /**
+ * Phase D5 — D5.14: dependency-aware role guard surface.
+ *
+ * The role editor calls
+ * `POST /rbac/roles/:id/dependency-check { capabilities: string[] }`
+ * with the proposed capability set; the server returns this
+ * structural analysis. Frontend renders the warnings grouped by
+ * severity above the save button. If `requiresTypedConfirmation`
+ * is true, the save flow opens a typed-confirmation modal that
+ * asks the operator to echo `typedConfirmationPhrase` verbatim.
+ */
+export type RoleDependencyWarningSeverity = 'info' | 'warning' | 'critical';
+
+export type RoleDependencyWarningCode =
+  | 'capability.dependency.missing'
+  | 'capability.high_risk.export'
+  | 'capability.high_risk.partner_merge'
+  | 'capability.high_risk.lockout_admin'
+  | 'capability.high_risk.permission_preview'
+  | 'capability.lockout.self_required'
+  | 'capability.lockout.last_admin'
+  | 'role.system_immutable_attempt';
+
+export interface RoleDependencyWarning {
+  code: RoleDependencyWarningCode;
+  severity: RoleDependencyWarningSeverity;
+  capability: string | null;
+  dependsOn: readonly string[];
+  messageKey: string;
+  meta: Readonly<Record<string, string | number | boolean>>;
+}
+
+export interface RoleDependencyAnalysis {
+  warnings: readonly RoleDependencyWarning[];
+  severityCounts: Readonly<Record<RoleDependencyWarningSeverity, number>>;
+  requiresTypedConfirmation: boolean;
+  typedConfirmationPhrase: string;
+}
+
+/**
  * Phase D5 — D5.2: catalogue widened to fourteen resources
  * (lead, lead.activity, lead.review, rotation, followup, captain,
  * contact, partner_source, partner.verification, partner.evidence,

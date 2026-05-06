@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -27,6 +28,7 @@ import {
   DuplicateRoleSchema,
   PutRoleFieldPermissionsSchema,
   PutRoleScopesSchema,
+  RoleDependencyCheckSchema,
   UpdateRoleSchema,
 } from './rbac.dto';
 import { RequireCapability } from './require-capability.decorator';
@@ -37,6 +39,11 @@ import {
   type RoleScopeRow,
   type RoleFieldPermissionRow,
 } from './rbac.service';
+import {
+  RoleDependencyConfirmationRequiredError,
+  RoleDependencyService,
+  type DependencyAnalysis,
+} from './role-dependency.service';
 import { RolePreviewService, type RolePreviewResult } from './role-preview.service';
 
 class CreateRoleDto extends createZodDto(CreateRoleSchema) {}
@@ -44,6 +51,7 @@ class UpdateRoleDto extends createZodDto(UpdateRoleSchema) {}
 class DuplicateRoleDto extends createZodDto(DuplicateRoleSchema) {}
 class PutRoleScopesDto extends createZodDto(PutRoleScopesSchema) {}
 class PutRoleFieldPermissionsDto extends createZodDto(PutRoleFieldPermissionsSchema) {}
+class RoleDependencyCheckDto extends createZodDto(RoleDependencyCheckSchema) {}
 
 /**
  * /api/v1/rbac — RBAC introspection + Phase C — C2 write surface.
@@ -63,6 +71,7 @@ export class RbacController {
   constructor(
     private readonly rbac: RbacService,
     private readonly rolePreview: RolePreviewService,
+    private readonly roleDependency: RoleDependencyService,
   ) {}
 
   @Get('roles')
@@ -124,12 +133,55 @@ export class RbacController {
   @ApiOperation({
     summary: 'Update a custom role (name / level / description / capabilities)',
   })
-  update(
+  async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateRoleDto,
     @CurrentUser() user: AccessTokenClaims,
   ): Promise<RoleWithCapabilities> {
-    return this.rbac.updateRole(id, body, user.sub);
+    // Phase D5 — D5.14: when the diff touches capabilities, run
+    // the dependency analyser BEFORE writing. Critical warnings
+    // (self-lockout / last-keeper) require the actor to echo the
+    // typed-confirmation phrase verbatim. The error response
+    // carries the analysis payload so the frontend can render
+    // the typed-confirmation modal with the same warnings the
+    // dependency-check endpoint shows.
+    let analysis: DependencyAnalysis | null = null;
+    if (body.capabilities !== undefined) {
+      analysis = await this.roleDependency.analyseProposal({
+        roleId: id,
+        proposedCapabilities: body.capabilities,
+        actor: { userId: user.sub, roleId: user.rid },
+      });
+      try {
+        this.roleDependency.assertConfirmationOk(analysis, body.confirmation);
+      } catch (err) {
+        if (err instanceof RoleDependencyConfirmationRequiredError) {
+          throw new BadRequestException(err.toResponse());
+        }
+        throw err;
+      }
+    }
+
+    const result = await this.rbac.updateRole(id, body, user.sub);
+
+    // Phase D5 — D5.14: emit the confirmation-confirmed audit verb
+    // AFTER the write succeeds. The dependency-check verb itself
+    // is emitted by the dedicated endpoint (or implicitly
+    // recorded by the role.capability.update verb the service
+    // writes). Best-effort — never blocks the PATCH response.
+    if (analysis && analysis.requiresTypedConfirmation) {
+      const role = await this.rbac.findRoleById(id);
+      if (role) {
+        await this.roleDependency.writeConfirmationAudit({
+          actorUserId: user.sub,
+          targetRoleId: id,
+          targetRoleCode: role.code,
+          analysis,
+        });
+      }
+    }
+
+    return result;
   }
 
   @Delete('roles/:id')
@@ -220,5 +272,55 @@ export class RbacController {
       userId: user.sub,
       roleCode: actorRole.code,
     });
+  }
+
+  /**
+   * Phase D5 — D5.14: dependency / lockout / high-risk analysis
+   * for a proposed capability set on this role. Read-only —
+   * NEVER writes capabilities. The role builder UI calls this
+   * endpoint as the operator toggles capability checkboxes so
+   * the inline hints + grouped warnings stay live.
+   *
+   * Capability gate `roles.read` (the same gate that lets the
+   * caller open the role detail page). The endpoint never
+   * exposes raw payload values; the response is structural
+   * warnings only (codes + i18n keys + capability codes the
+   * client already knows about).
+   *
+   * Side effect: emits one `audit_events.rbac.role.dependency_check`
+   * row per call so admins can audit "who probed this role's
+   * structure". Best-effort — failure to write the audit row
+   * never blocks the response.
+   */
+  @Post('roles/:id/dependency-check')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability('roles.read')
+  @ApiOperation({
+    summary: 'Analyse a proposed capability set against the dependency graph (read-only).',
+  })
+  async dependencyCheck(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: RoleDependencyCheckDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<DependencyAnalysis> {
+    const role = await this.rbac.findRoleById(id);
+    if (!role) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Role ${id} not found in this tenant.`,
+      });
+    }
+    const analysis = await this.roleDependency.analyseProposal({
+      roleId: id,
+      proposedCapabilities: body.capabilities,
+      actor: { userId: user.sub, roleId: user.rid },
+    });
+    await this.roleDependency.writeDependencyCheckAudit({
+      actorUserId: user.sub,
+      targetRoleId: id,
+      targetRoleCode: role.code,
+      analysis,
+    });
+    return analysis;
   }
 }

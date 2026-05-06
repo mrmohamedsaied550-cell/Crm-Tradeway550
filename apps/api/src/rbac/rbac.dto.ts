@@ -112,10 +112,44 @@ export const UpdateRoleSchema = z
     level: z.number().int().min(0).max(100).optional(),
     description: descriptionShape,
     capabilities: z.array(capabilityCodeShape).optional(),
+    /**
+     * Phase D5 — D5.14: typed-confirmation phrase. Required when
+     * the capability diff would trigger a critical lockout
+     * warning (e.g. the actor is removing `roles.write` from
+     * their own role, or the role is the last keeper of a
+     * tenant-wide capability). The exact required phrase ships
+     * back to the client through the
+     * `role.dependency.confirmation_required` error response so
+     * the client can render the typed-confirmation modal.
+     *
+     * For non-critical changes the field is silently ignored.
+     */
+    confirmation: z.string().trim().min(0).max(64).optional(),
   })
   .strict()
-  .refine((v) => Object.keys(v).length > 0, 'PATCH body must include at least one field to update');
+  .refine((v) => {
+    const keys = Object.keys(v).filter((k) => k !== 'confirmation');
+    return keys.length > 0;
+  }, 'PATCH body must include at least one field to update');
 export type UpdateRoleDto = z.infer<typeof UpdateRoleSchema>;
+
+/**
+ * Phase D5 — D5.14: dependency-check endpoint body. Returns
+ * structural warnings without writing anything; the role builder
+ * UI calls this to render inline hints + group warnings by
+ * severity BEFORE the operator clicks save.
+ */
+export const RoleDependencyCheckSchema = z
+  .object({
+    /**
+     * The proposed capability set after save. The endpoint dedupes
+     * + validates each against the global registry so a typo
+     * surfaces with `role.capability_unknown`.
+     */
+    capabilities: z.array(capabilityCodeShape),
+  })
+  .strict();
+export type RoleDependencyCheckDto = z.infer<typeof RoleDependencyCheckSchema>;
 
 /** POST /rbac/roles/:id/duplicate — body. New code + names required. */
 export const DuplicateRoleSchema = z

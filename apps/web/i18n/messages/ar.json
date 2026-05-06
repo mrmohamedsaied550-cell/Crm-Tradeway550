@@ -1455,6 +1455,8 @@
         "lead.export.completed": "اكتمل تصدير العملاء",
         "audit.export.completed": "اكتمل تصدير التدقيق",
         "whatsapp.handover.completed": "اكتمل تحويل محادثة واتساب",
+        "rbac.role.dependency_check": "فحص اعتماديات الدور",
+        "rbac.role.dependency_warning_confirmed": "تأكيد تحذير اعتماديات الدور",
         "field_write_denied": "تم رفض كتابة حقل"
       },
       "recentPreviews": {
@@ -1886,6 +1888,31 @@
         "canRead": "قراءة",
         "canWrite": "كتابة",
         "sensitive": "حسّاس"
+      },
+      "dependency": {
+        "panelTitle": "فحوصات الصلاحيات",
+        "countLine": "{critical} حرجة · {warning} تحذير · {info} معلومة",
+        "dependsOn": "تعتمد على: {codes}",
+        "warnings": {
+          "dependencyMissing": "{capability} يحتاج {dependsOn}. أضف صلاحية القراءة أو أزل صلاحية الكتابة قبل الحفظ.",
+          "highRisk": {
+            "export": "{capability} يُصدِّر بيانات خارج المنصّة. امنحه فقط لمن يحتاج تنزيل تقارير CSV / JSON.",
+            "partner_merge": "{capability} يكتب بيانات الشريك داخل بيانات الـ CRM. كل دمج يُسجَّل في التدقيق، ولكن لا يمكن التراجع عنه على مستوى الصف.",
+            "lockout_admin": "{capability} يمنح صلاحية إدارة الأدوار — أي مستخدم بهذا الدور يستطيع تغيير أي صلاحية لأي دور، بما في ذلك دوره.",
+            "permission_preview": "{capability} يكشف بنية الأدوار. منحه على نطاق واسع يُسرّب الوضع الأمني للمستأجر."
+          },
+          "selfLockout": "أنت تحذف {capability} من دورك الحالي. بعد الحفظ قد تفقد القدرة على إدارة الأدوار أو رؤية التدقيق أو الوصول إلى هذه الصفحة.",
+          "lastAdmin": "لا يوجد دور آخر في هذا المستأجر يحمل {capability}. إزالته تترك المستأجر دون مَن يُدير الأدوار.",
+          "systemImmutable": "هذا دور نظامي. لا يمكن حفظ التعديلات هنا — انسخ الدور أولًا لإنشاء نسخة قابلة للتخصيص."
+        },
+        "confirmModal": {
+          "title": "تأكيد تغيير دور حرج",
+          "intro": "هذا التغيير يحمل تحذيرات حرجة. اكتب عبارة التأكيد بدقّة للاستمرار.",
+          "fieldLabel": "اكتب العبارة: {phrase}",
+          "fieldHint": "حسّاسة لحالة الأحرف. الزر يظل معطّلًا حتى تتطابق العبارة.",
+          "cancel": "إلغاء",
+          "confirm": "احفظ مع التأكيد"
+        }
       }
     },
     "duplicateRules": {

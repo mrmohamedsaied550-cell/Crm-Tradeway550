@@ -12,6 +12,7 @@ import { LeadReviewVisibilityService } from './lead-review-visibility.service';
 import { OwnershipVisibilityService } from './ownership-visibility.service';
 import { PermissionCacheService } from './permission-cache.service';
 import { PermissionResolverService } from './permission-resolver.service';
+import { RoleDependencyService } from './role-dependency.service';
 import { RolePreviewService } from './role-preview.service';
 import { ScopeContextService } from './scope-context.service';
 import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
@@ -73,6 +74,7 @@ import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
     RolePreviewService,
+    RoleDependencyService,
     WhatsAppVisibilityService,
     {
       provide: APP_INTERCEPTOR,
@@ -97,6 +99,7 @@ import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
     RolePreviewService,
+    RoleDependencyService,
     WhatsAppVisibilityService,
   ],
 })

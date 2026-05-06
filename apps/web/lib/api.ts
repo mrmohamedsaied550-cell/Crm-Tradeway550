@@ -86,6 +86,7 @@ import type {
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
   PartnerMappingReadiness,
+  RoleDependencyAnalysis,
   RolePreviewResult,
   RoleScopeRow,
   RoleSummary,
@@ -505,6 +506,15 @@ export const rolesApi = {
       level?: number;
       description?: string | null;
       capabilities?: string[];
+      /**
+       * Phase D5 — D5.14: typed-confirmation phrase. Required
+       * when the capability diff would trigger a critical
+       * lockout warning (self-lockout / last-keeper). The
+       * exact phrase ships back through the
+       * `role.dependency.confirmation_required` 400 response
+       * so the client can render the typed-confirmation modal.
+       */
+      confirmation?: string;
     },
   ): Promise<RoleDetail> =>
     apiFetch<RoleDetail>(`/rbac/roles/${id}`, { method: 'PATCH', body: input }),
@@ -536,6 +546,18 @@ export const rolesApi = {
    */
   preview: (id: string): Promise<RolePreviewResult> =>
     apiFetch<RolePreviewResult>(`/rbac/roles/${id}/preview`),
+  /**
+   * Phase D5 — D5.14: dependency / lockout / high-risk analysis
+   * for a proposed capability set on this role. Read-only —
+   * NEVER writes capabilities. Drives the inline hints +
+   * grouped warnings + typed-confirmation modal in the role
+   * editor's capability matrix tab.
+   */
+  dependencyCheck: (id: string, capabilities: string[]): Promise<RoleDependencyAnalysis> =>
+    apiFetch<RoleDependencyAnalysis>(`/rbac/roles/${id}/dependency-check`, {
+      method: 'POST',
+      body: { capabilities },
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

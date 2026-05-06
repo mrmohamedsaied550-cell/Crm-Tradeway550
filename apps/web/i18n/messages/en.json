@@ -1455,6 +1455,8 @@
         "lead.export.completed": "Lead export completed",
         "audit.export.completed": "Audit export completed",
         "whatsapp.handover.completed": "WhatsApp handover completed",
+        "rbac.role.dependency_check": "Role dependency check",
+        "rbac.role.dependency_warning_confirmed": "Role dependency warning confirmed",
         "field_write_denied": "Field write denied"
       },
       "recentPreviews": {
@@ -1886,6 +1888,31 @@
         "canRead": "Read",
         "canWrite": "Write",
         "sensitive": "Sensitive"
+      },
+      "dependency": {
+        "panelTitle": "Capability checks",
+        "countLine": "{critical} critical · {warning} warnings · {info} info",
+        "dependsOn": "Depends on: {codes}",
+        "warnings": {
+          "dependencyMissing": "{capability} requires {dependsOn}. Add the read capability or remove the write capability before saving.",
+          "highRisk": {
+            "export": "{capability} ships data off-platform. Grant only to operators who need to download CSV / JSON exports.",
+            "partner_merge": "{capability} writes partner data into the CRM. Each merge is auditable but irreversible at the row level.",
+            "lockout_admin": "{capability} grants role-management authority — users with this role can change any role's capabilities, including their own.",
+            "permission_preview": "{capability} exposes role structure. Granting it broadly leaks the security posture of the tenant."
+          },
+          "selfLockout": "You are removing {capability} from your own role. After saving you may lose the ability to manage roles, audit, or this very page.",
+          "lastAdmin": "No other role in this tenant grants {capability}. Removing it leaves the tenant without an admin who can manage roles.",
+          "systemImmutable": "This is a system role. The role builder cannot save changes here — duplicate it to create a custom role first."
+        },
+        "confirmModal": {
+          "title": "Confirm critical role change",
+          "intro": "This change includes critical warnings. Type the confirmation phrase exactly to proceed.",
+          "fieldLabel": "Type the phrase: {phrase}",
+          "fieldHint": "Case-sensitive. The button stays disabled until the phrase matches.",
+          "cancel": "Cancel",
+          "confirm": "Save with confirmation"
+        }
       }
     },
     "duplicateRules": {
