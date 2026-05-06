@@ -1460,6 +1460,8 @@
         "rbac.role.change_previewed": "Role change preview",
         "rbac.role.version_created": "Role version snapshot",
         "rbac.role.version_reverted": "Role reverted to a previous version",
+        "rbac.role.template_previewed": "Role template previewed",
+        "rbac.role.created_from_template": "Role created from template",
         "field_write_denied": "Field write denied"
       },
       "recentPreviews": {
@@ -1892,6 +1894,62 @@
         "canRead": "Read",
         "canWrite": "Write",
         "sensitive": "Sensitive"
+      },
+      "templates": {
+        "picker": {
+          "openCta": "Create from template"
+        },
+        "createdToast": "Created \"{name}\" from template.",
+        "list": {
+          "title": "Create role from template",
+          "intro": "Templates are curated safe starting points. Each template ships a minimal capability set, sensible scope defaults, and the standard field-permission denies — far safer than duplicating a system role and stripping dangerous verbs by hand.",
+          "close": "Close",
+          "capabilityCount": "{n} capabilities",
+          "scopeCount": "{n} scope rows",
+          "safeBadge": "Safe defaults"
+        },
+        "categories": {
+          "agent": "Agents",
+          "team_lead": "Team Leaders",
+          "admin": "Administrators",
+          "finance": "Finance",
+          "partner": "Partner data",
+          "qa": "QA / Review",
+          "viewer": "Viewers"
+        },
+        "preview": {
+          "title": "{name}",
+          "back": "Back",
+          "continue": "Continue",
+          "safeNotice": "This template ships safe defaults. No exports, no admin verbs, no high-risk capabilities are granted by default.",
+          "capabilities": "Capabilities ({n})",
+          "scopes": "Default data scope",
+          "fieldDenies": "Default field-permission denies ({n})"
+        },
+        "form": {
+          "title": "Name your role",
+          "back": "Back",
+          "create": "Create role",
+          "intro": "The new role inherits the structural shape of \"{template}\". You can adjust capabilities, scopes, or field permissions afterwards from the role editor.",
+          "codeLabel": "Role code",
+          "codeHint": "snake_case identifier — letters, digits, underscores. Must be unique in this tenant.",
+          "nameEnLabel": "Name (English)",
+          "nameArLabel": "Name (Arabic)",
+          "descriptionLabel": "Description",
+          "typedConfirmation": {
+            "fieldLabel": "Type to confirm: {phrase}",
+            "fieldHint": "Case-sensitive. Required because this template carries a critical lockout warning."
+          }
+        },
+        "risks": {
+          "export_capability": "Export capability",
+          "tenant_export": "Tenant export",
+          "partner_merge": "Partner merge",
+          "permission_admin": "Permission admin",
+          "permission_preview": "Permission preview",
+          "audit_read": "Audit log access",
+          "high_privilege": "High privilege"
+        }
       },
       "history": {
         "header": "Version history",

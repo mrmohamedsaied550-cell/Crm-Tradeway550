@@ -24,6 +24,7 @@ import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from './capability.guard';
 import { FIELD_CATALOGUE } from './field-catalogue.registry';
 import {
+  CreateFromTemplateSchema,
   CreateRoleSchema,
   DuplicateRoleSchema,
   PutRoleFieldPermissionsSchema,
@@ -31,6 +32,7 @@ import {
   RevertRoleVersionSchema,
   RoleChangePreviewSchema,
   RoleDependencyCheckSchema,
+  RoleTemplatePreviewSchema,
   UpdateRoleSchema,
 } from './rbac.dto';
 import { RequireCapability } from './require-capability.decorator';
@@ -52,6 +54,12 @@ import {
 } from './role-dependency.service';
 import { RolePreviewService, type RolePreviewResult } from './role-preview.service';
 import {
+  RoleTemplateService,
+  type RoleTemplateDetail,
+  type RoleTemplatePreviewResult,
+  type RoleTemplateSummary,
+} from './role-template.service';
+import {
   RoleVersionService,
   type RoleVersionDetail,
   type RoleVersionListResult,
@@ -65,6 +73,10 @@ class PutRoleFieldPermissionsDto extends createZodDto(PutRoleFieldPermissionsSch
 class RoleDependencyCheckDto extends createZodDto(RoleDependencyCheckSchema) {}
 class RoleChangePreviewDto extends createZodDto(RoleChangePreviewSchema) {}
 class RevertRoleVersionDto extends createZodDto(RevertRoleVersionSchema) {}
+class CreateFromTemplateDto extends createZodDto(CreateFromTemplateSchema) {}
+// Reserved: empty preview body. Defined so a future schema change
+// is a controller-only edit.
+class RoleTemplatePreviewDto extends createZodDto(RoleTemplatePreviewSchema) {}
 
 /**
  * /api/v1/rbac — RBAC introspection + Phase C — C2 write surface.
@@ -87,6 +99,7 @@ export class RbacController {
     private readonly roleDependency: RoleDependencyService,
     private readonly roleChangePreview: RoleChangePreviewService,
     private readonly roleVersions: RoleVersionService,
+    private readonly roleTemplates: RoleTemplateService,
   ) {}
 
   @Get('roles')
@@ -587,5 +600,93 @@ export class RbacController {
     });
 
     return target;
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // Phase D5 — D5.16: Role Templates
+  // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * D5.16 — list curated role templates. Read-only registry,
+   * tenant-agnostic (templates ship with the product). Gated on
+   * `roles.read` so only role builders see the picker.
+   */
+  @Get('role-templates')
+  @RequireCapability('roles.read')
+  @ApiOperation({ summary: 'List curated role templates (safe starting points).' })
+  listRoleTemplates(): { templates: readonly RoleTemplateSummary[] } {
+    return { templates: this.roleTemplates.list() };
+  }
+
+  /**
+   * D5.16 — single template detail (full capabilities + scopes +
+   * field permissions + risk tags). Frontend renders this in the
+   * picker drawer before the admin clicks Create.
+   */
+  @Get('role-templates/:code')
+  @RequireCapability('roles.read')
+  @ApiOperation({ summary: 'Get a single role template (full structural shape).' })
+  getRoleTemplate(@Param('code') code: string): RoleTemplateDetail {
+    return this.roleTemplates.get(code);
+  }
+
+  /**
+   * D5.16 — preview a template against the actor's claims. Runs
+   * the D5.14 dependency analyser on the template's capability
+   * set + flags high-risk caps. Read-only; emits a
+   * `rbac.role.template_previewed` audit row.
+   */
+  @Post('role-templates/:code/preview')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability('roles.read')
+  @ApiOperation({
+    summary: 'Preview a role template against the actor: dependency warnings + high-risk caps.',
+  })
+  async previewRoleTemplate(
+    @Param('code') code: string,
+    @Body() _body: RoleTemplatePreviewDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<RoleTemplatePreviewResult> {
+    return this.roleTemplates.preview(code, { userId: user.sub, roleId: user.rid });
+  }
+
+  /**
+   * D5.16 — create a new custom role from a template. Routes
+   * through the existing `RbacService.createRole` write path so
+   * every D5 safety hook (capability validation, audit, version
+   * capture, cache invalidation) runs unchanged. Adds D5.14's
+   * dependency-check + typed-confirmation gate ABOVE that
+   * write so a template carrying critical lockout-class
+   * warnings still requires the typed phrase.
+   *
+   * Capability gate `roles.write`. System role codes are still
+   * rejected by the underlying RbacService.
+   */
+  @Post('roles/from-template')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireCapability('roles.write')
+  @ApiOperation({
+    summary: 'Create a new custom role from a curated template (safer than duplicate).',
+  })
+  async createRoleFromTemplate(
+    @Body() body: CreateFromTemplateDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<RoleWithCapabilities> {
+    return this.roleTemplates.createFromTemplate({
+      templateCode: body.templateCode,
+      code: body.code,
+      nameEn: body.nameEn,
+      nameAr: body.nameAr,
+      ...(body.descriptionEn !== undefined && { descriptionEn: body.descriptionEn ?? null }),
+      ...(body.descriptionAr !== undefined && { descriptionAr: body.descriptionAr ?? null }),
+      ...(body.confirmation !== undefined && { confirmation: body.confirmation }),
+      ...(body.initialScopeOverrides !== undefined && {
+        initialScopeOverrides: body.initialScopeOverrides,
+      }),
+      ...(body.initialFieldPermissionOverrides !== undefined && {
+        initialFieldPermissionOverrides: body.initialFieldPermissionOverrides,
+      }),
+      actor: { userId: user.sub, roleId: user.rid },
+    });
   }
 }

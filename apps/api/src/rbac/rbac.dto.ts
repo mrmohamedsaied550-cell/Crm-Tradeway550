@@ -206,6 +206,54 @@ export const PutRoleScopesSchema = z
 export type PutRoleScopesDto = z.infer<typeof PutRoleScopesSchema>;
 
 /**
+ * Phase D5 — D5.16: create-role-from-template body. The new role's
+ * machine identifier (`code`) + display names are admin-supplied;
+ * the template provides the curated capabilities / scopes /
+ * field-permission set. The optional override fields let the
+ * picker pre-tweak the scope rows or the field-permission rows
+ * without a second round-trip through the role editor's tabs.
+ */
+const scopeRowShape_d516 = z
+  .object({
+    resource: z.enum(ROLE_SCOPE_RESOURCES),
+    scope: z.enum(ROLE_SCOPE_VALUES),
+  })
+  .strict();
+
+const fieldPermissionRowShape_d516 = z
+  .object({
+    resource: z.string().trim().min(1).max(64),
+    field: z.string().trim().min(1).max(128),
+    canRead: z.boolean(),
+    canWrite: z.boolean(),
+  })
+  .strict();
+
+export const CreateFromTemplateSchema = z
+  .object({
+    templateCode: codeShape,
+    code: codeShape,
+    nameEn: nameShape,
+    nameAr: nameShape,
+    descriptionEn: descriptionShape,
+    descriptionAr: descriptionShape,
+    /** Echoed when the template's caps trigger a critical D5.14 warning. */
+    confirmation: z.string().trim().min(0).max(64).optional(),
+    initialScopeOverrides: z.array(scopeRowShape_d516).optional(),
+    initialFieldPermissionOverrides: z.array(fieldPermissionRowShape_d516).optional(),
+  })
+  .strict();
+export type CreateFromTemplateDto = z.infer<typeof CreateFromTemplateSchema>;
+
+/**
+ * Phase D5 — D5.16: template preview body. Empty — the path
+ * carries the template code; the body is reserved for future
+ * "preview with proposed code/name overrides" extensions.
+ */
+export const RoleTemplatePreviewSchema = z.object({}).strict();
+export type RoleTemplatePreviewDto = z.infer<typeof RoleTemplatePreviewSchema>;
+
+/**
  * Phase D5 — D5.15-B: revert endpoint body. The capability /
  * scope / field-permission set ride from the snapshot the
  * caller targets; the body only carries the (optional) typed

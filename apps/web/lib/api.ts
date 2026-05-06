@@ -91,6 +91,9 @@ import type {
   RolePreviewResult,
   RoleScopeRow,
   RoleSummary,
+  RoleTemplateDetail,
+  RoleTemplatePreviewResult,
+  RoleTemplateSummary,
   RoleVersionDetail,
   RoleVersionListResult,
   RotationHistoryResponse,
@@ -600,6 +603,34 @@ export const rolesApi = {
     input: { confirmation?: string; reason?: string } = {},
   ): Promise<RoleVersionDetail> =>
     apiFetch<RoleVersionDetail>(`/rbac/roles/${id}/versions/${versionId}/revert`, {
+      method: 'POST',
+      body: input,
+    }),
+  /**
+   * Phase D5 — D5.16: curated role templates. Drives the
+   * "Create from template" flow on /admin/roles. Templates are a
+   * read-only registry shipped with the product; tenant-specific
+   * templates are not in scope today.
+   */
+  listTemplates: (): Promise<{ templates: readonly RoleTemplateSummary[] }> =>
+    apiFetch<{ templates: readonly RoleTemplateSummary[] }>('/rbac/role-templates'),
+  getTemplate: (code: string): Promise<RoleTemplateDetail> =>
+    apiFetch<RoleTemplateDetail>(`/rbac/role-templates/${code}`),
+  previewTemplate: (code: string): Promise<RoleTemplatePreviewResult> =>
+    apiFetch<RoleTemplatePreviewResult>(`/rbac/role-templates/${code}/preview`, {
+      method: 'POST',
+      body: {},
+    }),
+  createFromTemplate: (input: {
+    templateCode: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    descriptionEn?: string | null;
+    descriptionAr?: string | null;
+    confirmation?: string;
+  }): Promise<RoleDetail> =>
+    apiFetch<RoleDetail>('/rbac/roles/from-template', {
       method: 'POST',
       body: input,
     }),

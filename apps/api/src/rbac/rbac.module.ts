@@ -15,6 +15,7 @@ import { PermissionResolverService } from './permission-resolver.service';
 import { RoleChangePreviewService } from './role-change-preview.service';
 import { RoleDependencyService } from './role-dependency.service';
 import { RolePreviewService } from './role-preview.service';
+import { RoleTemplateService } from './role-template.service';
 import { RoleVersionService } from './role-version.service';
 import { ScopeContextService } from './scope-context.service';
 import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
@@ -79,6 +80,7 @@ import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
     RoleDependencyService,
     RoleChangePreviewService,
     RoleVersionService,
+    RoleTemplateService,
     WhatsAppVisibilityService,
     {
       provide: APP_INTERCEPTOR,
@@ -106,6 +108,7 @@ import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
     RoleDependencyService,
     RoleChangePreviewService,
     RoleVersionService,
+    RoleTemplateService,
     WhatsAppVisibilityService,
   ],
 })

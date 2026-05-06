@@ -213,6 +213,59 @@ export interface RoleChangePreviewScopeChange {
 }
 
 /**
+ * Phase D5 — D5.16: role template shapes.
+ *
+ * Curated, safe starting points for /admin/roles. The frontend
+ * "Create from template" flow lists the registry, opens a
+ * preview drawer per template, and finally calls the
+ * create-from-template endpoint with admin-supplied code/name.
+ */
+export type RoleTemplateCategory =
+  | 'agent'
+  | 'team_lead'
+  | 'admin'
+  | 'finance'
+  | 'partner'
+  | 'qa'
+  | 'viewer';
+
+export type RoleTemplateRiskTag =
+  | 'export_capability'
+  | 'tenant_export'
+  | 'partner_merge'
+  | 'permission_admin'
+  | 'permission_preview'
+  | 'audit_read'
+  | 'high_privilege';
+
+export interface RoleTemplateSummary {
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  category: RoleTemplateCategory;
+  suggestedLevel: number;
+  capabilityCount: number;
+  scopeCount: number;
+  fieldPermissionCount: number;
+  riskTags: readonly RoleTemplateRiskTag[];
+}
+
+export interface RoleTemplateDetail extends RoleTemplateSummary {
+  capabilities: readonly string[];
+  scopes: readonly RoleScopeRow[];
+  fieldPermissions: readonly RoleFieldPermissionRow[];
+}
+
+export interface RoleTemplatePreviewResult {
+  template: RoleTemplateDetail;
+  dependencyAnalysis: RoleDependencyAnalysis;
+  highRiskCapabilities: readonly string[];
+  typedConfirmationPhrase: string;
+}
+
+/**
  * Phase D5 — D5.15-B: role version history shapes.
  *
  * History rows are server-built snapshots of `(metadata,
