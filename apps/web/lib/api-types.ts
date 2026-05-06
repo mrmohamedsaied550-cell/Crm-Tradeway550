@@ -100,6 +100,49 @@ export interface RoleDetail {
   fieldPermissions: readonly RoleFieldPermissionRow[];
 }
 
+/**
+ * Phase D5 — D5.10: stable warning codes shipped by
+ * `GET /rbac/roles/:id/preview`. The role-editor preview tab maps
+ * each code to localised copy via `admin.roles.preview.warnings.*`.
+ */
+export type RolePreviewWarningCode =
+  | 'has_export_capabilities'
+  | 'has_partner_data_access'
+  | 'has_partner_merge_capability'
+  | 'has_audit_payload_access'
+  | 'no_lead_read_capability'
+  | 'has_hidden_owner_history_fields'
+  | 'has_super_admin_bypass';
+
+/**
+ * Phase D5 — D5.10: response shape for the role permission
+ * preview endpoint. Read-only metadata projection — no row
+ * VALUES, no session, no impersonation.
+ */
+export interface RolePreviewResult {
+  role: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    level: number;
+    isSystem: boolean;
+  };
+  permissions: {
+    capabilities: readonly string[];
+    scopesByResource: Readonly<Record<string, string>>;
+    deniedReadFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    deniedWriteFieldsByResource: Readonly<Record<string, readonly string[]>>;
+  };
+  uiHints: {
+    hiddenFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    readOnlyFieldsByResource: Readonly<Record<string, readonly string[]>>;
+    exportCapabilities: readonly string[];
+    hasLeadRead: boolean;
+  };
+  warnings: readonly RolePreviewWarningCode[];
+}
+
 export interface CapabilityCatalogueEntry {
   id: string;
   code: string;

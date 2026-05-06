@@ -37,6 +37,7 @@ import {
   type RoleScopeRow,
   type RoleFieldPermissionRow,
 } from './rbac.service';
+import { RolePreviewService, type RolePreviewResult } from './role-preview.service';
 
 class CreateRoleDto extends createZodDto(CreateRoleSchema) {}
 class UpdateRoleDto extends createZodDto(UpdateRoleSchema) {}
@@ -59,7 +60,10 @@ class PutRoleFieldPermissionsDto extends createZodDto(PutRoleFieldPermissionsSch
 @Controller('rbac')
 @UseGuards(JwtAuthGuard, CapabilityGuard)
 export class RbacController {
-  constructor(private readonly rbac: RbacService) {}
+  constructor(
+    private readonly rbac: RbacService,
+    private readonly rolePreview: RolePreviewService,
+  ) {}
 
   @Get('roles')
   @RequireCapability('roles.read')
@@ -172,5 +176,49 @@ export class RbacController {
     @CurrentUser() user: AccessTokenClaims,
   ): Promise<RoleFieldPermissionRow[]> {
     return this.rbac.putRoleFieldPermissions(id, body, user.sub);
+  }
+
+  /**
+   * Phase D5 — D5.10: role permission preview.
+   *
+   * Returns a structured projection of any tenant role's effective
+   * permissions (capabilities, scopes, denied fields, derived UI
+   * hints, warnings) so an admin can audit "what does this role
+   * actually see?" before assigning it. Read-only — no session is
+   * generated, no impersonation occurs, no row data is returned.
+   *
+   * Capability gate `permission.preview` (granted to super_admin
+   * + ops_manager only by default). Additional in-service guard
+   * blocks any non-super-admin from previewing the super_admin
+   * role: only a super-admin may preview the most privileged
+   * role in the system. Every preview writes one
+   * `audit_events.rbac.role.previewed` row carrying structural
+   * counters + warning codes (no sensitive values).
+   */
+  @Get('roles/:id/preview')
+  @RequireCapability('permission.preview')
+  @ApiOperation({
+    summary: 'Preview the effective permission shape of a tenant role (read-only debugger)',
+  })
+  async preview(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<RolePreviewResult> {
+    // Resolve the actor's role.code so the service can apply the
+    // super-admin-only-previews-super-admin guard. The lookup
+    // sits in the controller (not the service) so the preview
+    // service stays a pure metadata reader; it never resolves
+    // arbitrary user identities.
+    const actorRole = await this.rbac.findRoleById(user.rid);
+    if (!actorRole) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Caller role ${user.rid} not found in this tenant.`,
+      });
+    }
+    return this.rolePreview.previewRole(id, {
+      userId: user.sub,
+      roleCode: actorRole.code,
+    });
   }
 }

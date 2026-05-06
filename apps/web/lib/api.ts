@@ -86,6 +86,7 @@ import type {
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
   PartnerMappingReadiness,
+  RolePreviewResult,
   RoleScopeRow,
   RoleSummary,
   RotationHistoryResponse,
@@ -526,6 +527,15 @@ export const rolesApi = {
       method: 'PUT',
       body: { permissions },
     }),
+  /**
+   * Phase D5 — D5.10: role permission preview. Read-only debugger
+   * that returns the effective permission shape of a tenant role.
+   * Backed by `permission.preview` capability + the in-service
+   * super-admin sandwich. NOT impersonation — no session is
+   * generated, no row data flows through.
+   */
+  preview: (id: string): Promise<RolePreviewResult> =>
+    apiFetch<RolePreviewResult>(`/rbac/roles/${id}/preview`),
 };
 
 // ───────────────────────────────────────────────────────────────────────

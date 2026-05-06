@@ -12,6 +12,7 @@ import { LeadReviewVisibilityService } from './lead-review-visibility.service';
 import { OwnershipVisibilityService } from './ownership-visibility.service';
 import { PermissionCacheService } from './permission-cache.service';
 import { PermissionResolverService } from './permission-resolver.service';
+import { RolePreviewService } from './role-preview.service';
 import { ScopeContextService } from './scope-context.service';
 
 /**
@@ -70,6 +71,7 @@ import { ScopeContextService } from './scope-context.service';
     ExportInterceptor,
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
+    RolePreviewService,
     {
       provide: APP_INTERCEPTOR,
       useExisting: FieldRedactionInterceptor,
@@ -92,6 +94,7 @@ import { ScopeContextService } from './scope-context.service';
     ExportInterceptor,
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
+    RolePreviewService,
   ],
 })
 export class RbacModule {}

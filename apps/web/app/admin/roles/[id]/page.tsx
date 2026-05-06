@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
+import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { ApiError, rolesApi } from '@/lib/api';
 import type {
   CapabilityCatalogueEntry,
@@ -53,7 +54,7 @@ const SCOPE_VALUES: ReadonlyArray<RoleScopeRow['scope']> = [
   'global',
 ];
 
-type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields';
+type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields' | 'preview';
 
 export default function RoleEditorPage(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -63,6 +64,7 @@ export default function RoleEditorPage(): JSX.Element {
   const { toast } = useToast();
 
   const canWrite = hasCapability('roles.write');
+  const canPreview = hasCapability('permission.preview');
 
   const [role, setRole] = useState<RoleDetail | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityCatalogueEntry[]>([]);
@@ -162,7 +164,15 @@ export default function RoleEditorPage(): JSX.Element {
 
       {/* Tabs */}
       <nav className="flex flex-wrap gap-1 border-b border-surface-border" aria-label="Tabs">
-        {(['info', 'capabilities', 'scopes', 'fields'] as const).map((key) => (
+        {(
+          [
+            'info',
+            'capabilities',
+            'scopes',
+            'fields',
+            ...(canPreview ? (['preview'] as const) : []),
+          ] as const
+        ).map((key) => (
           <button
             key={key}
             type="button"
@@ -203,6 +213,7 @@ export default function RoleEditorPage(): JSX.Element {
           toast={toast}
         />
       ) : null}
+      {activeTab === 'preview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
     </div>
   );
 }

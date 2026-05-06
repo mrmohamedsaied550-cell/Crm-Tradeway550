@@ -200,6 +200,12 @@ export const ROLE_DEFINITIONS = [
       'partner.reconciliation.export',
       'partner.commission.export',
       'audit.export',
+      // Phase D5 — D5.10: role permission preview. Ops Manager
+      // can audit any tenant role's effective permission shape
+      // before assigning it. Super Admin gets it via
+      // ALL_CAPABILITY_CODES; Account Manager / TL cohort
+      // intentionally do NOT receive it in D5.10.
+      'permission.preview',
     ],
   },
   {

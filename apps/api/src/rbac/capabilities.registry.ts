@@ -299,6 +299,29 @@ export const CAPABILITY_DEFINITIONS = [
     code: 'audit.export',
     description: 'Download a CSV export of audit events (reserved — no endpoint in D5.6A)',
   },
+
+  // ──────────────────────────────────────────────────────────────
+  // Phase D5 — D5.10: Role permission preview.
+  // ──────────────────────────────────────────────────────────────
+  //
+  // `permission.preview` gates a read-only debugger endpoint that
+  // returns the effective permission shape of any role in the
+  // tenant (capabilities, scopes, denied fields, derived UI hints,
+  // warnings). It does NOT impersonate users, generate sessions,
+  // or weaken backend enforcement — it's strictly a metadata view
+  // on top of `derivePublicPermissionShape` from D5.9.
+  //
+  // Default grants: super_admin + ops_manager only. The preview
+  // exposes ROLE STRUCTURE which is sensitive to the security
+  // posture of the tenant; granting it broadly defeats its
+  // purpose. Account managers and TLs CAN already see role
+  // capabilities via `roles.read` — they just don't get the
+  // structured warnings + scope projection in this chunk.
+  {
+    code: 'permission.preview',
+    description:
+      'Preview the effective permission shape of any role in this tenant (read-only debugger; D5.10).',
+  },
 ] as const satisfies readonly CapabilityDef[];
 
 export type CapabilityCode = (typeof CAPABILITY_DEFINITIONS)[number]['code'];
