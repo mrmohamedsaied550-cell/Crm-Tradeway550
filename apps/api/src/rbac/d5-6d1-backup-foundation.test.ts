@@ -569,53 +569,13 @@ describe('rbac/D5.6D-1 — ExportInterceptor on json-tenant-backup', () => {
     assert.equal(audit.calls.length, 0);
   });
 
-  it('flag on with deny rule on lead.phone — D5.6D-1 NO-OP: phone column survives in leads table', async () => {
-    // D5.6D-1 ships the foundation only; a deny rule on a backup
-    // column does NOT strip it. D5.6D-2 will introduce real
-    // redaction PLUS the E_BACKUP_REDACTED_NOT_RESTORABLE guard so
-    // a redacted backup is never silently restorable.
-    const { res, headers } = makeRes();
-    interceptor = new ExportInterceptor(
-      new Reflector(),
-      makeResolver(bundle({ deniedRead: { lead: ['phone'] } })),
-      redactor,
-      audit,
-    );
-    const ctx = makeCtx({
-      req: {
-        user: USER,
-        query: {},
-        originalUrl: '/admin/backup/export',
-        method: 'GET',
-      },
-      res,
-      metadata: {
-        primary: 'tenant',
-        inherits: BACKUP_INHERIT_RESOURCES,
-        format: 'json-tenant-backup',
-        filename: 'tenant-backup.json',
-      },
-    });
-    const out = (await firstValueFrom(
-      interceptor.intercept(ctx, handlerOf(tinyBackup())),
-    )) as string;
-    const parsed = JSON.parse(out) as { data: { leads: Array<Record<string, unknown>> } };
-    // phone column STILL present in leads — the no-op contract.
-    assert.ok('phone' in parsed.data.leads[0]!, 'D5.6D-1 must NOT redact the phone column');
-    assert.equal(parsed.data.leads[0]!['phone'], '+201005551234');
-
-    // Audit row reports nothing redacted.
-    assert.equal(audit.calls.length, 1);
-    const a = audit.calls[0]!;
-    for (const t of a.tableNames!) {
-      assert.deepEqual(
-        a.columnsRedactedByTable![t],
-        [],
-        `D5.6D-1 redaction must be a no-op (table '${t}')`,
-      );
-    }
-    assert.equal(headers['X-Export-Redacted-Columns'], '(none)');
-  });
+  // D5.6D-2 introduced real redaction; the dedicated coverage of
+  // deny-rule effects + restore-critical protection lives in
+  // `d5-6d2-backup-redaction.test.ts`. The D5.6D-1 foundation tests
+  // here only verify the foundation surface (catalogue, decorator
+  // wiring, wire envelope, audit metadata, super-admin bypass,
+  // flag-off bypass, no-deny bypass) — the no-op contract is no
+  // longer in force.
 
   it('super-admin → bypass returns full body, audit still fires for forensic trail', async () => {
     const { res } = makeRes();

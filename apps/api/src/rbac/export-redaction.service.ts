@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 
+import { isRestoreCritical } from '../backup/backup.service';
+
 import type {
   ExportColumn,
   ExportRedactionOutcome,
   StructuredExport,
   StructuredTenantBackup,
+  StructuredTenantBackupTable,
   TenantBackupRedactionOutcome,
 } from './export-contract';
 import { REDACTION_FIELD_KEY } from './export-contract';
@@ -227,75 +230,204 @@ export class ExportRedactionService {
   }
 
   /**
-   * D5.6D-1 — tenant backup passthrough.
+   * D5.6D-2 — tenant backup redactor.
    *
-   * The tenant backup ships seventeen tables in a single response.
-   * D5.6D-1 introduces the structured contract + audit envelope but
-   * does NOT yet apply redaction semantics — every input row /
-   * column survives, regardless of role deny rules. The method
-   * returns a `bypassed: true` outcome whose per-table counters
-   * mirror the input verbatim so the audit row carries the right
-   * structural footprint.
+   * Walks every backup sub-export (one per Prisma table) and
+   * applies the role's deny rules per `(column.resource,
+   * column.field)` pair. Three layered protections decide whether
+   * a column actually drops:
    *
-   * Why no-op in D5.6D-1:
+   *   1. Catalogue's `isRedactable(resource, field)` flag
+   *      (read-path layer). `lead.id`, `captain.id`, and the
+   *      backup-specific `<table>.id` / `<table>.tenantId` entries
+   *      carry `redactable: false` so any deny rule against them
+   *      is a no-op at this layer.
    *
-   *   • The existing `restore.sh` script consumes the legacy
-   *     wire-format byte-for-byte. Stripping columns from a
-   *     backup would silently produce a file that looks like a
-   *     full backup but cannot be restored — a disaster-recovery
-   *     anti-pattern. D5.6D-2 introduces the
-   *     `E_BACKUP_REDACTED_NOT_RESTORABLE` guard before turning
-   *     redaction on.
+   *   2. Column-level `column.redactable === false`
+   *      (per-export-column override). Backup column declarations
+   *      do not set this today; the catalogue carries the
+   *      decision.
    *
-   *   • Per-table redaction tests (deny-list permutations across
-   *     17 tables) need their own commit so a regression in one
-   *     table doesn't mask a regression in another.
+   *   3. **D5.6D-2 backup-specific** —
+   *      `isRestoreCritical(tableName, column.field)`. Even when
+   *      catalogue + column-level both allow redaction, the backup
+   *      registry (`RESTORE_CRITICAL_FIELDS_BY_TABLE` in
+   *      `backup.service.ts`) overrides closed for any column
+   *      whose absence would break a JSON-restore tool's ability
+   *      to rebuild the row. The dropped-by-catalogue / saved-by-
+   *      backup-registry columns land in `protectedColumnsByTable`
+   *      so the audit row records WHICH deny rules were rescued
+   *      by the restore-safety gate.
    *
-   *   • The role bundle's deny lists were built for the read-path
-   *     UI surface (lead detail page, captain detail page). The
-   *     backup shipping under those same deny lists changes the
-   *     contract — admins need to opt into "deny applies to
-   *     backup" via D5.6D-2's policy switch, not silently inherit
-   *     the read-path deny rules.
+   * Bypass paths (return `bypassed: true`, structure unchanged,
+   * `backupRedacted: false`, `restorable: true`):
    *
-   * Manual stripping of credentials (passwordHash, accessToken,
-   * appSecret, verifyToken) happens at the BackupService boundary
-   * via Prisma `select` and is unaffected by this method — those
-   * fields never reach the redactor in the first place.
+   *   • Super-admin (`role.code === 'super_admin'`) — mirrors
+   *     `redactColumns`. Audit still fires for forensic trail; the
+   *     bytes match a flag-off backup.
    *
-   * D5.6D-2 will replace the body of this method with a per-table
-   * walk that calls `redactColumnLevel` on each sub-export, plus a
-   * `restoreCriticalIdsSurvived` invariant check that fails the
-   * outcome closed if any FK column was dropped.
+   *   • No deny rules across any backup-table resource — fast
+   *     path. Skipped redaction altogether.
+   *
+   * When at least one column is actually dropped, the outcome
+   * carries `backupRedacted: true` + `restorable: false` and the
+   * `redacted` `StructuredTenantBackup` propagates those flags
+   * (plus `redactedTables` and a `redactionWarning` string) to the
+   * wire envelope. The interceptor copies the flags to the audit
+   * row so an admin can see "user X downloaded a redacted backup
+   * at time T" in the audit feed.
+   *
+   * Pure function — no I/O, no clock reads, no mutation of input.
    */
   redactTenantBackup(
     structured: StructuredTenantBackup,
-    _resolved: ResolvedPermissions,
+    resolved: ResolvedPermissions,
     _gate: ExportGateOptions,
   ): TenantBackupRedactionOutcome {
+    // 1. Super-admin bypass.
+    if (resolved.role.code === 'super_admin') {
+      return tenantBackupBypass(structured);
+    }
+
+    // 2. Fast path: empty deny lists across every backup-table
+    //    resource referenced by the structured shape.
+    const denyMap = resolved.deniedReadFieldsByResource;
+    const anyDeny = structured.tables.some((t) => {
+      const list = denyMap[t.export.columns[0]?.resource ?? ''];
+      if (list && list.length > 0) return true;
+      // Conservative: also check per-column resource (mixed-resource
+      // tables are rare in backups but possible).
+      return t.export.columns.some((c) => (denyMap[c.resource]?.length ?? 0) > 0);
+    });
+    if (!anyDeny) {
+      return tenantBackupBypass(structured);
+    }
+
+    // 3. Per-table redaction.
     const tableNames: string[] = [];
     const rowCountByTable: Record<string, number> = {};
     const columnsExportedByTable: Record<string, readonly string[]> = {};
     const columnsRedactedByTable: Record<string, readonly string[]> = {};
+    const protectedColumnsByTable: Record<string, readonly string[]> = {};
+    const newTables: StructuredTenantBackupTable[] = [];
     let totalRows = 0;
+    let backupRedacted = false;
+    const redactedSummary: Record<string, readonly string[]> = {};
 
     for (const t of structured.tables) {
+      const dropKeys = new Set<string>();
+      const protectedKeys = new Set<string>();
+
+      for (const column of t.export.columns) {
+        // Step 1: a deny rule must TARGET this column for any
+        // gate to matter.
+        const denyList = resolved.deniedReadFieldsByResource[column.resource] ?? [];
+        if (!denyList.includes(column.field)) continue;
+
+        // Step 2: rescue layers, in priority order.
+        //   2a. Per-export-column override (rare).
+        //   2b. Catalogue's `redactable: false` (read-path gate).
+        //   2c. Backup-specific restore-critical registry.
+        // Either one rescues + lands the column in
+        // `protectedColumnsByTable` so the audit row reports the
+        // full rescue trail.
+        const catalogueProtected =
+          column.redactable === false || !isRedactable(column.resource, column.field);
+        const registryProtected = isRestoreCritical(t.tableName, column.field);
+        if (catalogueProtected || registryProtected) {
+          protectedKeys.add(column.key);
+          continue;
+        }
+
+        // No rescue — actually drop.
+        dropKeys.add(column.key);
+      }
+
       tableNames.push(t.tableName);
-      const rowCount = t.export.rows.length;
-      rowCountByTable[t.tableName] = rowCount;
-      columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
-      columnsRedactedByTable[t.tableName] = [];
-      totalRows += rowCount;
+      protectedColumnsByTable[t.tableName] = Array.from(protectedKeys);
+
+      if (dropKeys.size === 0) {
+        // No redaction for this table — keep it verbatim.
+        newTables.push(t);
+        rowCountByTable[t.tableName] = t.export.rows.length;
+        columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
+        columnsRedactedByTable[t.tableName] = [];
+        totalRows += t.export.rows.length;
+        continue;
+      }
+
+      const keptColumns: ExportColumn[] = [];
+      for (const column of t.export.columns) {
+        if (!dropKeys.has(column.key)) keptColumns.push(column);
+      }
+      const keptRows = t.export.rows.map((row) => {
+        const clone: Record<string, unknown> = { ...row };
+        for (const k of dropKeys) {
+          delete clone[k];
+        }
+        return clone;
+      });
+
+      const newSub: StructuredExport = {
+        format: t.export.format,
+        filename: t.export.filename,
+        ...(t.export.comments !== undefined && { comments: t.export.comments }),
+        ...(t.export.trailingNewline !== undefined && {
+          trailingNewline: t.export.trailingNewline,
+        }),
+        columns: keptColumns,
+        rows: keptRows,
+      };
+      newTables.push({ tableName: t.tableName, export: newSub });
+
+      rowCountByTable[t.tableName] = keptRows.length;
+      columnsExportedByTable[t.tableName] = keptColumns.map((c) => c.key);
+      const dropArray = Array.from(dropKeys);
+      columnsRedactedByTable[t.tableName] = dropArray;
+      redactedSummary[t.tableName] = dropArray;
+      totalRows += keptRows.length;
+      backupRedacted = true;
     }
 
+    if (!backupRedacted) {
+      // Every table's deny rules were rescued by the
+      // restore-criticality registry — no actual column was
+      // dropped. The backup remains restorable.
+      return tenantBackupBypass(structured, {
+        protectedColumnsByTable,
+        bypassed: false,
+      });
+    }
+
+    const redactionWarning =
+      'This backup has fields redacted by RBAC field-permission rules and is NOT restorable. ' +
+      'Restore tooling MUST reject this file (E_BACKUP_REDACTED_NOT_RESTORABLE).';
+
+    const redactedBackup: StructuredTenantBackup = {
+      format: structured.format,
+      filename: structured.filename,
+      exportedAt: structured.exportedAt,
+      tenant: structured.tenant,
+      schemaVersion: structured.schemaVersion,
+      rowCap: structured.rowCap,
+      tables: newTables,
+      backupRedacted: true,
+      restorable: false,
+      redactionWarning,
+      redactedTables: redactedSummary,
+    };
+
     return {
-      redacted: structured,
+      redacted: redactedBackup,
       tableNames,
       rowCountByTable,
       columnsExportedByTable,
       columnsRedactedByTable,
+      protectedColumnsByTable,
       totalRows,
-      bypassed: true,
+      bypassed: false,
+      backupRedacted: true,
+      restorable: false,
     };
   }
 }
@@ -325,4 +457,45 @@ function outcome(
   bypassed: boolean,
 ): ExportRedactionOutcome {
   return { redacted, columnsExported, columnsRedacted, bypassed };
+}
+
+/**
+ * D5.6D-2 — produce a fully-bypassing tenant backup outcome
+ * (super-admin / no-deny / all-deny-rescued paths). Bytes are
+ * unchanged from the input so the wire envelope stays
+ * restore-compatible.
+ */
+function tenantBackupBypass(
+  structured: StructuredTenantBackup,
+  overrides?: {
+    protectedColumnsByTable?: Readonly<Record<string, readonly string[]>>;
+    bypassed?: boolean;
+  },
+): TenantBackupRedactionOutcome {
+  const tableNames: string[] = [];
+  const rowCountByTable: Record<string, number> = {};
+  const columnsExportedByTable: Record<string, readonly string[]> = {};
+  const columnsRedactedByTable: Record<string, readonly string[]> = {};
+  const protectedColumnsByTable: Record<string, readonly string[]> = {};
+  let totalRows = 0;
+  for (const t of structured.tables) {
+    tableNames.push(t.tableName);
+    rowCountByTable[t.tableName] = t.export.rows.length;
+    columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
+    columnsRedactedByTable[t.tableName] = [];
+    protectedColumnsByTable[t.tableName] = overrides?.protectedColumnsByTable?.[t.tableName] ?? [];
+    totalRows += t.export.rows.length;
+  }
+  return {
+    redacted: structured,
+    tableNames,
+    rowCountByTable,
+    columnsExportedByTable,
+    columnsRedactedByTable,
+    protectedColumnsByTable,
+    totalRows,
+    bypassed: overrides?.bypassed ?? true,
+    backupRedacted: false,
+    restorable: true,
+  };
 }

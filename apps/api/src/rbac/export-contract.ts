@@ -193,6 +193,14 @@ export interface StructuredTenantBackupTable {
  * `json-tenant-backup` serialiser collapses `tables` back into the
  * legacy `data: Record<string, unknown[]>` shape so the wire
  * payload stays restore-compatible.
+ *
+ * D5.6D-2 — when redaction drops at least one column from any
+ * table, the wire envelope gains additional top-level metadata
+ * (`backupRedacted: true`, `restorable: false`, `redactionWarning`,
+ * `redactedTables`). Full / super-admin / no-deny backups keep the
+ * pre-D5.6D-1 wire shape exactly so existing restore tooling
+ * (`scripts/restore.sh` and any JSON-restore consumer) continues
+ * to round-trip them byte-for-byte.
  */
 export interface StructuredTenantBackup {
   readonly format: 'json-tenant-backup';
@@ -208,6 +216,32 @@ export interface StructuredTenantBackup {
   readonly rowCap: number;
   /** Ordered list of per-table sub-exports. */
   readonly tables: readonly StructuredTenantBackupTable[];
+  /**
+   * D5.6D-2 — set to `true` ONLY when the redactor actually
+   * dropped at least one column from at least one table. A backup
+   * whose deny rules all targeted restore-critical columns
+   * (rescued by the protection registry) is NOT marked redacted —
+   * it remains restorable.
+   */
+  readonly backupRedacted?: boolean;
+  /**
+   * D5.6D-2 — `false` when `backupRedacted` is true. The
+   * `validateBackupForRestore()` guard refuses to load any
+   * envelope whose `restorable === false` flag is set.
+   */
+  readonly restorable?: boolean;
+  /**
+   * D5.6D-2 — human-readable warning for the consumer (CLI, API,
+   * archive viewer). Empty when not redacted.
+   */
+  readonly redactionWarning?: string;
+  /**
+   * D5.6D-2 — per-table summary of the columns the redactor
+   * dropped. Only populated when `backupRedacted === true`. Keys
+   * are wire-format table names (`leads`, `users`, …); values are
+   * the redacted column-key lists (e.g. `['phone', 'email']`).
+   */
+  readonly redactedTables?: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -215,24 +249,45 @@ export interface StructuredTenantBackup {
  * `ExportRedactionOutcome` but carries per-table counters because the
  * audit row records column-redaction metadata per table.
  *
- * D5.6D-1 returns a NO-OP outcome (no rows or columns dropped, even
- * when deny rules exist) because redaction semantics + restore
- * rejection for redacted backups land in D5.6D-2. This commit ships
- * the structured shape + audit envelope so the foundation is in
- * place for D5.6D-2 to fill in.
+ * D5.6D-2 enriches the outcome with:
+ *   • `protectedColumnsByTable` — columns the redactor refused to
+ *     drop because they are listed in
+ *     `RESTORE_CRITICAL_FIELDS_BY_TABLE`. Surfaces in the audit
+ *     payload so an admin reviewing a redacted backup can see
+ *     which deny rules were rescued by the restore-safety gate.
+ *   • `backupRedacted` / `restorable` — top-level flags used by
+ *     the interceptor to mark the wire envelope and route the
+ *     audit row.
  */
 export interface TenantBackupRedactionOutcome {
   readonly redacted: StructuredTenantBackup;
-  /** Tables present after redaction (same as input in D5.6D-1). */
+  /** Tables present after redaction (same as input). */
   readonly tableNames: readonly string[];
   /** Row count per table after redaction. */
   readonly rowCountByTable: Readonly<Record<string, number>>;
   /** Column keys per table that survived redaction. */
   readonly columnsExportedByTable: Readonly<Record<string, readonly string[]>>;
-  /** Column keys per table dropped by the redactor. Empty in D5.6D-1. */
+  /** Column keys per table dropped by the redactor. */
   readonly columnsRedactedByTable: Readonly<Record<string, readonly string[]>>;
+  /**
+   * D5.6D-2 — column keys per table that the redactor REFUSED to
+   * drop because they are restore-critical. These columns survive
+   * even when the role's deny list explicitly targets them.
+   */
+  readonly protectedColumnsByTable: Readonly<Record<string, readonly string[]>>;
   /** Sum of rows across all tables. */
   readonly totalRows: number;
-  /** True when bypass ran (super-admin, flag off, OR D5.6D-1 always). */
+  /** True when bypass ran (super-admin, flag off, no deny rules). */
   readonly bypassed: boolean;
+  /**
+   * D5.6D-2 — true when at least one column was actually dropped
+   * across all tables. Drives the wire envelope's
+   * `backupRedacted` flag + the restore-rejection guard.
+   */
+  readonly backupRedacted: boolean;
+  /**
+   * D5.6D-2 — false when `backupRedacted === true`. The guard's
+   * single source of truth for "this file should never restore".
+   */
+  readonly restorable: boolean;
 }

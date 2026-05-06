@@ -671,6 +671,15 @@ export const BACKUP_TABLE_RESOURCES: Readonly<Record<string, CatalogueResource>>
  * Called by the export interceptor's `json-tenant-backup`
  * serialiser.
  *
+ * D5.6D-2 — when the structured backup carries
+ * `backupRedacted === true`, the wire envelope gains four
+ * additional top-level keys (`backupRedacted`, `restorable`,
+ * `redactionWarning`, `redactedTables`) so a JSON-restore consumer
+ * can detect non-restorable backups before parsing the data
+ * arrays. Non-redacted backups keep the pre-D5.6D-1 wire shape
+ * exactly — same six keys, same byte sequence — so existing
+ * restore tooling continues to round-trip them unchanged.
+ *
  * Pure function — no I/O, no clock reads, no mutation of the input.
  */
 export function tenantBackupToWireEnvelope(
@@ -682,7 +691,7 @@ export function tenantBackupToWireEnvelope(
     data[t.tableName] = [...t.export.rows];
     counts[t.tableName] = t.export.rows.length;
   }
-  return {
+  const wire: Record<string, unknown> = {
     exportedAt: structured.exportedAt,
     tenant: structured.tenant,
     schemaVersion: structured.schemaVersion,
@@ -690,4 +699,229 @@ export function tenantBackupToWireEnvelope(
     counts,
     data,
   };
+  if (structured.backupRedacted === true) {
+    wire['backupRedacted'] = true;
+    wire['restorable'] = false;
+    wire['redactionWarning'] =
+      structured.redactionWarning ??
+      'This backup has fields redacted by RBAC field-permission rules and is NOT restorable. ' +
+        'Restore tooling MUST reject this file (E_BACKUP_REDACTED_NOT_RESTORABLE).';
+    if (structured.redactedTables !== undefined) {
+      wire['redactedTables'] = Object.fromEntries(
+        Object.entries(structured.redactedTables).map(([k, v]) => [k, [...v]]),
+      );
+    }
+  }
+  return wire;
+}
+
+// ─── D5.6D-2 — restore-criticality registry ─────────────────────
+//
+// Per-table list of fields that MUST NOT be removed from a backup
+// the redactor produces. Restore tooling depends on these columns
+// for row identity, tenant isolation, parent-child anchoring, and
+// schema-required NOT NULL columns.
+//
+// Source rules:
+//   • `id`            — every backup table's primary key.
+//   • `tenantId`      — tenant scope FK (only for tables whose Prisma
+//                       `select` emits it; users / pipelines /
+//                       pipelineStages / whatsappAccounts strip it
+//                       at the BackupService boundary, so it's not
+//                       in their lists).
+//   • Parent FK       — `leadId`, `captainId`, `accountId`,
+//                       `conversationId`, `pipelineId`,
+//                       `bonusRuleId`, `recipientUserId` — restore
+//                       cannot rebuild the row without its parent.
+//   • Required NOT-NULL business columns — `name`, `phone`, `kind`,
+//                       `tripId`, `direction`, `text`, `bodyText`,
+//                       `bonusType`, `trigger`, `amount`,
+//                       `triggerKind`, `metric`, `reward`, `kind`,
+//                       `title`, `recipientUserId`. These anchor
+//                       the row's business identity even when other
+//                       columns are dropped.
+//
+// The redactor consults this list per (tableName, columnKey).
+// ANY deny rule targeting a key in this list is REFUSED — the
+// column survives + lands in `protectedColumnsByTable` for the
+// audit row. Catalogue's `redactable: false` is the read-path
+// protection; this registry is the BACKUP-specific protection
+// (they are intentionally complementary — a column may be
+// redactable on the read-path UI yet restore-critical for backup,
+// e.g. `lead.assignedToId`).
+
+export const RESTORE_CRITICAL_FIELDS_BY_TABLE: Readonly<Record<string, readonly string[]>> = {
+  users: ['id', 'email', 'roleId'],
+  pipelines: ['id', 'name'],
+  pipelineStages: ['id', 'pipelineId', 'code', 'order'],
+  leads: ['id', 'tenantId', 'name', 'phone', 'source', 'stageId'],
+  leadActivities: ['id', 'tenantId', 'leadId', 'type'],
+  leadFollowUps: ['id', 'tenantId', 'leadId', 'actionType', 'dueAt'],
+  captains: ['id', 'tenantId', 'leadId', 'name', 'phone'],
+  captainDocuments: [
+    'id',
+    'tenantId',
+    'captainId',
+    'kind',
+    'storageRef',
+    'fileName',
+    'mimeType',
+    'sizeBytes',
+  ],
+  captainTrips: ['id', 'tenantId', 'captainId', 'tripId', 'occurredAt'],
+  whatsappAccounts: ['id', 'displayName', 'phoneNumber', 'phoneNumberId', 'provider'],
+  whatsappConversations: ['id', 'tenantId', 'accountId', 'phone'],
+  whatsappMessages: ['id', 'tenantId', 'accountId', 'conversationId', 'phone', 'text', 'direction'],
+  whatsappTemplates: ['id', 'tenantId', 'accountId', 'name', 'language', 'category', 'bodyText'],
+  bonusRules: ['id', 'tenantId', 'companyId', 'countryId', 'bonusType', 'trigger', 'amount'],
+  bonusAccruals: ['id', 'tenantId', 'bonusRuleId', 'recipientUserId', 'triggerKind', 'amount'],
+  competitions: ['id', 'tenantId', 'name', 'startDate', 'endDate', 'metric', 'reward'],
+  notifications: ['id', 'tenantId', 'recipientUserId', 'kind', 'title'],
+};
+
+/**
+ * D5.6D-2 — `true` when (tableName, fieldName) is restore-critical.
+ * Both the redactor and `validateBackupForRestore` call this to
+ * decide whether a missing column is a hard restore-blocker.
+ */
+export function isRestoreCritical(tableName: string, fieldName: string): boolean {
+  const list = RESTORE_CRITICAL_FIELDS_BY_TABLE[tableName];
+  if (!list) return false;
+  return list.includes(fieldName);
+}
+
+// ─── D5.6D-2 — restore-rejection guard ──────────────────────────
+
+/**
+ * Stable error codes emitted by `validateBackupForRestore`. Any
+ * future JSON-restore tool (CLI script, admin endpoint, archive
+ * importer) MUST surface these codes verbatim so operators see a
+ * consistent rejection vocabulary across surfaces.
+ *
+ *   • `E_BACKUP_REDACTED_NOT_RESTORABLE` — the file's
+ *     `backupRedacted` / `restorable: false` flag is set; the
+ *     redactor produced it and explicitly marked it not for
+ *     restore.
+ *   • `E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING` — the file lacks a
+ *     column listed in `RESTORE_CRITICAL_FIELDS_BY_TABLE` for one
+ *     of its tables. Could be a hand-edited file, a corrupted
+ *     download, or a backup produced by an older schema version.
+ *
+ * The guard is the SINGLE call any restore consumer must make
+ * before touching the database. It throws synchronously — no
+ * partial restore is ever attempted.
+ */
+export type BackupRestoreErrorCode =
+  | 'E_BACKUP_REDACTED_NOT_RESTORABLE'
+  | 'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING';
+
+export class BackupRestoreError extends Error {
+  readonly code: BackupRestoreErrorCode;
+  /** Optional structural context for support / forensics. */
+  readonly details?: Readonly<Record<string, unknown>>;
+  constructor(
+    code: BackupRestoreErrorCode,
+    message: string,
+    details?: Readonly<Record<string, unknown>>,
+  ) {
+    super(message);
+    this.name = 'BackupRestoreError';
+    this.code = code;
+    if (details !== undefined) {
+      this.details = details;
+    }
+  }
+}
+
+/**
+ * D5.6D-2 — validate a backup wire envelope before restore.
+ *
+ * Throws `BackupRestoreError` synchronously on rejection. Returns
+ * normally when the backup is safe to restore. The guard is
+ * deliberately strict — the cost of a silent restore from a
+ * partially-redacted backup is much higher than the cost of an
+ * extra rejection.
+ *
+ * Behaviour:
+ *
+ *   1. If the envelope's `backupRedacted` flag is `true` OR its
+ *      `restorable` flag is exactly `false` → throw
+ *      `E_BACKUP_REDACTED_NOT_RESTORABLE`.
+ *
+ *   2. Walk every (table, row) pair. For every restore-critical
+ *      field listed in `RESTORE_CRITICAL_FIELDS_BY_TABLE[table]`,
+ *      assert the row has the key. The first missing key throws
+ *      `E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING` with `details`
+ *      pointing at the offending `(table, field, rowIndex)`.
+ *
+ *   3. Otherwise return — the envelope is restore-safe.
+ *
+ * Pure function — no I/O. The hypothetical caller (a future CLI
+ * `scripts/restore-from-json.sh` or admin endpoint) is responsible
+ * for actually doing the restore once this guard returns.
+ */
+export function validateBackupForRestore(envelope: unknown): void {
+  if (!envelope || typeof envelope !== 'object') {
+    throw new BackupRestoreError(
+      'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING',
+      'backup envelope is not an object',
+    );
+  }
+  const e = envelope as {
+    backupRedacted?: unknown;
+    restorable?: unknown;
+    data?: unknown;
+  };
+
+  if (e.backupRedacted === true || e.restorable === false) {
+    throw new BackupRestoreError(
+      'E_BACKUP_REDACTED_NOT_RESTORABLE',
+      'backup is marked as redacted by RBAC field-permission rules; restore is refused. ' +
+        'Re-run the export under super-admin or with no deny rules in effect to obtain a restorable backup.',
+      {
+        backupRedacted: e.backupRedacted === true,
+        restorable: e.restorable === false ? false : undefined,
+      },
+    );
+  }
+
+  if (!e.data || typeof e.data !== 'object') {
+    throw new BackupRestoreError(
+      'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING',
+      'backup envelope has no `data` section',
+    );
+  }
+
+  const data = e.data as Record<string, unknown>;
+  for (const [tableName, criticalFields] of Object.entries(RESTORE_CRITICAL_FIELDS_BY_TABLE)) {
+    const rows = data[tableName];
+    if (rows === undefined) continue; // missing table — older schema or trimmed export
+    if (!Array.isArray(rows)) {
+      throw new BackupRestoreError(
+        'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING',
+        `backup table '${tableName}' is not an array`,
+        { table: tableName },
+      );
+    }
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
+      if (!row || typeof row !== 'object') {
+        throw new BackupRestoreError(
+          'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING',
+          `backup table '${tableName}' row #${rowIndex} is not an object`,
+          { table: tableName, rowIndex },
+        );
+      }
+      const r = row as Record<string, unknown>;
+      for (const field of criticalFields) {
+        if (!(field in r)) {
+          throw new BackupRestoreError(
+            'E_BACKUP_RESTORE_CRITICAL_FIELD_MISSING',
+            `backup table '${tableName}' row #${rowIndex} is missing restore-critical field '${field}'`,
+            { table: tableName, field, rowIndex },
+          );
+        }
+      }
+    }
+  }
 }

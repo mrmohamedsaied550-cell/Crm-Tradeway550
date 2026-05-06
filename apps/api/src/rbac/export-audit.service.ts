@@ -87,6 +87,24 @@ export interface ExportAuditInput {
   readonly columnsExportedByTable?: Readonly<Record<string, readonly string[]>>;
   /** Column keys per table dropped by the redactor. Empty maps in D5.6D-1. */
   readonly columnsRedactedByTable?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * D5.6D-2 — column keys per table that were rescued from a deny
+   * rule because they are restore-critical. Empty maps when the
+   * deny list never tried to target a critical column.
+   */
+  readonly protectedColumnsByTable?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * D5.6D-2 — `true` when at least one column was actually dropped
+   * across all backup tables. Mirrors the wire envelope flag.
+   */
+  readonly redacted?: boolean;
+  /**
+   * D5.6D-2 — `false` when `redacted` is true. Mirrors the wire
+   * envelope's `restorable` flag so an admin reviewing the audit
+   * feed can spot non-restorable backups without re-reading the
+   * file.
+   */
+  readonly restorable?: boolean;
 }
 
 @Injectable()
@@ -128,6 +146,17 @@ export class ExportAuditService {
       payload['columnsRedactedByTable'] = Object.fromEntries(
         Object.entries(input.columnsRedactedByTable).map(([k, v]) => [k, [...v]]),
       );
+    }
+    if (input.protectedColumnsByTable !== undefined) {
+      payload['protectedColumnsByTable'] = Object.fromEntries(
+        Object.entries(input.protectedColumnsByTable).map(([k, v]) => [k, [...v]]),
+      );
+    }
+    if (input.redacted !== undefined) {
+      payload['redacted'] = input.redacted;
+    }
+    if (input.restorable !== undefined) {
+      payload['restorable'] = input.restorable;
     }
 
     await this.audit.writeEvent({

@@ -254,12 +254,14 @@ export class ExportInterceptor implements NestInterceptor {
       const rowCountByTable: Record<string, number> = {};
       const columnsExportedByTable: Record<string, readonly string[]> = {};
       const columnsRedactedByTable: Record<string, readonly string[]> = {};
+      const protectedColumnsByTable: Record<string, readonly string[]> = {};
       let totalRows = 0;
       for (const t of data.tables) {
         tableNames.push(t.tableName);
         rowCountByTable[t.tableName] = t.export.rows.length;
         columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
         columnsRedactedByTable[t.tableName] = [];
+        protectedColumnsByTable[t.tableName] = [];
         totalRows += t.export.rows.length;
       }
       outcome = {
@@ -268,8 +270,11 @@ export class ExportInterceptor implements NestInterceptor {
         rowCountByTable,
         columnsExportedByTable,
         columnsRedactedByTable,
+        protectedColumnsByTable,
         totalRows,
         bypassed: true,
+        backupRedacted: false,
+        restorable: true,
       };
     }
 
@@ -279,9 +284,12 @@ export class ExportInterceptor implements NestInterceptor {
         : gate.filename;
 
     // Collapse the structured shape into the legacy
-    // `TenantBackup` JSON envelope. This is the same byte
-    // sequence pre-D5.6D-1 callers received, so
-    // `scripts/restore.sh` round-trips unchanged.
+    // `TenantBackup` JSON envelope. Non-redacted backups keep the
+    // pre-D5.6D-1 wire shape exactly so existing restore tooling
+    // continues to round-trip them. Redacted backups gain the
+    // top-level `backupRedacted` / `restorable` markers + a
+    // human-readable warning so a JSON-restore consumer can detect
+    // and reject the file before parsing the data section.
     const wire = tenantBackupToWireEnvelope(outcome.redacted);
     const body = JSON.stringify(wire);
     const bytesShipped = Buffer.byteLength(body, 'utf8');
@@ -298,6 +306,13 @@ export class ExportInterceptor implements NestInterceptor {
             .map(([t, c]) => `${t}:${(c as readonly string[]).join('|')}`)
             .join(','),
     );
+    if (outcome.backupRedacted) {
+      // D5.6D-2 — surface the redacted-backup contract in HTTP
+      // headers too so an admin downloading via curl + jq can spot
+      // the rejection-required state without parsing the body.
+      res.setHeader('X-Backup-Redacted', 'true');
+      res.setHeader('X-Backup-Restorable', 'false');
+    }
 
     if (flagOn) {
       try {
@@ -329,6 +344,9 @@ export class ExportInterceptor implements NestInterceptor {
           rowCountByTable: outcome.rowCountByTable,
           columnsExportedByTable: outcome.columnsExportedByTable,
           columnsRedactedByTable: outcome.columnsRedactedByTable,
+          protectedColumnsByTable: outcome.protectedColumnsByTable,
+          redacted: outcome.backupRedacted,
+          restorable: outcome.restorable,
         });
         res.setHeader('X-Export-Audit-Id', result.entityId);
       } catch (err) {
