@@ -419,6 +419,28 @@ export interface MeUser {
     canRead: boolean;
     canWrite: boolean;
   }>;
+  /**
+   * Phase D5 — D5.9: derived `Record<resource, field[]>` projections
+   * of the role's deny rows. Empty objects on the super_admin
+   * bypass. The SPA's permission helpers (`canReadField`,
+   * `canWriteField`, `isFieldDenied`) read these directly so screens
+   * can render `<RedactedFieldBadge>` without re-walking the flat
+   * `fieldPermissions` list on every render. UX guidance ONLY — the
+   * API is the source of truth for what data leaves the server.
+   *
+   * Optional on the wire so the type stays compatible with cached
+   * `me` payloads written before the D5.9 deploy; the helpers fall
+   * back permissively when the field is absent.
+   */
+  deniedReadFieldsByResource?: Record<string, readonly string[]>;
+  deniedWriteFieldsByResource?: Record<string, readonly string[]>;
+  /**
+   * Phase D5 — D5.9: per-resource role scope (own / team / company /
+   * country / global). Drives "Showing leads from your team only"
+   * banners. Resources without an explicit row default to
+   * `'global'`; absent keys here mean the same on the client.
+   */
+  scopesByResource?: Record<string, string>;
 }
 
 export interface LoginResponse {
@@ -959,15 +981,21 @@ export interface AttemptHistoryRow {
 }
 
 /**
- * Response of GET /leads/:id/attempts. `outOfScopeCount` is the
- * count of attempts the operator's role can't see; the UI surfaces
- * it as a single "N previous attempts are outside your access."
- * line at the bottom of the timeline.
+ * Response of GET /leads/:id/attempts.
+ *
+ * `outOfScopeCount`:
+ *   • `number` — when the role can read the count, surfaces as
+ *     "N previous attempts are outside your access."
+ *   • `null`   — Phase D5 — D5.8: the role's
+ *     `lead.outOfScopeAttemptCount` field-permission is denied.
+ *     The UI renders the generic "older attempts may exist but
+ *     are hidden by your role" copy without disclosing whether
+ *     any actually exist.
  */
 export interface AttemptHistoryResult {
   attempts: AttemptHistoryRow[];
   totalAttempts: number;
-  outOfScopeCount: number;
+  outOfScopeCount: number | null;
   currentLeadId: string;
 }
 

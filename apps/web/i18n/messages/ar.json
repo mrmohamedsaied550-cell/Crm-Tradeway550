@@ -2617,6 +2617,11 @@
   "common": {
     "comingSoon": "قادم في قطاع لاحق",
     "placeholder": "عنصر نائب",
-    "version": "الإصدار"
+    "version": "الإصدار",
+    "hiddenByRole": "مخفي حسب دورك",
+    "fieldHiddenByRole": "{field} مخفي حسب دورك",
+    "ownerDetailsHidden": "تفاصيل المالك مخفية حسب دورك",
+    "olderAttemptsHidden": "قد توجد محاولات أقدم لكنها مخفية حسب دورك.",
+    "reviewContextHidden": "بعض تفاصيل المراجعة مخفية حسب دورك."
   }
 }

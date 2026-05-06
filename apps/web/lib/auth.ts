@@ -39,6 +39,17 @@ export interface MeCache {
     readonly canRead: boolean;
     readonly canWrite: boolean;
   }>;
+  /**
+   * Phase D5 — D5.9: derived deny-fields projections shipped by
+   * `/auth/me`. Optional so the cache stays compatible with
+   * sessions written before the D5.9 deploy — the permission
+   * helpers fall back to deriving from `fieldPermissions` when the
+   * projections are absent.
+   */
+  readonly deniedReadFieldsByResource?: Record<string, readonly string[]>;
+  readonly deniedWriteFieldsByResource?: Record<string, readonly string[]>;
+  /** Phase D5 — D5.9: per-resource scope ('own' / 'team' / 'global' / …). */
+  readonly scopesByResource?: Record<string, string>;
 }
 
 /**

@@ -2617,6 +2617,11 @@
   "common": {
     "comingSoon": "Coming in a later chunk",
     "placeholder": "Placeholder",
-    "version": "Version"
+    "version": "Version",
+    "hiddenByRole": "Hidden by your role",
+    "fieldHiddenByRole": "{field} is hidden by your role",
+    "ownerDetailsHidden": "Owner details are hidden by your role",
+    "olderAttemptsHidden": "Older attempts may exist but are hidden by your role.",
+    "reviewContextHidden": "Some review context is hidden by your role."
   }
 }

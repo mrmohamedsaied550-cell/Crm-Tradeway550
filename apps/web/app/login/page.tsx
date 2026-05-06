@@ -65,6 +65,19 @@ export default function LoginPage() {
         // login so `lib/permissions.ts` works on the first render
         // without waiting for AuthBar's `/auth/me` round-trip.
         fieldPermissions: result.user.fieldPermissions ?? [],
+        // Phase D5 — D5.9: derived deny projections + per-resource
+        // scope. Optional on the wire (older deploys won't ship
+        // them); the permission helpers fall back to deriving
+        // from `fieldPermissions` when absent.
+        ...(result.user.deniedReadFieldsByResource && {
+          deniedReadFieldsByResource: result.user.deniedReadFieldsByResource,
+        }),
+        ...(result.user.deniedWriteFieldsByResource && {
+          deniedWriteFieldsByResource: result.user.deniedWriteFieldsByResource,
+        }),
+        ...(result.user.scopesByResource && {
+          scopesByResource: result.user.scopesByResource,
+        }),
       });
       router.push(next);
     } catch (err) {

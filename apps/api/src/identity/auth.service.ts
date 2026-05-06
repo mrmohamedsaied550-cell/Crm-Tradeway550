@@ -24,6 +24,74 @@ export interface AuthTokens {
   refreshToken: string;
 }
 
+/**
+ * Phase D5 — D5.9: pure helper that derives the public permission
+ * shape (`fieldPermissions` flat list + per-resource deny maps +
+ * scope map) from a role row. Exported so the auth tests can
+ * exercise the projection without standing up Postgres + a full
+ * `AuthService` instance.
+ *
+ * Behaviour:
+ *   • super-admin                  → empty `fieldPermissions`
+ *                                    AND empty deny maps. The
+ *                                    `scopesByResource` ships
+ *                                    verbatim (super-admin's
+ *                                    bypass lives elsewhere; the
+ *                                    payload reports the actual
+ *                                    persisted scopes for
+ *                                    transparency).
+ *   • role.fieldPermissions        → grouped by resource into the
+ *                                    deny maps when `canRead` /
+ *                                    `canWrite` is false.
+ *   • role.scopes                  → flattened into a flat
+ *                                    `Record<resource, scope>`.
+ *
+ * Pure function — no I/O, no mutation of the input.
+ */
+export function derivePublicPermissionShape(role: RoleWithCapabilities): {
+  fieldPermissions: ReadonlyArray<{
+    resource: string;
+    field: string;
+    canRead: boolean;
+    canWrite: boolean;
+  }>;
+  deniedReadFieldsByResource: Record<string, readonly string[]>;
+  deniedWriteFieldsByResource: Record<string, readonly string[]>;
+  scopesByResource: Record<string, string>;
+} {
+  const isSuperAdmin = role.code === 'super_admin';
+  const fieldPermissions = isSuperAdmin
+    ? []
+    : role.fieldPermissions.map((p) => ({
+        resource: p.resource,
+        field: p.field,
+        canRead: p.canRead,
+        canWrite: p.canWrite,
+      }));
+  const deniedReadFieldsByResource: Record<string, string[]> = {};
+  const deniedWriteFieldsByResource: Record<string, string[]> = {};
+  if (!isSuperAdmin) {
+    for (const p of role.fieldPermissions) {
+      if (!p.canRead) {
+        (deniedReadFieldsByResource[p.resource] ??= []).push(p.field);
+      }
+      if (!p.canWrite) {
+        (deniedWriteFieldsByResource[p.resource] ??= []).push(p.field);
+      }
+    }
+  }
+  const scopesByResource: Record<string, string> = {};
+  for (const s of role.scopes) {
+    scopesByResource[s.resource as string] = s.scope as string;
+  }
+  return {
+    fieldPermissions,
+    deniedReadFieldsByResource,
+    deniedWriteFieldsByResource,
+    scopesByResource,
+  };
+}
+
 export interface AuthResult extends AuthTokens {
   user: {
     id: string;
@@ -49,6 +117,30 @@ export interface AuthResult extends AuthTokens {
       canRead: boolean;
       canWrite: boolean;
     }>;
+    /**
+     * Phase D5 — D5.9: derived `Record<resource, field[]>` projections
+     * of the role's deny rows. Empty objects on the super_admin
+     * bypass. The SPA's permission helpers consult these instead of
+     * re-walking the flat `fieldPermissions` list on every render.
+     * The server remains the source of truth — the client maps are
+     * UX guidance ONLY (server-side redaction at C3/C4/C5/D5.x is
+     * what actually keeps data out of responses).
+     *
+     * Important: these maps describe ROLE METADATA only — they
+     * never carry hidden field VALUES. An admin reviewing the
+     * payload sees "this role can't read lead.phone" but never the
+     * phone numbers themselves.
+     */
+    deniedReadFieldsByResource: Record<string, readonly string[]>;
+    deniedWriteFieldsByResource: Record<string, readonly string[]>;
+    /**
+     * Phase D5 — D5.9: per-resource role scope (own / team /
+     * company / country / global). Drives banners like
+     * "Showing leads from your team only". Resources without an
+     * explicit `role_scopes` row default to `'global'` server-side;
+     * absent keys here mean the same on the client.
+     */
+    scopesByResource: Record<string, string>;
   };
 }
 
@@ -555,21 +647,7 @@ export class AuthService {
     },
     role: RoleWithCapabilities,
   ): AuthResult['user'] {
-    // Phase C — C4: ship the role's field permissions to the client
-    // so the UI can mirror the server-side filter. Super-admin gets
-    // an empty list (the bypass means nothing's denied) — client
-    // code that gates on `canRead === false` simply renders every
-    // field. Today's seed installs 3 deny rows for sales_agent
-    // (lead.id / lead.attribution.campaign / lead.source).
-    const fieldPermissions =
-      role.code === 'super_admin'
-        ? []
-        : role.fieldPermissions.map((p) => ({
-            resource: p.resource,
-            field: p.field,
-            canRead: p.canRead,
-            canWrite: p.canWrite,
-          }));
+    const perms = derivePublicPermissionShape(role);
     return {
       id: u.id,
       email: u.email,
@@ -584,7 +662,10 @@ export class AuthService {
         level: role.level,
       },
       capabilities: role.capabilities,
-      fieldPermissions,
+      fieldPermissions: perms.fieldPermissions,
+      deniedReadFieldsByResource: perms.deniedReadFieldsByResource,
+      deniedWriteFieldsByResource: perms.deniedWriteFieldsByResource,
+      scopesByResource: perms.scopesByResource,
     };
   }
 
