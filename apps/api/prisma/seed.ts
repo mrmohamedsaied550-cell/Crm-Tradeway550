@@ -227,6 +227,16 @@ const D5_7_OWNERSHIP_HISTORY_DENIES: ReadonlyArray<readonly [resource: string, f
   ['lead', 'outOfScopeAttemptCount'],
   ['lead.review', 'ownerContext'],
   ['lead.review', 'partnerContext'],
+  // D5.12-A — WhatsApp conversation field-permission defaults.
+  // Migration 0042 installs the same rows for existing tenants;
+  // these entries cover fresh-tenant creation + re-runs. The
+  // conversationHistory + handoverSummary fields are gated at
+  // the read-path layer (transfer-mode floor) instead, so they
+  // are NOT denied at the field-permission row.
+  ['whatsapp.conversation', 'handoverChain'],
+  ['whatsapp.conversation', 'priorAgentMessages'],
+  ['whatsapp.conversation', 'reviewNotes'],
+  ['whatsapp.conversation', 'internalMetadata'],
 ];
 
 // ───────────────────────────────────────────────────────────────────────

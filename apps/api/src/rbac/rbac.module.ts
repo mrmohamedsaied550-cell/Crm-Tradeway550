@@ -14,6 +14,7 @@ import { PermissionCacheService } from './permission-cache.service';
 import { PermissionResolverService } from './permission-resolver.service';
 import { RolePreviewService } from './role-preview.service';
 import { ScopeContextService } from './scope-context.service';
+import { WhatsAppVisibilityService } from './whatsapp-visibility.service';
 
 /**
  * Global RBAC module. Exposes RbacService for any future module that needs
@@ -72,6 +73,7 @@ import { ScopeContextService } from './scope-context.service';
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
     RolePreviewService,
+    WhatsAppVisibilityService,
     {
       provide: APP_INTERCEPTOR,
       useExisting: FieldRedactionInterceptor,
@@ -95,6 +97,7 @@ import { ScopeContextService } from './scope-context.service';
     OwnershipVisibilityService,
     LeadReviewVisibilityService,
     RolePreviewService,
+    WhatsAppVisibilityService,
   ],
 })
 export class RbacModule {}
