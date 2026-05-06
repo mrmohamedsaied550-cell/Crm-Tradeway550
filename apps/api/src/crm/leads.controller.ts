@@ -254,6 +254,7 @@ export class LeadsController {
 
   @Get('leads/:id/activities')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('lead.activity')
   @ApiOperation({ summary: 'Activity timeline for the lead' })
   activities(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: AccessTokenClaims) {
     return this.leads.listActivities(id, claimsToScope(user));
@@ -371,6 +372,7 @@ export class LeadsController {
 
   @Get('leads/:id/rotations')
   @RequireCapability('lead.read')
+  @ResourceFieldGate('rotation')
   @ApiOperation({ summary: 'List rotation history for a lead (visibility-gated)' })
   listRotations(
     @Param('id', new ParseUUIDPipe()) id: string,

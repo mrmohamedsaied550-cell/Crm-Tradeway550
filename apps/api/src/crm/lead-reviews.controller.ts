@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { LeadReviewService } from './lead-review.service';
@@ -57,6 +58,7 @@ export class LeadReviewsController {
 
   @Get()
   @RequireCapability('lead.review.read')
+  @ResourceFieldGate('lead.review')
   @ApiOperation({ summary: 'List TL Review Queue rows in scope' })
   list(@Query() query: ListLeadReviewsDto, @CurrentUser() user: AccessTokenClaims) {
     return this.reviews.listReviews(claimsToScope(user), query);
@@ -80,6 +82,7 @@ export class LeadReviewsController {
 
   @Get(':id')
   @RequireCapability('lead.review.read')
+  @ResourceFieldGate('lead.review')
   @ApiOperation({ summary: 'Get a single review row in scope' })
   async getOne(
     @Param('id', new ParseUUIDPipe()) id: string,
