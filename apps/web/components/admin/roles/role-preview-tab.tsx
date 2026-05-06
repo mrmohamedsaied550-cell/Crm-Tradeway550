@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { AlertTriangle, Download, EyeOff, Lock, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Clock, Download, EyeOff, History, Lock, ShieldCheck } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, rolesApi } from '@/lib/api';
-import type { RolePreviewResult, RolePreviewWarningCode } from '@/lib/api-types';
+import { ApiError, auditApi, rolesApi, usersApi, type AuditRow } from '@/lib/api';
+import type { AdminUser, RolePreviewResult, RolePreviewWarningCode } from '@/lib/api-types';
+import { hasCapability } from '@/lib/auth';
 import { getCatalogueLabel } from '@/lib/field-catalogue-mirror';
 import { cn } from '@/lib/utils';
 
@@ -253,6 +254,100 @@ export function RolePreviewTab({ roleId }: { roleId: string }): JSX.Element {
           </ul>
         )}
       </section>
+
+      {/* D5.11 — Recent role previews. Server-filtered audit feed
+          for THIS role only (entityId + actionPrefix). Gated by
+          audit.read; missing capability → panel hidden. */}
+      <RecentRolePreviewsPanel roleId={data.role.id} />
+    </section>
+  );
+}
+
+/**
+ * Phase D5 — D5.11: small audit panel showing recent role-preview
+ * audit rows for the role currently being inspected. Gated by
+ * `audit.read`; users without it never see the panel. Calls
+ * `GET /audit?actionPrefix=rbac&entityId=<roleId>` so the server
+ * does the heavy lifting + the audit field-redaction interceptor
+ * applies as usual.
+ */
+function RecentRolePreviewsPanel({ roleId }: { roleId: string }): JSX.Element | null {
+  const t = useTranslations('admin.audit.recentPreviews');
+  const canReadAudit = hasCapability('audit.read');
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canReadAudit) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      auditApi.list({ actionPrefix: 'rbac', entityId: roleId, limit: 25 }),
+      usersApi
+        .list({ limit: 200 })
+        .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
+    ])
+      .then(([list, page]) => {
+        if (cancelled) return;
+        setRows(list);
+        setUsers(page.items);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : t('loadFailed'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [roleId, canReadAudit, t]);
+
+  if (!canReadAudit) return null;
+
+  const userById = new Map(users.map((u) => [u.id, u]));
+
+  return (
+    <section
+      className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card"
+      data-testid="role-preview-recent-previews"
+    >
+      <h3 className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+        <History className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('title')}
+      </h3>
+      <p className="mb-3 text-xs text-ink-tertiary">{t('subtitle')}</p>
+      {loading ? (
+        <p className="text-sm italic text-ink-tertiary">{t('loading')}</p>
+      ) : error ? (
+        <Notice tone="error">{error}</Notice>
+      ) : rows.length === 0 ? (
+        <p className="text-sm italic text-ink-tertiary">{t('empty')}</p>
+      ) : (
+        <ul className="divide-y divide-surface-border rounded-md border border-surface-border bg-surface">
+          {rows.map((r) => {
+            const u = r.actorUserId ? userById.get(r.actorUserId) : null;
+            return (
+              <li key={r.id} className="flex flex-col gap-0.5 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm text-ink-primary">
+                    {u ? `${u.name}` : t('anonymousActor')}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-ink-tertiary">
+                    <Clock className="h-3 w-3" aria-hidden="true" />
+                    {new Date(r.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                {u ? <span className="text-[11px] text-ink-tertiary">{u.email}</span> : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

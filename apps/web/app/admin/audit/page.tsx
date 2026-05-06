@@ -11,22 +11,32 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
 import { ApiError, auditApi, usersApi, type AuditRow } from '@/lib/api';
+import {
+  AUDIT_ACTION_GROUP_CODES,
+  governanceActionLabel,
+  isGovernanceAction,
+  summariseAuditPayload,
+  type AuditActionGroupCode,
+} from '@/lib/audit-governance';
 import type { AdminUser } from '@/lib/api-types';
 
 /**
- * Phase D2 — D2.6 (extended in D3.7): filter chips for D2 + D3 + the
- * follow-up verbs. Selecting a chip narrows the local view to rows
- * whose `action` matches; the API itself still returns the full
- * stream — this is a client-side filter intentionally, so a TL can
- * flip between "everything in the last 200 events" and "just the
- * rotation verbs" without re-fetching.
+ * Phase D5 — D5.11: chip-based filter that calls the new
+ * `?actionPrefix=<group>` server filter for governance verbs.
  *
- * D3.7 added the rotation / review / SLA-review-pending verbs
- * (rotation, escalation policy, and lead-review queue) plus the
- * follow-up lifecycle verbs (`followup.create / .complete / .snooze
- * / .delete`). The actual followup audit names live in
- * `apps/api/src/follow-ups/follow-ups.service.ts`.
+ * Two filter modes coexist on the page:
+ *
+ *   • Action-verb chips (D2 / D3 / partner — pre-D5.11) filter
+ *     CLIENT-SIDE on the cached `rows` list. Each chip narrows to
+ *     a specific verb.
+ *
+ *   • Governance group chips (D5.11) call the BACKEND with
+ *     `actionPrefix=<allow-listed code>`. Selecting one re-fetches
+ *     a server-filtered slice (rbac.*, tenant.export.*, etc.). The
+ *     two modes are mutually exclusive: choosing a group chip
+ *     clears the verb chip and vice versa, and "All" clears both.
  */
+
 const FILTER_AUDIT_ACTIONS = [
   // D2 — duplicates / reactivation / WhatsApp review
   'lead.duplicate_decision',
@@ -44,10 +54,7 @@ const FILTER_AUDIT_ACTIONS = [
   'followup.complete',
   'followup.snooze',
   'followup.delete',
-  // Phase D4 — partner data hub verbs (D4.3 sync / D4.4 verification
-  // / D4.5 merge + evidence / D4.6 reconciliation review-opens).
-  // The full list is intentionally surfaced together so an Ops
-  // user can audit the whole partner-data trail in one chip pass.
+  // Phase D4 — partner data hub verbs
   'partner.sync.completed',
   'partner.merge.applied',
   'partner.evidence.attached',
@@ -55,31 +62,6 @@ const FILTER_AUDIT_ACTIONS = [
   'partner.reconciliation.review_opened',
 ] as const;
 type FilterAuditAction = (typeof FILTER_AUDIT_ACTIONS)[number];
-
-/**
- * /admin/audit (C40) — unified audit stream.
- *
- * Pulls /audit (audit_events + lead_activities, normalized + sorted
- * desc by timestamp). Each row shows action / actor / target / time
- * + a one-line metadata summary derived from the payload.
- */
-
-function summarisePayload(payload: AuditRow['payload']): string {
-  if (!payload || typeof payload !== 'object') return '';
-  const entries = Object.entries(payload);
-  if (entries.length === 0) return '';
-  return entries
-    .filter(([k]) => k !== 'event')
-    .slice(0, 4)
-    .map(([k, v]) => {
-      if (v === null || v === undefined) return '';
-      if (typeof v === 'string') return `${k}: ${v.length > 60 ? `${v.slice(0, 60)}…` : v}`;
-      if (typeof v === 'number' || typeof v === 'boolean') return `${k}: ${String(v)}`;
-      return `${k}: …`;
-    })
-    .filter(Boolean)
-    .join(' · ');
-}
 
 export default function AdminAuditPage(): JSX.Element {
   const t = useTranslations('admin.audit');
@@ -89,17 +71,20 @@ export default function AdminAuditPage(): JSX.Element {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  // Phase D2 — D2.6 (extended in D3.7): chip-based filter for D2/D3
-  // / follow-up audit verbs. `null` disables the filter; a chip code
-  // shows only rows of that action.
   const [actionFilter, setActionFilter] = useState<FilterAuditAction | null>(null);
+  // Phase D5 — D5.11: allow-listed group code currently filtering
+  // the server-side feed. `null` disables the group filter.
+  const [groupFilter, setGroupFilter] = useState<AuditActionGroupCode | null>(null);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
       const [list, page] = await Promise.all([
-        auditApi.list({ limit: 200 }),
+        auditApi.list({
+          limit: 200,
+          ...(groupFilter && { actionPrefix: groupFilter }),
+        }),
         usersApi
           .list({ limit: 200 })
           .catch(() => ({ items: [] as AdminUser[], total: 0, limit: 200, offset: 0 })),
@@ -111,7 +96,7 @@ export default function AdminAuditPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [groupFilter]);
 
   useEffect(() => {
     void reload();
@@ -119,8 +104,6 @@ export default function AdminAuditPage(): JSX.Element {
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
-  // Apply the chip filter client-side. The API returns the unified
-  // stream; this just narrows the rendered list.
   const visibleRows = useMemo(
     () => (actionFilter ? rows.filter((r) => r.action === actionFilter) : rows),
     [rows, actionFilter],
@@ -149,38 +132,45 @@ export default function AdminAuditPage(): JSX.Element {
         </Notice>
       ) : null}
 
-      {/* Phase D2 — D2.6 (extended D3.7): chip filter for D2/D3 +
-          follow-up audit verbs. The chip is a toggle; clicking the
-          active one clears the filter. RTL-clean — `flex-wrap`
-          rows + `gap-2` flow correctly mirrored. */}
+      {/* Phase D5 — D5.11: governance group chips (server filter) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-ink-tertiary">{t('groupFilterLabel')}</span>
+        <ChipButton
+          active={groupFilter === null}
+          onClick={() => {
+            setGroupFilter(null);
+            setActionFilter(null);
+          }}
+          label={t('chips.all')}
+        />
+        {AUDIT_ACTION_GROUP_CODES.map((code) => (
+          <ChipButton
+            key={code}
+            active={groupFilter === code}
+            onClick={() => {
+              setGroupFilter(groupFilter === code ? null : code);
+              setActionFilter(null);
+            }}
+            label={t(`groups.${code}` as 'groups.rbac')}
+          />
+        ))}
+      </div>
+
+      {/* Pre-D5.11 verb chips (client filter) */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-ink-tertiary">{t('filterLabel')}</span>
-        <button
-          type="button"
+        <ChipButton
+          active={actionFilter === null}
           onClick={() => setActionFilter(null)}
-          className={cn(
-            'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-            actionFilter === null
-              ? 'border-brand-600 bg-brand-50 text-brand-700'
-              : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-surface',
-          )}
-        >
-          {t('chips.all')}
-        </button>
+          label={t('chips.all')}
+        />
         {FILTER_AUDIT_ACTIONS.map((code) => (
-          <button
+          <ChipButton
             key={code}
-            type="button"
+            active={actionFilter === code}
             onClick={() => setActionFilter(actionFilter === code ? null : code)}
-            className={cn(
-              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-              actionFilter === code
-                ? 'border-brand-600 bg-brand-50 text-brand-700'
-                : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-surface',
-            )}
-          >
-            {t(`chips.${code}` as 'chips.lead.duplicate_decision')}
-          </button>
+            label={t(`chips.${code}` as 'chips.lead.duplicate_decision')}
+          />
         ))}
       </div>
 
@@ -192,19 +182,34 @@ export default function AdminAuditPage(): JSX.Element {
       ) : visibleRows.length === 0 ? (
         <EmptyState
           icon={<ScrollText className="h-7 w-7" aria-hidden="true" />}
-          title={actionFilter ? t('emptyFilteredTitle') : t('emptyTitle')}
-          body={actionFilter ? t('emptyFilteredBody') : t('emptyBody')}
+          title={actionFilter || groupFilter ? t('emptyFilteredTitle') : t('emptyTitle')}
+          body={actionFilter || groupFilter ? t('emptyFilteredBody') : t('emptyBody')}
         />
       ) : (
         <ul className="divide-y divide-surface-border rounded-lg border border-surface-border bg-surface-card shadow-card">
           {visibleRows.map((r) => {
             const u = r.actorUserId ? userById.get(r.actorUserId) : null;
-            const meta = summarisePayload(r.payload);
+            const isGov = isGovernanceAction(r.action);
+            const meta = isGov
+              ? summariseAuditPayload(r.action, r.payload)
+              : legacySummariseAuditPayload(r.payload);
             return (
               <li key={`${r.source}-${r.id}`} className="flex flex-col gap-1 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <Badge tone={r.source === 'audit_event' ? 'info' : 'neutral'}>{r.action}</Badge>
+                    {/* D5.11: governance verbs render the human-readable
+                        label alongside the raw action code so an
+                        admin scanning the strip sees "Tenant backup
+                        export completed" instead of just
+                        `tenant.export.completed`. */}
+                    <Badge
+                      tone={isGov ? 'warning' : r.source === 'audit_event' ? 'info' : 'neutral'}
+                    >
+                      {isGov ? governanceActionLabel(t, r.action) : r.action}
+                    </Badge>
+                    {isGov ? (
+                      <code className="font-mono text-[11px] text-ink-tertiary">{r.action}</code>
+                    ) : null}
                     {r.entityType ? (
                       <span className="text-xs text-ink-tertiary">
                         {r.entityType}
@@ -233,4 +238,51 @@ export default function AdminAuditPage(): JSX.Element {
       )}
     </div>
   );
+}
+
+function ChipButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+        active
+          ? 'border-brand-600 bg-brand-50 text-brand-700'
+          : 'border-surface-border bg-surface-card text-ink-secondary hover:bg-surface',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Pre-D5.11 generic key-value summariser. Kept for non-governance
+ * verbs. Governance verbs go through `summariseAuditPayload` from
+ * `lib/audit-governance.ts` for safer, structured copy.
+ */
+function legacySummariseAuditPayload(payload: AuditRow['payload']): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const entries = Object.entries(payload);
+  if (entries.length === 0) return '';
+  return entries
+    .filter(([k]) => k !== 'event')
+    .slice(0, 4)
+    .map(([k, v]) => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'string') return `${k}: ${v.length > 60 ? `${v.slice(0, 60)}…` : v}`;
+      if (typeof v === 'number' || typeof v === 'boolean') return `${k}: ${String(v)}`;
+      return `${k}: …`;
+    })
+    .filter(Boolean)
+    .join(' · ');
 }

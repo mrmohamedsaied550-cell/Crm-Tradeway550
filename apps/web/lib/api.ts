@@ -1380,9 +1380,44 @@ export interface AuditRow {
   createdAt: string;
 }
 
+/**
+ * Phase D5 — D5.11: allow-listed audit-action group entry. Drives
+ * the chip strip on /admin/audit.
+ */
+export interface AuditActionGroupEntry {
+  /** SAFE allow-list code (snake_case). */
+  readonly code: string;
+  /** Canonical action prefixes the server ORs into the filter. */
+  readonly actionPrefixes: readonly string[];
+}
+
 export const auditApi = {
-  list: (query: { limit?: number; before?: string } = {}): Promise<AuditRow[]> =>
-    apiFetch<AuditRow[]>('/audit', { query }),
+  list: (
+    query: {
+      limit?: number;
+      before?: string;
+      action?: string;
+      /**
+       * Phase D5 — D5.11: allow-listed group code (rbac /
+       * tenant_export / etc.). The server validates against
+       * `AUDIT_ACTION_GROUPS`; unknown codes throw
+       * `audit.action_prefix.unknown`.
+       */
+      actionPrefix?: string;
+      /**
+       * Phase D5 — D5.11: narrow to one specific audit_event row
+       * (drops the lead_activities half of the stream).
+       */
+      entityId?: string;
+    } = {},
+  ): Promise<AuditRow[]> => apiFetch<AuditRow[]>('/audit', { query }),
+  /**
+   * Phase D5 — D5.11: list the allow-listed action groups so the
+   * chip strip renders against the same source of truth the server
+   * enforces.
+   */
+  listActionGroups: (): Promise<{ groups: readonly AuditActionGroupEntry[] }> =>
+    apiFetch<{ groups: readonly AuditActionGroupEntry[] }>('/audit/action-groups'),
 };
 
 // ───────────────────────────────────────────────────────────────────────
