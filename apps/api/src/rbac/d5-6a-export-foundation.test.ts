@@ -299,6 +299,11 @@ describe('rbac/D5.6A — csv-serializer', () => {
 
 describe('rbac/D5.6A — ExportRedactionService', () => {
   const redactor = new ExportRedactionService();
+  const TEST_GATE = {
+    primary: 'lead' as const,
+    format: 'csv' as const,
+    filename: 'test.csv',
+  };
 
   it('super_admin bypass — input returned with bypassed=true', () => {
     const input = structured({
@@ -308,6 +313,7 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
     const out = redactor.redactColumns(
       input,
       bundle({ code: 'super_admin', deniedRead: { lead: ['phone'] } }),
+      TEST_GATE,
     );
     assert.equal(out.bypassed, true);
     assert.deepEqual(out.columnsRedacted, []);
@@ -320,7 +326,7 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
       columns: [col('a', 'lead', 'phone')],
       rows: [{ a: '+1' }],
     });
-    const out = redactor.redactColumns(input, bundle({ deniedRead: {} }));
+    const out = redactor.redactColumns(input, bundle({ deniedRead: {} }), TEST_GATE);
     assert.equal(out.bypassed, false);
     assert.equal(out.redacted, input, 'reference equality: no clone needed');
   });
@@ -340,6 +346,7 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
     const out = redactor.redactColumns(
       input,
       bundle({ deniedRead: { lead: ['phone', 'attribution.campaign'] } }),
+      TEST_GATE,
     );
     assert.deepEqual(out.columnsExported, ['name']);
     assert.deepEqual(out.columnsRedacted.slice().sort(), ['campaign', 'phone']);
@@ -364,7 +371,11 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
       ],
       rows: [{ phone: '+1', partner_status: 'active', crm_active_date: '2026-04-01' }],
     };
-    const out = redactor.redactColumns(input, bundle({ deniedRead: { lead: ['phone'] } }));
+    const out = redactor.redactColumns(
+      input,
+      bundle({ deniedRead: { lead: ['phone'] } }),
+      TEST_GATE,
+    );
     assert.deepEqual(out.columnsRedacted, ['phone']);
     assert.deepEqual(out.columnsExported, ['partner_status', 'crm_active_date']);
     assert.equal('phone' in out.redacted.rows[0]!, false);
@@ -377,7 +388,11 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
       columns: [col('id', 'lead', 'id'), col('phone', 'lead', 'phone')],
       rows: [{ id: 'lead-1', phone: '+1' }],
     });
-    const out = redactor.redactColumns(input, bundle({ deniedRead: { lead: ['id', 'phone'] } }));
+    const out = redactor.redactColumns(
+      input,
+      bundle({ deniedRead: { lead: ['id', 'phone'] } }),
+      TEST_GATE,
+    );
     assert.deepEqual(out.columnsRedacted, ['phone']);
     assert.deepEqual(out.columnsExported, ['id']);
     assert.equal(out.redacted.rows[0]!['id'], 'lead-1');
@@ -390,7 +405,11 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
       columns: [col('name', 'lead', 'name', { redactable: false })],
       rows: [{ name: 'X' }],
     });
-    const out = redactor.redactColumns(input, bundle({ deniedRead: { lead: ['name'] } }));
+    const out = redactor.redactColumns(
+      input,
+      bundle({ deniedRead: { lead: ['name'] } }),
+      TEST_GATE,
+    );
     assert.equal(out.columnsRedacted.length, 0);
     assert.equal(out.redacted.columns[0]!.key, 'name');
   });
@@ -404,7 +423,11 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
         { a: '+3', b: 'Z' },
       ],
     });
-    const out = redactor.redactColumns(input, bundle({ deniedRead: { lead: ['phone', 'name'] } }));
+    const out = redactor.redactColumns(
+      input,
+      bundle({ deniedRead: { lead: ['phone', 'name'] } }),
+      TEST_GATE,
+    );
     assert.equal(out.redacted.columns.length, 0);
     assert.equal(out.redacted.rows.length, 3);
     for (const r of out.redacted.rows) {
@@ -418,7 +441,7 @@ describe('rbac/D5.6A — ExportRedactionService', () => {
       rows: [{ a: '+1', b: 'X' }],
     });
     const before = JSON.stringify(input);
-    redactor.redactColumns(input, bundle({ deniedRead: { lead: ['phone'] } }));
+    redactor.redactColumns(input, bundle({ deniedRead: { lead: ['phone'] } }), TEST_GATE);
     assert.equal(JSON.stringify(input), before, 'input mutated');
   });
 });

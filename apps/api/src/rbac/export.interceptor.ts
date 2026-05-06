@@ -145,7 +145,7 @@ export class ExportInterceptor implements NestInterceptor {
         userId: user.sub,
         roleId: user.rid,
       });
-      outcome = this.redactor.redactColumns(data, resolved);
+      outcome = this.redactor.redactColumns(data, resolved, gate);
     } else {
       // Flag off — no redaction, no audit. Bypass-shaped outcome
       // so the rest of the pipeline reads the same.

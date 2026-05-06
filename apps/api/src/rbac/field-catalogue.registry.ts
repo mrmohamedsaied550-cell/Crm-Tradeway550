@@ -1714,6 +1714,103 @@ const REPORT_ENTRIES: readonly FieldCatalogueEntry[] = [
     labelEn: 'Campaign breakdown',
     labelAr: 'تفصيل الحملات',
   }),
+  // D5.6C — fine-grained per-metric entries used by the section/key/value
+  // reports CSV. Each catalogued field maps to one or more
+  // `(section, key)` rows in the export. Denying one of these
+  // entries removes the matching metric line(s) from the CSV
+  // output without touching the rest. Activations + conversion
+  // rate are flagged sensitive (commercial) so a Finance vs
+  // non-Finance separation can target them.
+  entry({
+    resource: 'report',
+    field: 'summary.totalLeads',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · total leads',
+    labelAr: 'الملخص · إجمالي العملاء المحتملين',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.overdue',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · overdue',
+    labelAr: 'الملخص · متأخر',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.dueToday',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · due today',
+    labelAr: 'الملخص · مستحق اليوم',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.followupsPending',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · follow-ups pending',
+    labelAr: 'الملخص · متابعات قيد الانتظار',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.followupsDone',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · follow-ups completed',
+    labelAr: 'الملخص · متابعات منتهية',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.activations',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · activations (commercial)',
+    labelAr: 'الملخص · التفعيلات (تجاري)',
+  }),
+  entry({
+    resource: 'report',
+    field: 'summary.conversionRate',
+    group: 'report_metrics',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Summary · conversion rate (commercial)',
+    labelAr: 'الملخص · معدل التحويل (تجاري)',
+  }),
+  entry({
+    resource: 'report',
+    field: 'stageBuckets',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Per-stage funnel buckets',
+    labelAr: 'دلاء قمع المراحل',
+  }),
+  entry({
+    resource: 'report',
+    field: 'leadsCreatedTimeseries',
+    group: 'report_metrics',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Leads-created daily time-series',
+    labelAr: 'متسلسلة العملاء المحتملين اليومية',
+  }),
 ];
 
 // ─── audit ─────────────────────────────────────────────────────────

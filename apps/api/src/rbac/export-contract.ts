@@ -106,9 +106,34 @@ export interface StructuredExport {
    * or `null` (JSON). No nested objects supported in D5.6A — the
    * catalogue's dot-paths handle nested-resource deny rules at
    * the column declaration layer instead.
+   *
+   * D5.6C — for `format: 'csv-keyvalue'` exports, each row may
+   * carry a private `__field?: string` metadata pointing at the
+   * catalogue field (under `primary` resource) that the row
+   * represents. The redactor uses it to drop matching rows
+   * row-by-row (instead of column-by-column). The serialiser
+   * skips it because it is not a declared column.
    */
   readonly rows: readonly Record<string, unknown>[];
+  /**
+   * D5.6C — when `true`, the serialiser appends a final `\n` so
+   * the output ends with a newline. Default `false` preserves
+   * D5.6B partner-CSV byte convention. The reports CSV (E1) sets
+   * this to `true` to match its pre-D5.6 byte output.
+   */
+  readonly trailingNewline?: boolean;
 }
+
+/**
+ * D5.6C — private row-metadata key for csv-keyvalue exports.
+ * When `format === 'csv-keyvalue'`, each row may carry
+ * `[REDACTION_FIELD_KEY]: '<catalogue.field>'` to mark which
+ * catalogue field (under the export's `primary` resource) gates
+ * the row. The redactor drops the row when that field appears in
+ * the role's deny list; the serialiser ignores the key because
+ * it is never listed in `columns`.
+ */
+export const REDACTION_FIELD_KEY = '__field' as const;
 
 /**
  * Record-shape returned by the redactor. Carries the post-redaction

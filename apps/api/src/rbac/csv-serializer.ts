@@ -82,7 +82,10 @@ export function serializeCsv(structured: StructuredExport): string {
     lines.push(cells.join(','));
   }
 
-  return lines.join('\n');
+  // D5.6C — `trailingNewline` matches the pre-D5.6 reports CSV
+  // byte convention (`return lines.join('\n') + '\n'`). Default
+  // (false) preserves D5.6B partner-CSV byte convention.
+  return structured.trailingNewline === true ? lines.join('\n') + '\n' : lines.join('\n');
 }
 
 /**

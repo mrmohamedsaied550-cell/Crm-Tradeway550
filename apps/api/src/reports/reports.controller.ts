@@ -1,10 +1,10 @@
-import { Controller, Get, Header, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
-import type { Response } from 'express';
 
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import { CapabilityGuard } from '../rbac/capability.guard';
+import { ExportGate } from '../rbac/export-gate.decorator';
 import { RequireCapability } from '../rbac/require-capability.decorator';
 
 import { ReportsService } from './reports.service';
@@ -46,17 +46,37 @@ export class ReportsController {
     return this.reports.timeseries(query);
   }
 
+  /**
+   * Phase D5 — D5.6C: governed CSV export.
+   *
+   * Structured output is `csv-keyvalue` — each metric (summary
+   * total leads, conversion rate, per-stage bucket, leads-created
+   * timeseries day, ...) is a row whose private `__field`
+   * metadata anchors it to a specific catalogue field on the
+   * `report` resource. The ExportInterceptor walks the rows under
+   * the `report` deny list and drops anyone whose field is denied,
+   * stripping the metadata key from kept rows before serialisation.
+   *
+   * Capability separation: this endpoint requires
+   * `report.export` (D5.6A registered the cap; D5.6A backfilled
+   * it onto every role with `tenant.export`). The JSON read
+   * endpoints `summary` and `timeseries` continue to use
+   * `report.read` so a role can be granted "see dashboard
+   * without download".
+   */
   @Get('export.csv')
-  @RequireCapability('report.read')
-  @Header('Content-Type', 'text/csv; charset=utf-8')
-  @Header('Cache-Control', 'no-store')
-  @ApiOperation({
-    summary: 'CSV export of summary KPIs + per-stage funnel + leads_created series',
+  @RequireCapability('report.export')
+  @ExportGate({
+    primary: 'report',
+    inherits: ['lead', 'captain', 'followup'],
+    format: 'csv-keyvalue',
+    filename: () => `crm-report-${new Date().toISOString().slice(0, 10)}.csv`,
   })
-  async exportCsv(@Query() query: ReportFiltersDto, @Res() res: Response): Promise<void> {
-    const csv = await this.reports.exportCsv(query);
-    const filename = `crm-report-${new Date().toISOString().slice(0, 10)}.csv`;
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(csv);
+  @ApiOperation({
+    summary:
+      'CSV export of summary KPIs + per-stage funnel + leads_created series (governed, key-level)',
+  })
+  exportCsv(@Query() query: ReportFiltersDto) {
+    return this.reports.buildStructuredExport(query);
   }
 }
