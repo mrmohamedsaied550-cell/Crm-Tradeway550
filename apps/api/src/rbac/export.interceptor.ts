@@ -6,9 +6,11 @@ import { switchMap } from 'rxjs/operators';
 
 import type { AccessTokenClaims } from '../identity/jwt.types';
 
+import { tenantBackupToWireEnvelope } from '../backup/backup.service';
+
 import { isD5DynamicPermissionsV1Enabled } from './d5-feature-flag';
 import { serializeCsv } from './csv-serializer';
-import type { ExportFormat, StructuredExport } from './export-contract';
+import type { ExportFormat, StructuredExport, StructuredTenantBackup } from './export-contract';
 import { ExportAuditService } from './export-audit.service';
 import { EXPORT_GATE_KEY, type ExportGateOptions } from './export-gate.decorator';
 import { ExportRedactionService } from './export-redaction.service';
@@ -121,6 +123,13 @@ export class ExportInterceptor implements NestInterceptor {
     res: Response,
     data: unknown,
   ): Promise<unknown> {
+    // D5.6D-1 — branch on the structured shape. Tenant backups
+    // travel through their own redactor + serialiser path because
+    // they ship a COLLECTION of tables in one response.
+    if (isStructuredTenantBackup(data)) {
+      return this.applyTenantBackupGovernance(gate, user, req, res, data);
+    }
+
     if (!isStructuredExport(data)) {
       // Legacy controller still using `@Res() res.send(...)` —
       // pass through. Later chunks will retire the legacy paths.
@@ -207,6 +216,132 @@ export class ExportInterceptor implements NestInterceptor {
 
     return body;
   }
+
+  /**
+   * D5.6D-1 — tenant backup governance pipeline.
+   *
+   * Walks the per-table redaction outcome (no-op in D5.6D-1, real
+   * in D5.6D-2), serialises to the legacy wire envelope so
+   * `scripts/restore.sh` keeps working byte-for-byte, sets download
+   * headers + the per-table audit row.
+   *
+   * Flag-off path: no redaction, no audit. Same envelope serialised
+   * so the wire shape stays consistent and the response stays
+   * restore-compatible. Bytes are byte-identical to the pre-D5.6D-1
+   * `TenantBackup` JSON.
+   */
+  private async applyTenantBackupGovernance(
+    gate: ExportGateOptions,
+    user: AccessTokenClaims,
+    req: Request,
+    res: Response,
+    data: StructuredTenantBackup,
+  ): Promise<unknown> {
+    const flagOn = isD5DynamicPermissionsV1Enabled();
+
+    let outcome;
+    if (flagOn) {
+      const resolved = await this.resolver.resolveForUser({
+        tenantId: user.tid,
+        userId: user.sub,
+        roleId: user.rid,
+      });
+      outcome = this.redactor.redactTenantBackup(data, resolved, gate);
+    } else {
+      // Flag off — no redaction, no audit. Build a
+      // bypass-shaped outcome so the serialiser + headers run.
+      const tableNames: string[] = [];
+      const rowCountByTable: Record<string, number> = {};
+      const columnsExportedByTable: Record<string, readonly string[]> = {};
+      const columnsRedactedByTable: Record<string, readonly string[]> = {};
+      let totalRows = 0;
+      for (const t of data.tables) {
+        tableNames.push(t.tableName);
+        rowCountByTable[t.tableName] = t.export.rows.length;
+        columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
+        columnsRedactedByTable[t.tableName] = [];
+        totalRows += t.export.rows.length;
+      }
+      outcome = {
+        redacted: data,
+        tableNames,
+        rowCountByTable,
+        columnsExportedByTable,
+        columnsRedactedByTable,
+        totalRows,
+        bypassed: true,
+      };
+    }
+
+    const filename =
+      typeof gate.filename === 'function'
+        ? gate.filename({ format: outcome.redacted.format })
+        : gate.filename;
+
+    // Collapse the structured shape into the legacy
+    // `TenantBackup` JSON envelope. This is the same byte
+    // sequence pre-D5.6D-1 callers received, so
+    // `scripts/restore.sh` round-trips unchanged.
+    const wire = tenantBackupToWireEnvelope(outcome.redacted);
+    const body = JSON.stringify(wire);
+    const bytesShipped = Buffer.byteLength(body, 'utf8');
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader(
+      'X-Export-Redacted-Columns',
+      Object.values(outcome.columnsRedactedByTable).every((c) => c.length === 0)
+        ? '(none)'
+        : Object.entries(outcome.columnsRedactedByTable)
+            .filter(([, c]) => c.length > 0)
+            .map(([t, c]) => `${t}:${(c as readonly string[]).join('|')}`)
+            .join(','),
+    );
+
+    if (flagOn) {
+      try {
+        // Flat columns lists (kept for parity with single-table
+        // exports) are union sets across all tables, prefixed with
+        // the table name so they remain unique.
+        const flatColumnsExported: string[] = [];
+        const flatColumnsRedacted: string[] = [];
+        for (const t of outcome.tableNames) {
+          for (const c of outcome.columnsExportedByTable[t] ?? []) {
+            flatColumnsExported.push(`${t}.${c}`);
+          }
+          for (const c of outcome.columnsRedactedByTable[t] ?? []) {
+            flatColumnsRedacted.push(`${t}.${c}`);
+          }
+        }
+
+        const result = await this.auditService.recordExport({
+          resource: gate.primary,
+          actorUserId: user.sub,
+          endpoint: `${req.method} ${stripQueryString(req.originalUrl ?? req.url)}`,
+          filters: extractFilters(req),
+          columnsExported: flatColumnsExported,
+          columnsRedacted: flatColumnsRedacted,
+          rowCount: outcome.totalRows,
+          bytesShipped,
+          flagState: 'on',
+          tableNames: outcome.tableNames,
+          rowCountByTable: outcome.rowCountByTable,
+          columnsExportedByTable: outcome.columnsExportedByTable,
+          columnsRedactedByTable: outcome.columnsRedactedByTable,
+        });
+        res.setHeader('X-Export-Audit-Id', result.entityId);
+      } catch (err) {
+        this.logger.warn(
+          `ExportInterceptor: audit write failed for ${gate.primary} export; continuing — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return body;
+  }
 }
 
 // ─── helpers ───────────────────────────────────────────────────────
@@ -219,6 +354,21 @@ function isStructuredExport(value: unknown): value is StructuredExport {
     typeof v.filename === 'string' &&
     Array.isArray(v.columns) &&
     Array.isArray(v.rows)
+  );
+}
+
+function isStructuredTenantBackup(value: unknown): value is StructuredTenantBackup {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Partial<StructuredTenantBackup>;
+  return (
+    v.format === 'json-tenant-backup' &&
+    typeof v.filename === 'string' &&
+    typeof v.exportedAt === 'string' &&
+    typeof v.schemaVersion === 'number' &&
+    typeof v.rowCap === 'number' &&
+    Array.isArray(v.tables) &&
+    typeof v.tenant === 'object' &&
+    v.tenant !== null
   );
 }
 
@@ -252,6 +402,7 @@ function mimeFor(format: ExportFormat): string {
     case 'csv-keyvalue':
       return 'text/csv; charset=utf-8';
     case 'json':
+    case 'json-tenant-backup':
       return 'application/json; charset=utf-8';
   }
 }

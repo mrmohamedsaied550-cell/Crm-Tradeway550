@@ -68,6 +68,25 @@ export interface ExportAuditInput {
    * shadow-mode exports from real-redaction exports.
    */
   readonly flagState: 'on' | 'off';
+
+  // ─── D5.6D-1 — per-table fields for tenant backup exports ───
+  //
+  // Optional. Set ONLY by the tenant-backup export path; absent
+  // for single-table exports (lead / partner / report). The audit
+  // payload includes them when present so an admin reviewing a
+  // tenant.export.completed row can see "users had 12 rows / 3
+  // columns redacted; leads had 2k rows / 0 columns redacted"
+  // without re-running the export. All values are STRUCTURAL
+  // (table names, row counts, column keys) — never raw row data.
+
+  /** Backup table names in the order they were emitted. */
+  readonly tableNames?: readonly string[];
+  /** Row count per table. Sum equals `rowCount`. */
+  readonly rowCountByTable?: Readonly<Record<string, number>>;
+  /** Column keys per table that survived redaction. */
+  readonly columnsExportedByTable?: Readonly<Record<string, readonly string[]>>;
+  /** Column keys per table dropped by the redactor. Empty maps in D5.6D-1. */
+  readonly columnsRedactedByTable?: Readonly<Record<string, readonly string[]>>;
 }
 
 @Injectable()
@@ -81,7 +100,7 @@ export class ExportAuditService {
    */
   async recordExport(input: ExportAuditInput): Promise<{ entityId: string }> {
     const entityId = randomUUID();
-    const payload: Prisma.InputJsonValue = {
+    const payload: Record<string, Prisma.InputJsonValue> = {
       endpoint: input.endpoint,
       filters: input.filters as Prisma.InputJsonValue,
       columnsExported: [...input.columnsExported],
@@ -91,12 +110,32 @@ export class ExportAuditService {
       flagState: input.flagState,
     };
 
+    // D5.6D-1 — backfill per-table audit metadata for tenant
+    // backups. Single-table exports leave these undefined so the
+    // payload stays compact for the common case.
+    if (input.tableNames !== undefined) {
+      payload['tableNames'] = [...input.tableNames];
+    }
+    if (input.rowCountByTable !== undefined) {
+      payload['rowCountByTable'] = { ...input.rowCountByTable };
+    }
+    if (input.columnsExportedByTable !== undefined) {
+      payload['columnsExportedByTable'] = Object.fromEntries(
+        Object.entries(input.columnsExportedByTable).map(([k, v]) => [k, [...v]]),
+      );
+    }
+    if (input.columnsRedactedByTable !== undefined) {
+      payload['columnsRedactedByTable'] = Object.fromEntries(
+        Object.entries(input.columnsRedactedByTable).map(([k, v]) => [k, [...v]]),
+      );
+    }
+
     await this.audit.writeEvent({
       action: `${input.resource}.export.completed`,
       entityType: 'export',
       entityId,
       actorUserId: input.actorUserId,
-      payload,
+      payload: payload as Prisma.InputJsonValue,
     });
 
     return { entityId };

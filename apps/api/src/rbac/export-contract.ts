@@ -41,9 +41,13 @@ import type { CatalogueResource } from './field-catalogue.registry';
  * Logical export format. CSV is the only client-facing format
  * shipped today; `csv-keyvalue` is reserved for the reports
  * surface (E1) which uses `section,key,value` triples; `json` is
- * reserved for the tenant backup surface (E5).
+ * a generic redacted-JSON variant; `json-tenant-backup` (D5.6D-1)
+ * is the disaster-recovery snapshot of the entire tenant whose
+ * wire format has additional structural guarantees (one section
+ * per table, top-level metadata + counts envelope) and is
+ * round-trip-restorable by `scripts/restore.sh`.
  */
-export type ExportFormat = 'csv' | 'csv-keyvalue' | 'json';
+export type ExportFormat = 'csv' | 'csv-keyvalue' | 'json' | 'json-tenant-backup';
 
 /**
  * One column in a structured export. The `resource` + `field`
@@ -148,5 +152,87 @@ export interface ExportRedactionOutcome {
   /** Column keys dropped by the redactor. Empty when bypass / no deny rules. */
   readonly columnsRedacted: readonly string[];
   /** True when the bypass path ran (super-admin, flag off, etc.). */
+  readonly bypassed: boolean;
+}
+
+// ─── D5.6D-1 — StructuredTenantBackup (json-tenant-backup format) ───
+//
+// The tenant backup is unique among governed exports: it ships a
+// COLLECTION of tables in a single response, each table being a
+// `StructuredExport`-shaped column+row pair. The wire-format the
+// API returns must remain byte-restore-compatible with the
+// pre-D5.6D `TenantBackup` JSON envelope (so `scripts/restore.sh`
+// continues to round-trip an export → restore cycle without
+// alteration).
+//
+// The structured representation is internal — it lets the redactor
+// + audit service operate on a per-table basis (drop columns from
+// `users` independently of `leads`, count rows per table, etc.) —
+// and is collapsed back into the legacy `{exportedAt, tenant,
+// schemaVersion, rowCap, counts, data}` shape by the export
+// interceptor's serialiser. D5.6D-1 introduces the contract; D5.6D-2
+// adds redaction + restore-rejection semantics for redacted backups.
+
+/**
+ * One table inside a `StructuredTenantBackup`. The `tableName`
+ * matches the legacy wire-format key (`users`, `pipelines`, …) and
+ * is preserved verbatim by the serialiser. The `export` carries
+ * the column declarations + rows for that table.
+ */
+export interface StructuredTenantBackupTable {
+  /** Wire-format key — e.g. `users`, `pipelines`, `leads`. */
+  readonly tableName: string;
+  /** Column-aware export for this table. `format` is always `'json'`. */
+  readonly export: StructuredExport;
+}
+
+/**
+ * The full structured tenant backup. Shape mirrors the legacy
+ * `TenantBackup` interface 1:1 except `data` is replaced by an
+ * ordered list of column-aware sub-exports. The interceptor's
+ * `json-tenant-backup` serialiser collapses `tables` back into the
+ * legacy `data: Record<string, unknown[]>` shape so the wire
+ * payload stays restore-compatible.
+ */
+export interface StructuredTenantBackup {
+  readonly format: 'json-tenant-backup';
+  /** Suggested download filename. Used for `Content-Disposition`. */
+  readonly filename: string;
+  /** Top-level export timestamp (ISO 8601). */
+  readonly exportedAt: string;
+  /** Tenant identity envelope. */
+  readonly tenant: { readonly id: string; readonly code: string; readonly name: string };
+  /** Bumped when the backup wire format changes. */
+  readonly schemaVersion: number;
+  /** Hard cap on rows per table — see BackupService.ROW_CAP. */
+  readonly rowCap: number;
+  /** Ordered list of per-table sub-exports. */
+  readonly tables: readonly StructuredTenantBackupTable[];
+}
+
+/**
+ * Record-shape returned by the redactor for a tenant backup. Mirrors
+ * `ExportRedactionOutcome` but carries per-table counters because the
+ * audit row records column-redaction metadata per table.
+ *
+ * D5.6D-1 returns a NO-OP outcome (no rows or columns dropped, even
+ * when deny rules exist) because redaction semantics + restore
+ * rejection for redacted backups land in D5.6D-2. This commit ships
+ * the structured shape + audit envelope so the foundation is in
+ * place for D5.6D-2 to fill in.
+ */
+export interface TenantBackupRedactionOutcome {
+  readonly redacted: StructuredTenantBackup;
+  /** Tables present after redaction (same as input in D5.6D-1). */
+  readonly tableNames: readonly string[];
+  /** Row count per table after redaction. */
+  readonly rowCountByTable: Readonly<Record<string, number>>;
+  /** Column keys per table that survived redaction. */
+  readonly columnsExportedByTable: Readonly<Record<string, readonly string[]>>;
+  /** Column keys per table dropped by the redactor. Empty in D5.6D-1. */
+  readonly columnsRedactedByTable: Readonly<Record<string, readonly string[]>>;
+  /** Sum of rows across all tables. */
+  readonly totalRows: number;
+  /** True when bypass ran (super-admin, flag off, OR D5.6D-1 always). */
   readonly bypassed: boolean;
 }

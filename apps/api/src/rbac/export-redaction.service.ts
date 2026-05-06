@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
-import type { ExportColumn, ExportRedactionOutcome, StructuredExport } from './export-contract';
+import type {
+  ExportColumn,
+  ExportRedactionOutcome,
+  StructuredExport,
+  StructuredTenantBackup,
+  TenantBackupRedactionOutcome,
+} from './export-contract';
 import { REDACTION_FIELD_KEY } from './export-contract';
 import { isRedactable, type CatalogueResource } from './field-catalogue.registry';
 import type { ResolvedPermissions } from './permission-resolver.service';
@@ -218,6 +224,79 @@ export class ExportRedactionService {
       rows: keptRows,
     };
     return outcome(redacted, keptRows.map(rowIdentifier), Array.from(droppedFields), false);
+  }
+
+  /**
+   * D5.6D-1 — tenant backup passthrough.
+   *
+   * The tenant backup ships seventeen tables in a single response.
+   * D5.6D-1 introduces the structured contract + audit envelope but
+   * does NOT yet apply redaction semantics — every input row /
+   * column survives, regardless of role deny rules. The method
+   * returns a `bypassed: true` outcome whose per-table counters
+   * mirror the input verbatim so the audit row carries the right
+   * structural footprint.
+   *
+   * Why no-op in D5.6D-1:
+   *
+   *   • The existing `restore.sh` script consumes the legacy
+   *     wire-format byte-for-byte. Stripping columns from a
+   *     backup would silently produce a file that looks like a
+   *     full backup but cannot be restored — a disaster-recovery
+   *     anti-pattern. D5.6D-2 introduces the
+   *     `E_BACKUP_REDACTED_NOT_RESTORABLE` guard before turning
+   *     redaction on.
+   *
+   *   • Per-table redaction tests (deny-list permutations across
+   *     17 tables) need their own commit so a regression in one
+   *     table doesn't mask a regression in another.
+   *
+   *   • The role bundle's deny lists were built for the read-path
+   *     UI surface (lead detail page, captain detail page). The
+   *     backup shipping under those same deny lists changes the
+   *     contract — admins need to opt into "deny applies to
+   *     backup" via D5.6D-2's policy switch, not silently inherit
+   *     the read-path deny rules.
+   *
+   * Manual stripping of credentials (passwordHash, accessToken,
+   * appSecret, verifyToken) happens at the BackupService boundary
+   * via Prisma `select` and is unaffected by this method — those
+   * fields never reach the redactor in the first place.
+   *
+   * D5.6D-2 will replace the body of this method with a per-table
+   * walk that calls `redactColumnLevel` on each sub-export, plus a
+   * `restoreCriticalIdsSurvived` invariant check that fails the
+   * outcome closed if any FK column was dropped.
+   */
+  redactTenantBackup(
+    structured: StructuredTenantBackup,
+    _resolved: ResolvedPermissions,
+    _gate: ExportGateOptions,
+  ): TenantBackupRedactionOutcome {
+    const tableNames: string[] = [];
+    const rowCountByTable: Record<string, number> = {};
+    const columnsExportedByTable: Record<string, readonly string[]> = {};
+    const columnsRedactedByTable: Record<string, readonly string[]> = {};
+    let totalRows = 0;
+
+    for (const t of structured.tables) {
+      tableNames.push(t.tableName);
+      const rowCount = t.export.rows.length;
+      rowCountByTable[t.tableName] = rowCount;
+      columnsExportedByTable[t.tableName] = t.export.columns.map((c) => c.key);
+      columnsRedactedByTable[t.tableName] = [];
+      totalRows += rowCount;
+    }
+
+    return {
+      redacted: structured,
+      tableNames,
+      rowCountByTable,
+      columnsExportedByTable,
+      columnsRedactedByTable,
+      totalRows,
+      bypassed: true,
+    };
   }
 }
 
