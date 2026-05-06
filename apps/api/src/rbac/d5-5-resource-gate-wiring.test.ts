@@ -148,13 +148,11 @@ describe('rbac/D5.5 — @ResourceFieldGate wiring on activity / review / rotatio
     assert.equal(gateOn(proto['list']), 'audit');
   });
 
-  it('hardcoded previous-owner gate on rotation.service is NOT removed by D5.5', async () => {
-    // D5.5 only adds @ResourceFieldGate metadata. The hardcoded
-    // userCanSeeOwnershipHistory check inside RotationService.
-    // listRotationsForLead must remain in place until D5.7 retires
-    // it via field permissions. Smoke-import the service to verify
-    // it still exports the same shape; if a future commit deleted
-    // the helper this test surfaces it.
+  it('rotation.service still exports RotationService after D5.7 retired the hardcoded gate', async () => {
+    // D5.7 replaced `userCanSeeOwnershipHistory` (hardcoded
+    // `lead.write` capability check) with the field-permission
+    // gate via OwnershipVisibilityService. Smoke-import the service
+    // to verify the public surface still compiles.
     const mod = await import('../crm/rotation.service');
     assert.equal(typeof mod.RotationService, 'function');
   });
@@ -282,12 +280,14 @@ describe('rbac/D5.5 — interceptor behaviour across timeline / review / rotatio
 
   // ── rotation: envelope shape strips fromUser/toUser when role denies ─
   it('rotation envelope: fromUser + toUser stripped per row, canSeeOwners flag preserved', async () => {
-    // Note: the existing rotation.service.listRotationsForLead still
-    // gates fromUser/toUser/actor/notes via userCanSeeOwnershipHistory
-    // (lead.write capability). D5.5 layers field-permission stripping
-    // ON TOP of that hardcoded gate; D5.7 will retire the gate. The
-    // interceptor therefore strips fields the service may have already
-    // nullified — idempotent.
+    // D5.7 retired `userCanSeeOwnershipHistory` and routed the
+    // service-layer per-field nullification through
+    // `OwnershipVisibilityService` (also field-permission backed).
+    // The FieldRedactionInterceptor's stripping path still applies
+    // here because a non-RBAC test fixture instantiates the
+    // interceptor directly against a synthetic payload; the
+    // service-layer path is exercised in d5-7-ownership-visibility
+    // tests + the DB-backed rotation.test.ts cases.
     const resolver = makeResolver(
       bundle({ deniedRead: { rotation: ['fromUser', 'toUser', 'notes'] } }),
     );

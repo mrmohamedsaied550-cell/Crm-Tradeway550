@@ -439,8 +439,12 @@ const LEAD_ENTRIES: readonly FieldCatalogueEntry[] = [
     labelAr: 'موعد الإجراء التالي',
   }),
 
-  // Ownership history (D2 / D3 adjacent — replaces the hardcoded
-  // `userCanSeeOwnershipHistory` gate planned for D5.7).
+  // Ownership history (D2 / D3 adjacent). D5.7 retired the
+  // hardcoded `userCanSeeOwnershipHistory` (lead.write) gate; these
+  // entries are now the canonical visibility surface for the lead-
+  // attempts + lead-detail owner-history surfaces, consulted by
+  // `OwnershipVisibilityService.canReadPreviousOwner` /
+  // `canReadOwnerHistory`.
   entry({
     resource: 'lead',
     field: 'previousOwner',

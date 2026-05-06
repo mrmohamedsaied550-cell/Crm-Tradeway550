@@ -144,6 +144,33 @@ async function seedRolesAndMappings(
           skipDuplicates: true,
         });
       }
+
+      // Phase D5 — D5.7: ownership-history field-permission defaults.
+      // Sales / Activation / Driving agents get explicit deny rows on
+      // every rotation owner-history field AND on lead.previousOwner /
+      // lead.ownerHistory. This replaces the pre-D5.7 hardcoded
+      // `lead.write` gate that previously blocked these surfaces; the
+      // new gate consults `field_permissions` directly so admins can
+      // override per-role without granting edit permissions.
+      // Migration 0040 installs the same rows for existing tenants;
+      // this seed entry covers fresh-tenant creation + re-runs.
+      if (
+        def.code === 'sales_agent' ||
+        def.code === 'activation_agent' ||
+        def.code === 'driving_agent'
+      ) {
+        await tx.fieldPermission.createMany({
+          data: D5_7_OWNERSHIP_HISTORY_DENIES.map(([resource, field]) => ({
+            tenantId,
+            roleId: role.id,
+            resource,
+            field,
+            canRead: false,
+            canWrite: false,
+          })),
+          skipDuplicates: true,
+        });
+      }
     }
   });
   // eslint-disable-next-line no-console
@@ -168,6 +195,26 @@ const SALES_AGENT_FIELD_DENIES: ReadonlyArray<readonly [resource: string, field:
   ['lead', 'id'],
   ['lead', 'attribution.campaign'],
   ['lead', 'source'],
+];
+
+/**
+ * Phase D5 — D5.7: default deny rows for the agent cohort
+ * (`sales_agent` / `activation_agent` / `driving_agent`) on every
+ * rotation owner-history field + the lead-side previous-owner
+ * surfaces. Mirrors the pre-D5.7 hardcoded gate so the migration +
+ * seed preserve the existing UX without requiring per-tenant admin
+ * configuration. TL+ / Ops / Account Manager / Super Admin keep
+ * full visibility because no deny row is written for them.
+ */
+const D5_7_OWNERSHIP_HISTORY_DENIES: ReadonlyArray<readonly [resource: string, field: string]> = [
+  ['rotation', 'fromUser'],
+  ['rotation', 'toUser'],
+  ['rotation', 'actor'],
+  ['rotation', 'notes'],
+  ['rotation', 'handoverSummary'],
+  ['rotation', 'internalPayload'],
+  ['lead', 'previousOwner'],
+  ['lead', 'ownerHistory'],
 ];
 
 // ───────────────────────────────────────────────────────────────────────

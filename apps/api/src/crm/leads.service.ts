@@ -15,6 +15,7 @@ import { DuplicateDecisionService } from '../duplicates/duplicate-decision.servi
 import { isLeadAttemptsV2Enabled } from '../duplicates/feature-flag';
 import { isD3EngineV1Enabled } from './d3-feature-flag';
 import { FieldFilterService } from '../rbac/field-filter.service';
+import { OwnershipVisibilityService } from '../rbac/ownership-visibility.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 import { TenantSettingsService } from '../tenants/tenant-settings.service';
@@ -134,6 +135,16 @@ export class LeadsService {
      * @Global DuplicatesModule) always provides it.
      */
     @Optional() private readonly duplicateDecision?: DuplicateDecisionService,
+    /**
+     * Phase D5 — D5.7: previous-owner / owner-history visibility
+     * resolver. Consults the `field_permissions` table for
+     * `lead.previousOwner` / `lead.ownerHistory` deny rows.
+     * Replaces the pre-D5.7 hardcoded `lead.write` capability
+     * check that piggy-backed on edit permissions. @Optional so
+     * legacy fixtures keep compiling; production wiring (CrmModule
+     * via the @Global RbacModule) always provides it.
+     */
+    @Optional() private readonly ownershipVisibility?: OwnershipVisibilityService,
   ) {}
 
   /**
@@ -823,40 +834,24 @@ export class LeadsService {
     });
   }
 
-  /** Phase D2 — D2.6: previous-owner privilege check.
-   *  Returns true when the role carries `lead.write` — granted to
-   *  TL / Account Manager / Ops / Super Admin (`TEAM_LEAD_EXTRAS`),
-   *  NOT to sales / activation / driving agents. Pure DB read,
-   *  RLS-pinned to the current tenant. Falls back to `false`
-   *  (conservative) when the role lookup fails so a transient error
-   *  never leaks an owner.
+  /** Phase D2 — D2.6 / Phase D5 — D5.7: previous-owner visibility check.
    *
-   *  Why not `lead.assign`? `AGENT_ACTIONS` grants `lead.assign` to
-   *  every agent role (sales / activation / driving), so using it
-   *  here would silently expose previous owners to sales agents —
-   *  the exact violation D2.6's product rule prohibits. `lead.write`
-   *  matches the exact "TL+" cohort the spec names.
+   *  Driven by the `field_permissions` table on `lead.previousOwner`,
+   *  resolved via `OwnershipVisibilityService`. Replaces the pre-D5.7
+   *  hardcoded `lead.write` gate so an admin can grant "see previous
+   *  owners" to a role without granting edit permissions, or revoke
+   *  the visibility from a TL who holds `lead.write`. Default deny
+   *  rows for `sales_agent` / `activation_agent` / `driving_agent`
+   *  are installed by migration 0040 + the seed so the pre-D5.7 UX
+   *  is preserved (sales agents see neutral handover history).
    *
-   *  TODO (forward): introduce a dedicated capability — e.g.
-   *  `lead.previous_owner.read` — or a field-level permission on
-   *  `lead.previousAttemptOwner` so the previous-owner cohort can
-   *  be configured per-tenant without piggy-backing on `lead.write`.
-   *  Tracked in the Final UX / User Stories Audit deferred list. */
+   *  Falls back to `true` only when the optional dependency is
+   *  absent (legacy test fixtures). Production wiring always
+   *  provides the service via the @Global RbacModule, so this
+   *  fallback never runs in a deployed instance. */
   private async userCanSeePreviousOwner(userClaims: ScopeUserClaims): Promise<boolean> {
-    try {
-      const role = await this.prisma.withTenant(userClaims.tenantId, (tx) =>
-        tx.role.findUnique({
-          where: { id: userClaims.roleId },
-          include: {
-            capabilities: { include: { capability: { select: { code: true } } } },
-          },
-        }),
-      );
-      const codes = role?.capabilities.map((rc) => rc.capability.code) ?? [];
-      return codes.includes('lead.write');
-    } catch {
-      return false;
-    }
+    if (!this.ownershipVisibility) return true;
+    return this.ownershipVisibility.canReadPreviousOwner(userClaims);
   }
 
   /** Phase D2 — D2.6: strip `assignedTo` / `assignedToId` from every
