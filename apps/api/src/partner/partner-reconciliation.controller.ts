@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { isD4PartnerHubV1Enabled } from './d4-feature-flag';
@@ -70,6 +71,7 @@ export class PartnerReconciliationController {
 
   @Get()
   @RequireCapability('partner.reconciliation.read')
+  @ResourceFieldGate('partner.reconciliation')
   @ApiOperation({ summary: 'List partner reconciliation discrepancies' })
   list(
     @Query('partnerSourceId') partnerSourceId: string | undefined,

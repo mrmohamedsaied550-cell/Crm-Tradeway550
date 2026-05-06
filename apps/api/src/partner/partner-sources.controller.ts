@@ -21,6 +21,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 
 import { isD4PartnerHubV1Enabled } from './d4-feature-flag';
 import {
@@ -82,6 +83,7 @@ export class PartnerSourcesController {
 
   @Get()
   @RequireCapability('partner.source.read')
+  @ResourceFieldGate('partner_source')
   @ApiOperation({ summary: 'List partner sources for the active tenant' })
   list(@Query() query: ListPartnerSourcesDto) {
     this.assertEnabled();
@@ -90,6 +92,7 @@ export class PartnerSourcesController {
 
   @Get(':id')
   @RequireCapability('partner.source.read')
+  @ResourceFieldGate('partner_source')
   @ApiOperation({ summary: 'Get a partner source by id' })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     this.assertEnabled();

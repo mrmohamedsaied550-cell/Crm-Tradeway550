@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { ResourceFieldGate } from '../rbac/resource-field-gate.decorator';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
 
 import { isD4PartnerHubV1Enabled } from './d4-feature-flag';
@@ -85,6 +86,7 @@ export class PartnerVerificationController {
 
   @Get('leads/:leadId')
   @RequireCapability('partner.verification.read')
+  @ResourceFieldGate('partner.verification')
   @ApiOperation({ summary: 'Partner verification projection for a lead' })
   forLead(
     @Param('leadId', new ParseUUIDPipe()) leadId: string,
@@ -109,6 +111,7 @@ export class PartnerVerificationController {
    */
   @Get('leads/:leadId/evidence')
   @RequireCapability('partner.verification.read')
+  @ResourceFieldGate('partner.evidence')
   @ApiOperation({ summary: 'List partner-related evidence rows attached to a lead' })
   evidence(
     @Param('leadId', new ParseUUIDPipe()) leadId: string,
