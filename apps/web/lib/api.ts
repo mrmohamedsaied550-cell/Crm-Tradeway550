@@ -86,6 +86,7 @@ import type {
   CreatePartnerMappingInput,
   UpdatePartnerMappingInput,
   PartnerMappingReadiness,
+  RoleChangePreviewResult,
   RoleDependencyAnalysis,
   RolePreviewResult,
   RoleScopeRow,
@@ -557,6 +558,25 @@ export const rolesApi = {
     apiFetch<RoleDependencyAnalysis>(`/rbac/roles/${id}/dependency-check`, {
       method: 'POST',
       body: { capabilities },
+    }),
+  /**
+   * Phase D5 — D5.15-A: structural change-set preview. Returns a
+   * read-only diff plus the D5.14 dependency analysis. Drives
+   * the "Review changes" modal in the role editor's capabilities
+   * tab. Any subset of `{ capabilities, scopes, fieldPermissions }`
+   * is accepted; omitted axes are treated as unchanged.
+   */
+  changePreview: (
+    id: string,
+    input: {
+      capabilities?: readonly string[];
+      scopes?: readonly RoleScopeRow[];
+      fieldPermissions?: readonly RoleFieldPermissionRow[];
+    },
+  ): Promise<RoleChangePreviewResult> =>
+    apiFetch<RoleChangePreviewResult>(`/rbac/roles/${id}/change-preview`, {
+      method: 'POST',
+      body: input,
     }),
 };
 

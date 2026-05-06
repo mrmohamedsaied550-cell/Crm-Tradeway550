@@ -1457,6 +1457,7 @@
         "whatsapp.handover.completed": "WhatsApp handover completed",
         "rbac.role.dependency_check": "Role dependency check",
         "rbac.role.dependency_warning_confirmed": "Role dependency warning confirmed",
+        "rbac.role.change_previewed": "Role change preview",
         "field_write_denied": "Field write denied"
       },
       "recentPreviews": {
@@ -1888,6 +1889,45 @@
         "canRead": "Read",
         "canWrite": "Write",
         "sensitive": "Sensitive"
+      },
+      "review": {
+        "title": "Review changes — {role}",
+        "noChanges": "No changes to save. Toggle a capability or update a scope to make changes.",
+        "actions": {
+          "cancel": "Cancel",
+          "close": "Close",
+          "confirmAndSave": "Confirm and save"
+        },
+        "typedConfirmation": {
+          "fieldLabel": "Type to confirm: {phrase}",
+          "fieldHint": "Case-sensitive. The save button stays disabled until the phrase matches."
+        },
+        "risks": {
+          "groupLabel": "Risk highlights",
+          "exportAdded": "Export capability added — this role gains data export.",
+          "exportRevoked": "Export capability revoked — this role loses data export.",
+          "backupExport": "Backup / tenant export changed.",
+          "auditVisibility": "Audit visibility changed.",
+          "ownerHistory": "Owner-history visibility changed (previous owner / rotation actor).",
+          "permissionAdmin": "Permission administration changed (roles or preview).",
+          "partnerMerge": "Partner merge capability changed."
+        },
+        "capabilities": {
+          "header": "Capabilities",
+          "summaryLine": "{granted} added · {revoked} removed · {unchanged} unchanged",
+          "granted": "Granted ({n})",
+          "revoked": "Revoked ({n})"
+        },
+        "fields": {
+          "header": "Field permissions",
+          "readDeniedAdded": "Read access denied ({n})",
+          "readDeniedRemoved": "Read access restored ({n})",
+          "writeDeniedAdded": "Write access denied ({n})",
+          "writeDeniedRemoved": "Write access restored ({n})"
+        },
+        "scopes": {
+          "header": "Data scope changes"
+        }
       },
       "dependency": {
         "panelTitle": "Capability checks",

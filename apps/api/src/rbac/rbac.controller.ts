@@ -28,6 +28,7 @@ import {
   DuplicateRoleSchema,
   PutRoleFieldPermissionsSchema,
   PutRoleScopesSchema,
+  RoleChangePreviewSchema,
   RoleDependencyCheckSchema,
   UpdateRoleSchema,
 } from './rbac.dto';
@@ -39,6 +40,10 @@ import {
   type RoleScopeRow,
   type RoleFieldPermissionRow,
 } from './rbac.service';
+import {
+  RoleChangePreviewService,
+  type RoleChangePreviewResult,
+} from './role-change-preview.service';
 import {
   RoleDependencyConfirmationRequiredError,
   RoleDependencyService,
@@ -52,6 +57,7 @@ class DuplicateRoleDto extends createZodDto(DuplicateRoleSchema) {}
 class PutRoleScopesDto extends createZodDto(PutRoleScopesSchema) {}
 class PutRoleFieldPermissionsDto extends createZodDto(PutRoleFieldPermissionsSchema) {}
 class RoleDependencyCheckDto extends createZodDto(RoleDependencyCheckSchema) {}
+class RoleChangePreviewDto extends createZodDto(RoleChangePreviewSchema) {}
 
 /**
  * /api/v1/rbac — RBAC introspection + Phase C — C2 write surface.
@@ -72,6 +78,7 @@ export class RbacController {
     private readonly rbac: RbacService,
     private readonly rolePreview: RolePreviewService,
     private readonly roleDependency: RoleDependencyService,
+    private readonly roleChangePreview: RoleChangePreviewService,
   ) {}
 
   @Get('roles')
@@ -322,5 +329,61 @@ export class RbacController {
       analysis,
     });
     return analysis;
+  }
+
+  /**
+   * Phase D5 — D5.15-A: structural change-set preview for the
+   * role builder. Read-only — NEVER writes capabilities, scopes,
+   * or field permissions. The role editor opens the "Review
+   * changes" modal with this payload BEFORE the operator clicks
+   * the final save.
+   *
+   * The DTO accepts any subset of `{ capabilities, scopes,
+   * fieldPermissions }`; omitted axes are treated as unchanged
+   * in the diff. The response always includes the reused D5.14
+   * dependency analysis (analysed against the proposed
+   * capability set, or the role's current capabilities when the
+   * caller did not propose).
+   *
+   * Capability gate `roles.read` (the same gate that lets the
+   * caller open the role detail page). Side effect: emits a
+   * single `audit_events.rbac.role.change_previewed` row per
+   * call so admins can audit "who probed this role's diff".
+   * Best-effort — failure to write the audit row never blocks
+   * the response.
+   */
+  @Post('roles/:id/change-preview')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability('roles.read')
+  @ApiOperation({
+    summary:
+      'Build a structural change-set preview against the saved role (read-only diff + risk flags).',
+  })
+  async changePreview(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: RoleChangePreviewDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<RoleChangePreviewResult> {
+    const role = await this.rbac.findRoleById(id);
+    if (!role) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Role ${id} not found in this tenant.`,
+      });
+    }
+    const result = await this.roleChangePreview.preview({
+      roleId: id,
+      proposedCapabilities: body.capabilities,
+      proposedScopes: body.scopes,
+      proposedFieldPermissions: body.fieldPermissions,
+      actor: { userId: user.sub, roleId: user.rid },
+    });
+    await this.roleChangePreview.writePreviewAudit({
+      actorUserId: user.sub,
+      targetRoleId: id,
+      targetRoleCode: role.code,
+      result,
+    });
+    return result;
   }
 }

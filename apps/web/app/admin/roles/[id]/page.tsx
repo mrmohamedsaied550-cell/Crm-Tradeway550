@@ -12,12 +12,14 @@ import { Field, Input, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { DependencyWarningsPanel } from '@/components/admin/roles/dependency-warnings-panel';
+import { ReviewChangesModal } from '@/components/admin/roles/review-changes-modal';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
 import { ApiError, rolesApi } from '@/lib/api';
 import type {
   CapabilityCatalogueEntry,
   FieldCatalogueEntry,
+  RoleChangePreviewResult,
   RoleDependencyAnalysis,
   RoleDetail,
   RoleFieldPermissionRow,
@@ -349,6 +351,18 @@ function CapabilitiesTab({
   const [analysis, setAnalysis] = useState<RoleDependencyAnalysis | null>(null);
   const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
 
+  // Phase D5 — D5.15-A: change-set preview state. The "Review
+  // changes" modal is opened on Save click — it shows the
+  // structural diff (granted / revoked caps + field perms +
+  // scope changes) plus the dependency warnings. The standalone
+  // typed-confirmation modal stays as a fallback for when the
+  // server rejects a save with `role.dependency.confirmation_required`
+  // (defensive — the review modal already gates critical changes
+  // inline).
+  const [reviewPreview, setReviewPreview] = useState<RoleChangePreviewResult | null>(null);
+  const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
+  const [reviewLoading, setReviewLoading] = useState<boolean>(false);
+
   // Group by module prefix (lead.*, whatsapp.*, etc.) — capability
   // codes are dot-separated; the prefix before the first '.' is the
   // module bucket.
@@ -438,11 +452,36 @@ function CapabilitiesTab({
   }
 
   async function onSubmit(): Promise<void> {
-    if (analysis?.requiresTypedConfirmation) {
-      setConfirmModalOpen(true);
-      return;
+    // D5.15-A — Save no longer writes directly. We first ask the
+    // server for the structural diff + risk flags + dependency
+    // warnings, then open the "Review changes" modal. The modal
+    // is the chokepoint — its Confirm button calls `persist()`.
+    if (role.isSystem) return; // editable already gates this; defensive
+    setReviewLoading(true);
+    try {
+      const proposed = Array.from(selected).sort();
+      const preview = await rolesApi.changePreview(role.id, { capabilities: proposed });
+      setReviewPreview(preview);
+      // Sync the live dependency panel so closing the modal
+      // leaves the inline hints accurate (the preview embeds
+      // the same warnings).
+      setAnalysis({
+        warnings: preview.warnings,
+        severityCounts: preview.severityCounts,
+        requiresTypedConfirmation: preview.requiresTypedConfirmation,
+        typedConfirmationPhrase: preview.typedConfirmationPhrase,
+      });
+      setReviewModalOpen(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setReviewLoading(false);
     }
-    await persist();
+  }
+
+  async function onReviewConfirm(typedPhrase: string | null): Promise<void> {
+    setReviewModalOpen(false);
+    await persist(typedPhrase ?? undefined);
   }
 
   return (
@@ -504,12 +543,30 @@ function CapabilitiesTab({
       <DependencyWarningsPanel analysis={analysis} />
       {editable ? (
         <div className="flex items-center justify-end">
-          <Button onClick={() => void onSubmit()} loading={submitting}>
+          <Button
+            onClick={() => void onSubmit()}
+            loading={submitting || reviewLoading}
+            data-testid="role-capabilities-save"
+          >
             <Save className="h-4 w-4" aria-hidden="true" />
             {tCommon('save')}
           </Button>
         </div>
       ) : null}
+      {/* D5.15-A — Review changes modal is the primary save path. */}
+      <ReviewChangesModal
+        open={reviewModalOpen}
+        preview={reviewPreview}
+        capabilityCatalogue={capabilities}
+        loading={submitting}
+        onCancel={() => setReviewModalOpen(false)}
+        onConfirm={(phrase) => void onReviewConfirm(phrase)}
+      />
+      {/* D5.14 — typed-confirmation fallback. The review modal
+          already handles typed confirmation inline; this stays
+          as the recovery path when the server rejects a save
+          with `role.dependency.confirmation_required` (e.g.
+          racing tenant change). */}
       <TypedConfirmationModal
         open={confirmModalOpen}
         analysis={analysis}

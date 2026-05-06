@@ -1457,6 +1457,7 @@
         "whatsapp.handover.completed": "اكتمل تحويل محادثة واتساب",
         "rbac.role.dependency_check": "فحص اعتماديات الدور",
         "rbac.role.dependency_warning_confirmed": "تأكيد تحذير اعتماديات الدور",
+        "rbac.role.change_previewed": "معاينة تغييرات الدور",
         "field_write_denied": "تم رفض كتابة حقل"
       },
       "recentPreviews": {
@@ -1888,6 +1889,45 @@
         "canRead": "قراءة",
         "canWrite": "كتابة",
         "sensitive": "حسّاس"
+      },
+      "review": {
+        "title": "مراجعة التغييرات — {role}",
+        "noChanges": "لا توجد تغييرات لحفظها. غيّر صلاحية أو نطاقًا لإجراء تعديلات.",
+        "actions": {
+          "cancel": "إلغاء",
+          "close": "إغلاق",
+          "confirmAndSave": "تأكيد وحفظ"
+        },
+        "typedConfirmation": {
+          "fieldLabel": "اكتب للتأكيد: {phrase}",
+          "fieldHint": "حسّاسة لحالة الأحرف. زر الحفظ يبقى معطّلًا حتى تتطابق العبارة."
+        },
+        "risks": {
+          "groupLabel": "محاور خطر التغيير",
+          "exportAdded": "أُضيفت صلاحية تصدير — يصبح بإمكان هذا الدور تصدير البيانات.",
+          "exportRevoked": "أُزيلت صلاحية تصدير — يفقد هذا الدور تصدير البيانات.",
+          "backupExport": "تغيير في صلاحيات النسخة الاحتياطية / تصدير المستأجر.",
+          "auditVisibility": "تغيير في رؤية سجل التدقيق.",
+          "ownerHistory": "تغيير في رؤية سجل المالك (المالك السابق / منفّذ الدوران).",
+          "permissionAdmin": "تغيير في إدارة الصلاحيات (الأدوار أو المعاينة).",
+          "partnerMerge": "تغيير في صلاحية دمج الشريك."
+        },
+        "capabilities": {
+          "header": "الصلاحيات",
+          "summaryLine": "{granted} مُضافة · {revoked} مُزالة · {unchanged} دون تغيير",
+          "granted": "مُضافة ({n})",
+          "revoked": "مُزالة ({n})"
+        },
+        "fields": {
+          "header": "أذونات الحقول",
+          "readDeniedAdded": "منع قراءة جديد ({n})",
+          "readDeniedRemoved": "إعادة فتح قراءة ({n})",
+          "writeDeniedAdded": "منع كتابة جديد ({n})",
+          "writeDeniedRemoved": "إعادة فتح كتابة ({n})"
+        },
+        "scopes": {
+          "header": "تغييرات نطاق البيانات"
+        }
       },
       "dependency": {
         "panelTitle": "فحوصات الصلاحيات",

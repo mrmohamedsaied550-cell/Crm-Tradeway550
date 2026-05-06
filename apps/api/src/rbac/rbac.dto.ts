@@ -151,6 +151,33 @@ export const RoleDependencyCheckSchema = z
   .strict();
 export type RoleDependencyCheckDto = z.infer<typeof RoleDependencyCheckSchema>;
 
+/**
+ * Phase D5 — D5.15-A: change-set preview endpoint body. Every
+ * field is OPTIONAL — when omitted, that axis is treated as
+ * unchanged in the diff. The role builder typically sends
+ * `capabilities` from the capability matrix; the scopes /
+ * field-permissions tabs can attach their own arrays so a single
+ * preview round-trip covers the whole role.
+ *
+ * The endpoint never writes — it builds the diff + risk summary
+ * + reused dependency analysis and returns the full
+ * `RoleChangePreviewResult`. The actual write still happens
+ * through the existing PATCH / PUT endpoints.
+ */
+export const RoleChangePreviewSchema = z
+  .object({
+    capabilities: z.array(capabilityCodeShape).optional(),
+    scopes: z.array(scopeRowShape).optional(),
+    fieldPermissions: z.array(fieldPermissionRowShape).optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.capabilities !== undefined || v.scopes !== undefined || v.fieldPermissions !== undefined,
+    'preview body must include at least one of capabilities / scopes / fieldPermissions',
+  );
+export type RoleChangePreviewDto = z.infer<typeof RoleChangePreviewSchema>;
+
 /** POST /rbac/roles/:id/duplicate — body. New code + names required. */
 export const DuplicateRoleSchema = z
   .object({

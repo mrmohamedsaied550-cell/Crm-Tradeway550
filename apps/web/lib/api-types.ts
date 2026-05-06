@@ -189,6 +189,72 @@ export interface RoleDependencyAnalysis {
 }
 
 /**
+ * Phase D5 — D5.15-A: structural change-set preview shape.
+ *
+ * The role builder calls `POST /rbac/roles/:id/change-preview`
+ * with the proposed capability / scope / field-permission set
+ * (any subset). The server returns a read-only diff plus the
+ * D5.14 dependency analysis verbatim.
+ *
+ * Risk flags (`riskSummary`) are booleans the UI uses to
+ * highlight categories on the review modal — the user never
+ * sees raw payload values, only structural identifiers
+ * (capability codes, resource + field names, scope strings).
+ */
+export interface RoleChangePreviewFieldPair {
+  resource: string;
+  field: string;
+}
+
+export interface RoleChangePreviewScopeChange {
+  resource: RoleScopeRow['resource'];
+  from: RoleScopeRow['scope'];
+  to: RoleScopeRow['scope'];
+}
+
+export interface RoleChangePreviewResult {
+  role: {
+    id: string;
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    isSystem: boolean;
+  };
+  changes: {
+    capabilities: {
+      granted: readonly string[];
+      revoked: readonly string[];
+      unchangedCount: number;
+    };
+    fieldPermissions: {
+      readDeniedAdded: readonly RoleChangePreviewFieldPair[];
+      readDeniedRemoved: readonly RoleChangePreviewFieldPair[];
+      writeDeniedAdded: readonly RoleChangePreviewFieldPair[];
+      writeDeniedRemoved: readonly RoleChangePreviewFieldPair[];
+    };
+    scopes: {
+      changed: readonly RoleChangePreviewScopeChange[];
+      added: readonly RoleScopeRow[];
+      removed: readonly RoleScopeRow[];
+    };
+  };
+  warnings: readonly RoleDependencyWarning[];
+  severityCounts: Readonly<Record<RoleDependencyWarningSeverity, number>>;
+  requiresTypedConfirmation: boolean;
+  typedConfirmationPhrase: string;
+  riskSummary: {
+    exportCapabilityAdded: boolean;
+    exportCapabilityRevoked: boolean;
+    ownerHistoryVisibilityChanged: boolean;
+    auditVisibilityChanged: boolean;
+    backupExportChanged: boolean;
+    permissionAdminChanged: boolean;
+    partnerMergeChanged: boolean;
+  };
+  hasChanges: boolean;
+}
+
+/**
  * Phase D5 — D5.2: catalogue widened to fourteen resources
  * (lead, lead.activity, lead.review, rotation, followup, captain,
  * contact, partner_source, partner.verification, partner.evidence,
