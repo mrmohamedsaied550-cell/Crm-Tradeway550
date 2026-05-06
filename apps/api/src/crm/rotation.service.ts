@@ -498,6 +498,5 @@ const ALL_ROTATION_FIELDS_VISIBLE: RotationVisibility = {
   canReadToUser: true,
   canReadActor: true,
   canReadNotes: true,
-  canReadHandoverSummary: true,
   canReadInternalPayload: true,
 };

@@ -8,6 +8,7 @@ import { ExportInterceptor } from './export.interceptor';
 import { ExportRedactionService } from './export-redaction.service';
 import { FieldFilterService } from './field-filter.service';
 import { FieldRedactionInterceptor } from './field-redaction.interceptor';
+import { LeadReviewVisibilityService } from './lead-review-visibility.service';
 import { OwnershipVisibilityService } from './ownership-visibility.service';
 import { PermissionCacheService } from './permission-cache.service';
 import { PermissionResolverService } from './permission-resolver.service';
@@ -68,6 +69,7 @@ import { ScopeContextService } from './scope-context.service';
     ExportAuditService,
     ExportInterceptor,
     OwnershipVisibilityService,
+    LeadReviewVisibilityService,
     {
       provide: APP_INTERCEPTOR,
       useExisting: FieldRedactionInterceptor,
@@ -89,6 +91,7 @@ import { ScopeContextService } from './scope-context.service';
     ExportAuditService,
     ExportInterceptor,
     OwnershipVisibilityService,
+    LeadReviewVisibilityService,
   ],
 })
 export class RbacModule {}

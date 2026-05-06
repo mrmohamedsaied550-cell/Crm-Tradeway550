@@ -205,16 +205,28 @@ const SALES_AGENT_FIELD_DENIES: ReadonlyArray<readonly [resource: string, field:
  * seed preserve the existing UX without requiring per-tenant admin
  * configuration. TL+ / Ops / Account Manager / Super Admin keep
  * full visibility because no deny row is written for them.
+ *
+ * D5.8 — extended with `lead.outOfScopeAttemptCount` (hides the
+ * count of attempts outside the caller's scope on
+ * `GET /leads/:id/attempts`) + `lead.review.ownerContext` /
+ * `lead.review.partnerContext` (dormant defence-in-depth that
+ * activates if an admin ever grants `lead.review.read` to a
+ * custom agent role). The `rotation.handoverSummary` entry was
+ * removed because the schema carries no `handover_summary` column
+ * and no response surface emits the field — migration 0041
+ * deletes the dead rows from existing tenants.
  */
 const D5_7_OWNERSHIP_HISTORY_DENIES: ReadonlyArray<readonly [resource: string, field: string]> = [
   ['rotation', 'fromUser'],
   ['rotation', 'toUser'],
   ['rotation', 'actor'],
   ['rotation', 'notes'],
-  ['rotation', 'handoverSummary'],
   ['rotation', 'internalPayload'],
   ['lead', 'previousOwner'],
   ['lead', 'ownerHistory'],
+  ['lead', 'outOfScopeAttemptCount'],
+  ['lead.review', 'ownerContext'],
+  ['lead.review', 'partnerContext'],
 ];
 
 // ───────────────────────────────────────────────────────────────────────

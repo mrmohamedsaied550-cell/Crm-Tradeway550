@@ -4,7 +4,7 @@ import { FieldFilterService } from './field-filter.service';
 import type { ScopeUserClaims } from './scope-context.service';
 
 /**
- * Phase D5 — D5.7: ownership-history visibility resolver.
+ * Phase D5 — D5.7 / D5.8: ownership-history visibility resolver.
  *
  * Replaces the hardcoded `lead.write` capability check that
  * `RotationService.userCanSeeOwnershipHistory` and
@@ -13,37 +13,39 @@ import type { ScopeUserClaims } from './scope-context.service';
  * can grant "see owner history" to a role independently of edit
  * permissions, or revoke it from a role that holds `lead.write`.
  *
- * Two surfaces:
+ * Surfaces:
  *
  *   • Rotation history (`GET /leads/:id/rotations`,
  *     `RotationService.listRotationsForLead`) — per-field deny
  *     rows under resource `'rotation'`. Each rotation log row
  *     carries `fromUser` / `toUser` / `actor` / `notes` /
- *     `handoverSummary` / `internalPayload` columns; the
- *     visibility result drives a per-field nullification at the
- *     service layer.
+ *     `internalPayload` columns; the visibility result drives a
+ *     per-field nullification at the service layer.
  *
  *   • Previous-owner / owner-history (`GET /leads/:id/attempts`
  *     and lead-detail surfaces) — deny rows under resource
  *     `'lead'` on `previousOwner` / `ownerHistory` catalogue
  *     fields.
  *
+ *   • D5.8 — out-of-scope attempt count
+ *     (`GET /leads/:id/attempts.outOfScopeCount`) — deny row under
+ *     `lead.outOfScopeAttemptCount`. Hides the numeric count of
+ *     predecessors outside the caller's scope. When denied, the
+ *     response carries `outOfScopeCount: null` so the UI can
+ *     decide whether to render a generic "older attempts may
+ *     exist" hint without disclosing the count.
+ *
  * Bypass:
  *   - Super-admin always sees everything (mirrors
  *     FieldFilterService.listDeniedReadFields).
  *
- * Defaults — preserved by D5.7's migration + seed which install
- * idempotent deny rows for `sales_agent`, `activation_agent`, and
- * `driving_agent` on the rotation + lead-ownership fields. TL+ /
+ * Defaults — preserved by D5.7's migration 0040 + seed (rotation
+ * + lead.previousOwner / ownerHistory) and D5.8's migration 0041
+ * + seed (lead.outOfScopeAttemptCount + lead.review.ownerContext /
+ * partnerContext) which install idempotent deny rows for
+ * `sales_agent`, `activation_agent`, and `driving_agent`. TL+ /
  * Ops / AM / Super Admin keep visibility because no deny row is
  * written for them.
- *
- * Pure read of `field_permissions`. The catalogue's `redactable`
- * flag is informational only at this layer — D5.7 enforces ALL
- * deny rows the admin persists, regardless of whether the field
- * carries `redactable: true` (the catalogue gate already prevents
- * a write on `redactable: false` fields by surfacing them as read-
- * only in the role-builder UI).
  */
 
 export interface RotationVisibility {
@@ -51,7 +53,6 @@ export interface RotationVisibility {
   readonly canReadToUser: boolean;
   readonly canReadActor: boolean;
   readonly canReadNotes: boolean;
-  readonly canReadHandoverSummary: boolean;
   readonly canReadInternalPayload: boolean;
 }
 
@@ -60,7 +61,6 @@ const ROTATION_FIELDS_ALL_VISIBLE: RotationVisibility = {
   canReadToUser: true,
   canReadActor: true,
   canReadNotes: true,
-  canReadHandoverSummary: true,
   canReadInternalPayload: true,
 };
 
@@ -87,7 +87,6 @@ export class OwnershipVisibilityService {
       canReadToUser: !denied.has('toUser'),
       canReadActor: !denied.has('actor'),
       canReadNotes: !denied.has('notes'),
-      canReadHandoverSummary: !denied.has('handoverSummary'),
       canReadInternalPayload: !denied.has('internalPayload'),
     };
   }
@@ -131,5 +130,19 @@ export class OwnershipVisibilityService {
     const { bypassed, paths } = await this.fieldFilter.listDeniedReadFields(claims, 'lead');
     if (bypassed) return true;
     return !paths.includes('ownerHistory');
+  }
+
+  /**
+   * D5.8 — `true` when the caller may see the count of attempts
+   * outside their scope. Backed by a deny row under
+   * `lead.outOfScopeAttemptCount`. When false, the
+   * `outOfScopeCount` field on the attempts response is set to
+   * `null` so the existence of out-of-scope predecessors is no
+   * longer disclosed.
+   */
+  async canReadOutOfScopeAttemptCount(claims: ScopeUserClaims): Promise<boolean> {
+    const { bypassed, paths } = await this.fieldFilter.listDeniedReadFields(claims, 'lead');
+    if (bypassed) return true;
+    return !paths.includes('outOfScopeAttemptCount');
   }
 }

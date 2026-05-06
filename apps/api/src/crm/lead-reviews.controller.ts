@@ -88,7 +88,12 @@ export class LeadReviewsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: AccessTokenClaims,
   ) {
-    const row = await this.reviews.findByIdInScope(claimsToScope(user), id);
+    // D5.8 — `findByIdInScopeForResponse` applies the
+    // LeadReviewVisibility redaction (top-level + nested
+    // reasonPayload) before returning. The resolve flow uses
+    // `findByIdInScope` directly so the resolution logic never
+    // sees a redacted row.
+    const row = await this.reviews.findByIdInScopeForResponse(claimsToScope(user), id);
     if (!row) {
       throw new NotFoundException({
         code: 'lead.review.not_found',

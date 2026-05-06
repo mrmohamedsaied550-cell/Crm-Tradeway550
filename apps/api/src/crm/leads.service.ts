@@ -778,13 +778,27 @@ export class LeadsService {
   ): Promise<{
     attempts: AttemptHistoryRow[];
     totalAttempts: number;
-    outOfScopeCount: number;
+    /**
+     * Phase D5 — D5.8: count of predecessor attempts outside the
+     * caller's scope. Set to `null` when the role's
+     * `lead.outOfScopeAttemptCount` field-permission is denied so
+     * the existence of out-of-scope attempts is no longer leaked.
+     * The UI can still render a generic "older attempts may
+     * exist" hint based on `null` vs. `0`/positive number.
+     */
+    outOfScopeCount: number | null;
     currentLeadId: string;
   }> {
     const tenantId = requireTenantId();
     // 1. Visibility gate. Throws 404 if out of scope.
     const lead = await this.findByIdInScopeOrThrow(leadId, userClaims);
     const contactId = lead.contactId;
+
+    // D5.8 — out-of-scope count visibility. Resolved once per
+    // request; applied at every return path below.
+    const canSeeOutOfScopeCount = this.ownershipVisibility
+      ? await this.ownershipVisibility.canReadOutOfScopeAttemptCount(userClaims)
+      : true;
 
     // 2. No contact → single-row history.
     if (!contactId) {
@@ -798,17 +812,24 @@ export class LeadsService {
         return {
           attempts: this.applyOwnerVisibilityToAttempts(single.attempts, leadId, false),
           totalAttempts: single.attempts.length,
-          outOfScopeCount: 0,
+          // No contact ⇒ single attempt ⇒ no out-of-scope rows
+          // exist; the count is genuinely 0 regardless of the
+          // visibility gate. Keeping it gated mirrors the
+          // contract for the multi-attempt path so the UI can
+          // treat `null` as "hidden" everywhere.
+          outOfScopeCount: canSeeOutOfScopeCount ? 0 : null,
           currentLeadId: leadId,
         };
       });
     }
 
-    // Phase D2 — D2.6: previous-owner visibility gate. Sales agents
-    // (no `lead.assign` capability) must not see the names of agents
-    // who handled the predecessors. The CURRENT row keeps its owner
-    // intact so the agent still sees their own assignment; only the
-    // predecessor rows are stripped. TL+ / ops keep full history.
+    // Phase D2 — D2.6 / Phase D5 — D5.7: previous-owner visibility
+    // gate via the field-permission backed
+    // `OwnershipVisibilityService`. Sales agents must not see the
+    // names of agents who handled the predecessors. The CURRENT
+    // row keeps its owner intact so the agent still sees their own
+    // assignment; only the predecessor rows are stripped. TL+ /
+    // ops keep full history.
     const canSeePreviousOwner = await this.userCanSeePreviousOwner(userClaims);
     const scopeWhere = await this.resolveLeadScopeWhere(userClaims);
     return this.prisma.withTenant(tenantId, async (tx) => {
@@ -821,6 +842,7 @@ export class LeadsService {
         leadId: null,
         scopeWhere,
       });
+      const rawOutOfScopeCount = Math.max(0, totalAttempts - visible.attempts.length);
       return {
         attempts: this.applyOwnerVisibilityToAttempts(
           visible.attempts,
@@ -828,7 +850,7 @@ export class LeadsService {
           canSeePreviousOwner,
         ),
         totalAttempts,
-        outOfScopeCount: Math.max(0, totalAttempts - visible.attempts.length),
+        outOfScopeCount: canSeeOutOfScopeCount ? rawOutOfScopeCount : null,
         currentLeadId: leadId,
       };
     });

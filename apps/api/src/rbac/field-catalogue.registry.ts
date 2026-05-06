@@ -465,6 +465,22 @@ const LEAD_ENTRIES: readonly FieldCatalogueEntry[] = [
     labelEn: 'Owner history',
     labelAr: 'سجل الملاك',
   }),
+  // D5.8 — out-of-scope attempt count. Drives the
+  // "N previous attempts are outside your access" hint on
+  // `GET /leads/:id/attempts`. Denying this field hides the
+  // count entirely from the response so the existence of
+  // out-of-scope attempts is no longer leaked. Migration 0041 +
+  // the seed install default deny rows for the agent cohort.
+  entry({
+    resource: 'lead',
+    field: 'outOfScopeAttemptCount',
+    group: 'ownership_history',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Out-of-scope attempt count',
+    labelAr: 'عدد المحاولات خارج الصلاحية',
+  }),
 
   // Partner-derived projections (read-only on the lead row)
   entry({
@@ -746,16 +762,16 @@ const ROTATION_ENTRIES: readonly FieldCatalogueEntry[] = [
     labelEn: 'Handover mode',
     labelAr: 'وضع التسليم',
   }),
-  entry({
-    resource: 'rotation',
-    field: 'handoverSummary',
-    group: 'rotation',
-    sensitive: true,
-    defaultRead: true,
-    defaultWrite: false,
-    labelEn: 'Handover summary',
-    labelAr: 'ملخص التسليم',
-  }),
+  // D5.8 — `rotation.handoverSummary` was previously catalogued
+  // here but `LeadRotationLog` carries no `handover_summary`
+  // column (the schema only has `notes` for free text) and no
+  // RotationService response surface emits it. Cataloguing it
+  // would expose a role-builder UI toggle for a field that does
+  // not exist in any payload, misleading admins. Migration 0041
+  // deletes the dead `field_permissions` rows that migration
+  // 0040 left behind. The whatsapp.conversation.handoverSummary
+  // entry below is a separate WhatsApp-specific concept and
+  // remains in the catalogue (D5.8 does not touch WhatsApp).
   entry({
     resource: 'rotation',
     field: 'internalPayload',

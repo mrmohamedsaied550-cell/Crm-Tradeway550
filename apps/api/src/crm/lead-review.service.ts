@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LeadReviewVisibilityService } from '../rbac/lead-review-visibility.service';
 import { ScopeContextService, type ScopeUserClaims } from '../rbac/scope-context.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
@@ -62,6 +63,16 @@ export class LeadReviewService {
     private readonly prisma: PrismaService,
     @Optional() private readonly scopeContext?: ScopeContextService,
     @Optional() private readonly audit?: AuditService,
+    /**
+     * Phase D5 — D5.8: per-(role × field) review visibility
+     * resolver. Strips top-level (`assignedTl`, `resolutionNotes`)
+     * + nested-payload (`reasonPayload.priorAssigneeId`,
+     * `partnerSourceId`, etc) keys before the response is shipped.
+     * @Optional so legacy fixtures keep compiling; production
+     * wiring (CrmModule via the @Global RbacModule) always
+     * provides it.
+     */
+    @Optional() private readonly reviewVisibility?: LeadReviewVisibilityService,
   ) {}
 
   /**
@@ -180,8 +191,12 @@ export class LeadReviewService {
       ...(scopeWhere && { lead: scopeWhere }),
     };
 
+    const visibility = this.reviewVisibility
+      ? await this.reviewVisibility.resolveLeadReviewVisibility(userClaims)
+      : null;
+
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const [items, total] = await Promise.all([
+      const [rawItems, total] = await Promise.all([
         tx.leadReview.findMany({
           where,
           orderBy: { createdAt: 'desc' },
@@ -213,6 +228,13 @@ export class LeadReviewService {
         }),
         tx.leadReview.count({ where }),
       ]);
+      // D5.8 — apply per-field nullification + nested
+      // owner/partner context redaction. Row count preserved
+      // (the redactor never drops rows).
+      const items =
+        visibility !== null && this.reviewVisibility
+          ? this.reviewVisibility.applyVisibility(rawItems, visibility)
+          : rawItems;
       return { items, total, limit: filters.limit, offset: filters.offset };
     });
   }
@@ -366,6 +388,22 @@ export class LeadReviewService {
       });
     });
     return row;
+  }
+
+  /**
+   * Phase D5 — D5.8: response-shaped wrapper around
+   * `findByIdInScope` that applies field-permission redaction
+   * before returning. Controllers that ship the row to a client
+   * (e.g. `GET /lead-reviews/:id`) MUST use this method; internal
+   * callers that need to inspect the raw row (the
+   * `resolveReview` flow) continue to use `findByIdInScope` so the
+   * resolution logic never sees a redacted row.
+   */
+  async findByIdInScopeForResponse(userClaims: ScopeUserClaims, id: string) {
+    const row = await this.findByIdInScope(userClaims, id);
+    if (!row || !this.reviewVisibility) return row;
+    const visibility = await this.reviewVisibility.resolveLeadReviewVisibility(userClaims);
+    return this.reviewVisibility.applyVisibilityToRow(row, visibility);
   }
 
   /** Public defensive helper — kept around so service-layer callers

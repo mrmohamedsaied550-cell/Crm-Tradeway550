@@ -69,7 +69,6 @@ describe('rbac/D5.7 — OwnershipVisibilityService.resolveRotationVisibility', (
     assert.equal(v.canReadToUser, true);
     assert.equal(v.canReadActor, true);
     assert.equal(v.canReadNotes, true);
-    assert.equal(v.canReadHandoverSummary, true);
     assert.equal(v.canReadInternalPayload, true);
   });
 
@@ -105,7 +104,6 @@ describe('rbac/D5.7 — OwnershipVisibilityService.resolveRotationVisibility', (
     assert.equal(v.canReadToUser, false);
     assert.equal(v.canReadActor, true);
     assert.equal(v.canReadNotes, false);
-    assert.equal(v.canReadHandoverSummary, true);
     assert.equal(v.canReadInternalPayload, true);
   });
 
@@ -114,7 +112,7 @@ describe('rbac/D5.7 — OwnershipVisibilityService.resolveRotationVisibility', (
       fakeFieldFilter({
         rotation: {
           bypassed: false,
-          paths: ['fromUser', 'toUser', 'actor', 'notes', 'handoverSummary', 'internalPayload'],
+          paths: ['fromUser', 'toUser', 'actor', 'notes', 'internalPayload'],
         },
       }),
     );
@@ -123,7 +121,6 @@ describe('rbac/D5.7 — OwnershipVisibilityService.resolveRotationVisibility', (
     assert.equal(v.canReadToUser, false);
     assert.equal(v.canReadActor, false);
     assert.equal(v.canReadNotes, false);
-    assert.equal(v.canReadHandoverSummary, false);
     assert.equal(v.canReadInternalPayload, false);
   });
 });
