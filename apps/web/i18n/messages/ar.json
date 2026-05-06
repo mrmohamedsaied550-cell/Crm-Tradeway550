@@ -1433,6 +1433,7 @@
         "report_export": "تصدير التقارير",
         "partner_recon_export": "تصدير مطابقة الشركاء",
         "partner_commission_export": "تصدير عمولات الشركاء",
+        "whatsapp_handover": "تحويلات واتساب",
         "export_governance": "كل أحداث حوكمة التصدير"
       },
       "actions": {
@@ -1453,6 +1454,7 @@
         "partner.commission.export.completed": "اكتمل تصدير عمولات الشريك",
         "lead.export.completed": "اكتمل تصدير العملاء",
         "audit.export.completed": "اكتمل تصدير التدقيق",
+        "whatsapp.handover.completed": "اكتمل تحويل محادثة واتساب",
         "field_write_denied": "تم رفض كتابة حقل"
       },
       "recentPreviews": {

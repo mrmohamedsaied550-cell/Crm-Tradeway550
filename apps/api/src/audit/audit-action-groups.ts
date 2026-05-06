@@ -54,6 +54,11 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
   { code: 'partner_recon_export', actionPrefixes: ['partner.reconciliation.export.'] },
   // D5.6B — partner commission CSV export.
   { code: 'partner_commission_export', actionPrefixes: ['partner.commission.export.'] },
+  // D5.13 — WhatsApp handover governance. Today only
+  // `whatsapp.handover.completed` exists; the trailing dot keeps
+  // future verbs (`whatsapp.handover.failed`, ...) inside the
+  // same chip without a code change.
+  { code: 'whatsapp_handover', actionPrefixes: ['whatsapp.handover.'] },
   // Umbrella chip — every governed-export verb in one OR. Order
   // intentional so the more-specific chips above stay first in
   // the rendered strip.

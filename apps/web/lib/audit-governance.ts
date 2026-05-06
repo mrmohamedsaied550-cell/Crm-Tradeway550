@@ -42,6 +42,7 @@ export const AUDIT_ACTION_GROUP_CODES = [
   'report_export',
   'partner_recon_export',
   'partner_commission_export',
+  'whatsapp_handover',
   'export_governance',
 ] as const;
 
@@ -62,6 +63,12 @@ const GOVERNANCE_PREFIXES: readonly string[] = [
   'partner.commission.export.',
   'lead.export.',
   'audit.export.',
+  // D5.13 — WhatsApp handover audit verb. The chip strip filters
+  // by prefix; the row renderer routes through
+  // `governanceActionLabel` + `summariseAuditPayload` below so
+  // the row shows safe metadata only (no fromUserId, no summary
+  // text — server-side audit row already excludes them).
+  'whatsapp.handover.',
 ];
 
 /**
@@ -153,6 +160,26 @@ export function summariseAuditPayload(action: string, payload: AuditRow['payload
   // Field-write-denied (C5.5).
   if (action === 'field_write_denied' && Array.isArray(p['deniedFields'])) {
     parts.push(`fields: ${p['deniedFields'].length}`);
+  }
+
+  // D5.13 — `whatsapp.handover.completed` summariser. Renders
+  // STRUCTURAL metadata only: transfer mode, whether a summary
+  // exists (boolean — never the text), whether the recipient
+  // was bell-notified. The server-side audit row already
+  // excludes `fromUserId` / `toUserId` / the summary text from
+  // its payload, so even an attempt to read raw payload here
+  // wouldn't leak prior-owner identity. The summariser is the
+  // belt over the suspenders.
+  if (action === 'whatsapp.handover.completed') {
+    if (typeof p['mode'] === 'string') {
+      parts.push(`mode: ${p['mode']}`);
+    }
+    if (p['hasSummary'] === true) {
+      parts.push('summary');
+    }
+    if (p['notify'] === true) {
+      parts.push('notified');
+    }
   }
 
   return parts.join(' · ');

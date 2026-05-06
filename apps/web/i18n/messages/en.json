@@ -1433,6 +1433,7 @@
         "report_export": "Report exports",
         "partner_recon_export": "Partner reconciliation exports",
         "partner_commission_export": "Partner commission exports",
+        "whatsapp_handover": "WhatsApp handovers",
         "export_governance": "All export governance"
       },
       "actions": {
@@ -1453,6 +1454,7 @@
         "partner.commission.export.completed": "Partner commission export completed",
         "lead.export.completed": "Lead export completed",
         "audit.export.completed": "Audit export completed",
+        "whatsapp.handover.completed": "WhatsApp handover completed",
         "field_write_denied": "Field write denied"
       },
       "recentPreviews": {

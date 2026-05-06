@@ -677,6 +677,16 @@ export interface WhatsAppConversationReview {
   /** Joined when listing/getting; not always present. */
   conversation?: WhatsAppConversation;
   contact?: Contact;
+  /**
+   * Phase D5 — D5.13: server-set transparency flag. True when the
+   * review row's embedded `conversation` had `assignedToId` /
+   * `assignmentSource` redacted by the
+   * `whatsapp.conversation.internalMetadata` field permission
+   * (see `WhatsAppVisibilityService.applyReviewRow`). The review
+   * card uses this to render a calm `<RedactedFieldBadge>` notice
+   * — the server is the source of truth for the redaction.
+   */
+  internalMetadataHidden?: boolean;
 }
 
 export interface ReviewListResult {

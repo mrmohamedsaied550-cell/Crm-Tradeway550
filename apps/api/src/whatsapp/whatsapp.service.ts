@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { AuditService } from '../audit/audit.service';
 import { decryptSecret } from '../common/crypto';
 import { normalizeE164 } from '../crm/phone.util';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -123,6 +124,18 @@ export class WhatsAppService {
      * `@Global` `RbacModule`) always provides it.
      */
     @Optional() private readonly visibility?: WhatsAppVisibilityService,
+    /**
+     * Phase D5 — D5.13: audit sink for the dedicated
+     * `whatsapp.handover.completed` verb emitted alongside the
+     * existing `LeadActivity` rows. The audit row carries
+     * structural metadata only (`conversationId`, `leadId`,
+     * `mode`, `notify`, `hasSummary`) — never `fromUserId`,
+     * `toUserId`, or the summary text itself. Optional so legacy
+     * fixtures (which build a thin WhatsAppService for routing /
+     * inbound tests) keep compiling; production wiring
+     * (`WhatsAppModule`) provides the real instance.
+     */
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -1383,22 +1396,58 @@ export class WhatsAppService {
         });
       }
 
+      // D5.13 — emit a dedicated `whatsapp.handover.completed`
+      // audit row alongside the LeadActivity rows. The
+      // governance audit feed filters on action-prefix groups
+      // (D5.11); the dedicated verb lets the `whatsapp_handover`
+      // chip light up cleanly without payload-key matching. The
+      // payload carries STRUCTURAL metadata only — no
+      // `fromUserId` / `toUserId` (gated by REST field
+      // permissions), no `summary` text (gated by the
+      // `whatsapp.conversation.handoverSummary` field
+      // permission — see D5.12-B). The flag `hasSummary`
+      // signals whether a summary note exists without echoing
+      // its content.
+      if (this.audit) {
+        await this.audit.writeInTx(tx, tenantId, {
+          action: 'whatsapp.handover.completed',
+          entityType: 'whatsapp_conversation',
+          entityId: conversationId,
+          actorUserId: opts.actorUserId ?? null,
+          payload: {
+            conversationId,
+            leadId: lead.id,
+            mode: opts.mode,
+            notify: opts.notify ?? false,
+            hasSummary: Boolean(opts.summary && opts.summary.length > 0),
+          },
+        });
+      }
+
       // P2-02 — notify the new assignee that a conversation just
       // landed in their lap. Self-handover (testing) doesn't bell.
+      //
+      // D5.13 — Notification body MUST stay neutral. The summary
+      // text (when present) can quote prior-agent or customer
+      // content; we never put it in the body. The recipient reads
+      // the full handover note through the lead timeline, where
+      // the `whatsapp_handover_summary` activity is already gated
+      // by the `whatsapp.conversation.handoverSummary` field
+      // permission (see D5.12-B). The payload also DROPS
+      // `fromUserId` — clients re-fetch the canonical record via
+      // the (already-redacted) REST endpoints when they need the
+      // identity. The structural fields (`conversationId`,
+      // `leadId`, `mode`) stay so the bell can deep-link.
       if (this.notifications && opts.newAssigneeId !== opts.actorUserId) {
         await this.notifications.createInTx(tx, tenantId, {
           recipientUserId: opts.newAssigneeId,
           kind: 'whatsapp.handover',
           title: 'WhatsApp conversation handed to you',
-          body:
-            opts.mode === 'summary' && opts.summary
-              ? opts.summary.slice(0, 200)
-              : `Mode: ${opts.mode}`,
+          body: `Transfer mode: ${opts.mode}`,
           payload: {
             conversationId,
             leadId: lead.id,
             mode: opts.mode,
-            fromUserId,
           },
         });
       }

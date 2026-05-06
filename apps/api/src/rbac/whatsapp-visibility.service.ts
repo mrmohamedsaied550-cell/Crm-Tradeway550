@@ -362,8 +362,12 @@ export class WhatsAppVisibilityService {
         assignmentSource?: string | null;
       } | null;
     },
-  >(row: T, visibility: ConversationVisibility, mode: WhatsAppTransferMode): T {
-    const out: T = { ...row };
+  >(
+    row: T,
+    visibility: ConversationVisibility,
+    mode: WhatsAppTransferMode,
+  ): T & { internalMetadataHidden?: boolean } {
+    const out: T & { internalMetadataHidden?: boolean } = { ...row };
     if (!out.conversation) return out;
     const conv = { ...out.conversation } as typeof out.conversation;
     const hidePrior = this.shouldHidePriorMessages(visibility, mode);
@@ -381,6 +385,12 @@ export class WhatsAppVisibilityService {
     if (!visibility.canReadInternalMetadata) {
       conv.assignedToId = null;
       conv.assignmentSource = null;
+      // D5.13 — surface a top-level boolean so the review-card
+      // can render a calm "Some conversation metadata is hidden
+      // by your role" badge instead of leaving the operator to
+      // notice silent nulls. Server is the source of truth; the
+      // flag is a transparency hint, not a gate.
+      out.internalMetadataHidden = true;
     }
     out.conversation = conv;
     return out;

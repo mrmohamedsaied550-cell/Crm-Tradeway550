@@ -1426,13 +1426,15 @@ export class LeadsService {
 
     // P3-02 — push the new owner so their workspace lights up the
     // lead immediately. Skipped on unassign (no recipient).
+    // D5.13 — `fromUserId` is always null on the realtime channel;
+    // previous-owner identity is gated by REST field permissions.
     if (assigneeUserId && this.realtime) {
       try {
         this.realtime.emitToUser(tenantId, assigneeUserId, {
           type: 'lead.assigned',
           leadId: id,
           toUserId: assigneeUserId,
-          fromUserId: before.assignedToId ?? null,
+          fromUserId: null,
           reason: 'manual',
         });
       } catch {
@@ -1579,13 +1581,15 @@ export class LeadsService {
     });
 
     // P3-02 — push to the new owner (best-effort; never blocks).
+    // D5.13 — `fromUserId` is always null on the realtime channel;
+    // previous-owner identity is gated by REST field permissions.
     if (result.decision.chosenUserId && this.realtime) {
       try {
         this.realtime.emitToUser(tenantId, result.decision.chosenUserId, {
           type: 'lead.assigned',
           leadId: id,
           toUserId: result.decision.chosenUserId,
-          fromUserId: before.assignedToId ?? null,
+          fromUserId: null,
           reason: 'auto',
         });
       } catch {
