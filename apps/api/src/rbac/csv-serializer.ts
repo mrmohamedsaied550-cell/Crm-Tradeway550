@@ -44,8 +44,12 @@ import type { StructuredExport } from './export-contract';
  *     ignored (defensive — the redactor strips columns; row
  *     keys may legitimately outlive the column list).
  *
- *   • Output ends with a trailing newline so naive `cat`-style
- *     concatenation works.
+ *   • Output does NOT include a trailing newline. The two existing
+ *     D4 builders (`partner-reconciliation.service.exportCsv` and
+ *     `partner-milestones buildCsv`) both end with `lines.join('\n')`
+ *     — no trailing newline — so byte-equality with the legacy
+ *     output requires the same convention here. The reports CSV
+ *     (D5.6C) will carry its own trailing-newline shim.
  *
  * Determinism: same input → same byte output. Required for
  * golden-file tests + future cross-region replay.
@@ -78,7 +82,7 @@ export function serializeCsv(structured: StructuredExport): string {
     lines.push(cells.join(','));
   }
 
-  return lines.join('\n') + '\n';
+  return lines.join('\n');
 }
 
 /**

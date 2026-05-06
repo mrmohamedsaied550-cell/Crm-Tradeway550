@@ -38,6 +38,7 @@ const REQUIRED_RESOURCES: ReadonlyArray<CatalogueResource> = [
   'partner.verification',
   'partner.evidence',
   'partner.reconciliation',
+  'partner.commission',
   'whatsapp.conversation',
   'report',
   'audit',

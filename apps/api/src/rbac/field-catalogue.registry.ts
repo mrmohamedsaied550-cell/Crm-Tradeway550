@@ -74,6 +74,7 @@ export type CatalogueResource =
   | 'partner.verification'
   | 'partner.evidence'
   | 'partner.reconciliation'
+  | 'partner.commission'
   | 'whatsapp.conversation'
   | 'report'
   | 'audit';
@@ -1440,6 +1441,121 @@ const PARTNER_RECONCILIATION_ENTRIES: readonly FieldCatalogueEntry[] = [
   }),
 ];
 
+// ─── partner.commission ─────────────────────────────────────────────
+//
+// D5.6B — fields surfaced by the commission progress / risk CSVs.
+// The CSVs ship per-captain commission progress (target trips,
+// current milestone, days left in the window, risk band) and the
+// risk-only filtered variant. Catalogue entries here let an admin
+// deny commission-window fields per role — Finance keeps `risk` /
+// `target_trips` / `current_milestone`; non-finance roles can be
+// configured to lose the column. The cap on the export endpoint is
+// `partner.commission.export` (D5.6A); this catalogue resource
+// gives column-level redaction the right anchor.
+
+const PARTNER_COMMISSION_ENTRIES: readonly FieldCatalogueEntry[] = [
+  entry({
+    resource: 'partner.commission',
+    field: 'partnerSourceName',
+    group: 'partner_milestone',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Partner source name',
+    labelAr: 'اسم مصدر الشريك',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'configCode',
+    group: 'partner_milestone',
+    sensitive: false,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Milestone config code',
+    labelAr: 'رمز إعداد العلامة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'anchorAt',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Anchor (window start)',
+    labelAr: 'بداية النافذة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'windowEndsAt',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Window ends at',
+    labelAr: 'نهاية النافذة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'daysLeft',
+    group: 'partner_milestone',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Days remaining',
+    labelAr: 'الأيام المتبقية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'targetTrips',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Target trips',
+    labelAr: 'عدد الرحلات الهدف',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'currentMilestone',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Current milestone',
+    labelAr: 'العلامة الحالية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'nextMilestone',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Next milestone',
+    labelAr: 'العلامة التالية',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'risk',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Commission risk band',
+    labelAr: 'مستوى خطر العمولة',
+  }),
+  entry({
+    resource: 'partner.commission',
+    field: 'needsPush',
+    group: 'commission',
+    sensitive: true,
+    defaultRead: true,
+    defaultWrite: false,
+    labelEn: 'Needs push (commission action required)',
+    labelAr: 'يتطلب دفع عمولة',
+  }),
+];
+
 // ─── whatsapp.conversation ─────────────────────────────────────────
 
 const WHATSAPP_CONVERSATION_ENTRIES: readonly FieldCatalogueEntry[] = [
@@ -1689,6 +1805,7 @@ export const FIELD_CATALOGUE: readonly FieldCatalogueEntry[] = [
   ...PARTNER_VERIFICATION_ENTRIES,
   ...PARTNER_EVIDENCE_ENTRIES,
   ...PARTNER_RECONCILIATION_ENTRIES,
+  ...PARTNER_COMMISSION_ENTRIES,
   ...WHATSAPP_CONVERSATION_ENTRIES,
   ...REPORT_ENTRIES,
   ...AUDIT_ENTRIES,
@@ -1706,6 +1823,7 @@ export const CATALOGUE_RESOURCES = [
   'partner.verification',
   'partner.evidence',
   'partner.reconciliation',
+  'partner.commission',
   'whatsapp.conversation',
   'report',
   'audit',

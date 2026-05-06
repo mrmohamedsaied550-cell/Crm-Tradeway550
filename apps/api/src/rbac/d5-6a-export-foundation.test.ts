@@ -200,7 +200,7 @@ describe('rbac/D5.6A — csv-serializer', () => {
         ],
       }),
     );
-    assert.equal(out, 'a,b\nAlice,+201\nBob,+202\n');
+    assert.equal(out, 'a,b\nAlice,+201\nBob,+202');
   });
 
   it('emits comments preamble before the header', () => {
@@ -211,7 +211,7 @@ describe('rbac/D5.6A — csv-serializer', () => {
         comments: ['# generated_at: 2026-05-01', '# filter: none'],
       }),
     );
-    assert.equal(out, '# generated_at: 2026-05-01\n# filter: none\na\nX\n');
+    assert.equal(out, '# generated_at: 2026-05-01\n# filter: none\na\nX');
   });
 
   it('escapes commas, quotes, newlines per RFC 4180 and preserves UTF-8/Arabic', () => {
@@ -226,10 +226,7 @@ describe('rbac/D5.6A — csv-serializer', () => {
         ],
       }),
     );
-    assert.equal(
-      out,
-      'a\n' + '"Hello, ""world"""\n' + '"multi\nline"\n' + 'مرحبا بالعالم\n' + '\n',
-    );
+    assert.equal(out, 'a\n' + '"Hello, ""world"""\n' + '"multi\nline"\n' + 'مرحبا بالعالم\n' + '');
   });
 
   it('preserves row count even when rows are empty objects (cells become blank)', () => {
@@ -239,8 +236,8 @@ describe('rbac/D5.6A — csv-serializer', () => {
         rows: [{}, { a: 'X' }, {}],
       }),
     );
-    const lines = out.split('\n').filter((l) => l !== '');
-    // header + 3 rows.
+    const lines = out.split('\n');
+    // header + 3 rows = 4 lines (no trailing newline).
     assert.equal(lines.length, 4);
     assert.equal(lines[0], 'a,b');
     assert.equal(lines[1], ',');
@@ -510,8 +507,15 @@ describe('rbac/D5.6A — ExportInterceptor', () => {
     assert.equal(audit.calls.length, 0);
   });
 
-  it('flag off → passthrough even with metadata + structured payload', async () => {
+  it('flag off → serialises (NO redaction, NO audit) for structured payload', async () => {
+    // D5.6B always-serialise contract: when @ExportGate is present
+    // AND the payload is structured, the interceptor MUST serialise
+    // it before NestJS sends the response (otherwise NestJS would
+    // JSON-serialise the structured object and break the CSV
+    // download). The flag controls redaction + audit, not
+    // serialisation.
     setFlag('false');
+    const { res, headers } = makeRes();
     const interceptor = new ExportInterceptor(
       new Reflector(),
       makeResolver(bundle({ deniedRead: { lead: ['phone'] } })),
@@ -523,11 +527,25 @@ describe('rbac/D5.6A — ExportInterceptor', () => {
       rows: [{ phone: '+1', name: 'X' }],
     });
     const ctx = makeCtx({
-      req: { user: USER, query: {}, originalUrl: '/x' },
+      req: { user: USER, query: {}, originalUrl: '/x', method: 'GET' },
+      res,
       metadata: { primary: 'lead', format: 'csv', filename: 'x.csv' },
     });
-    const out = await firstValueFrom(interceptor.intercept(ctx, handlerOf(payload)));
-    assert.equal(out, payload, 'structure returned unchanged when flag off');
+    const out = (await firstValueFrom(interceptor.intercept(ctx, handlerOf(payload)))) as string;
+    // Bytes are produced (not JSON object) — both columns survive
+    // (no redaction) — phone column NOT stripped despite the deny
+    // rule because the flag is off.
+    assert.equal(typeof out, 'string');
+    const lines = out.split('\n');
+    assert.equal(lines[0], 'phone,name');
+    assert.equal(lines[1], '+1,X');
+    // Headers still set so the browser handles the download.
+    assert.equal(headers['Content-Type'], 'text/csv; charset=utf-8');
+    assert.equal(headers['Content-Disposition'], 'attachment; filename="x.csv"');
+    assert.equal(headers['X-Export-Redacted-Columns'], '(none)');
+    // No X-Export-Audit-Id when flag off (no audit row).
+    assert.equal(headers['X-Export-Audit-Id'], undefined);
+    // No audit row written.
     assert.equal(audit.calls.length, 0);
   });
 

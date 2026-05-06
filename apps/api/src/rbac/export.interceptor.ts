@@ -36,34 +36,47 @@ import { PermissionResolverService } from './permission-resolver.service';
  *   • Sets download headers via `passthrough` `@Res` (controllers
  *     wire it that way starting in D5.6B).
  *
- * Bypass paths (interceptor returns the controller's payload
+ * Passthrough paths (interceptor returns the controller's payload
  * unchanged):
  *
  *   1. No `@ExportGate` metadata on the route.
- *   2. `D5_DYNAMIC_PERMISSIONS_V1` is `false`.
- *   3. The handler did not return a `StructuredExport` shape (e.g.
- *      a controller still uses `@Res() res.send(...)` — D5.6A
- *      does NOT wire any controller, so this is the universal
- *      state until D5.6B-D land).
- *   4. Missing `req.user` (defensive — JwtAuthGuard would have
+ *   2. The handler did not return a `StructuredExport` shape (a
+ *      legacy controller using `@Res() res.send(...)` for example —
+ *      D5.6A registered the interceptor; D5.6B is the first chunk
+ *      to wire `@ExportGate` + structured shape).
+ *   3. Missing `req.user` (defensive — JwtAuthGuard would have
  *      rejected the request before reaching here).
  *
- * Active path:
+ * Always-serialise path (D5.6B refinement):
  *
- *   • Resolve permissions via `PermissionResolverService` (cached
- *     by D5.1's LRU).
- *   • Run `ExportRedactionService.redactColumns` — non-redactable
- *     ID columns + super-admin always survive.
- *   • Serialise the redacted shape to the requested `format`.
- *   • Set headers.
- *   • Persist the audit row via `ExportAuditService`.
- *   • Return the serialised string.
+ *   When `@ExportGate` is present AND the handler returned a
+ *   `StructuredExport`, the interceptor ALWAYS serialises the
+ *   structured shape into the format's wire bytes and sets the
+ *   download headers — even when the D5 flag is off. This is
+ *   required because the structured object is an INTERNAL
+ *   contract; allowing it to flow to NestJS would JSON-serialise
+ *   it and break the CSV download. The flag controls whether
+ *   redaction + audit happen, NOT whether serialisation happens.
+ *
+ *   • Flag off — no permission resolution, no redaction, no audit.
+ *     The structured shape is serialised verbatim. Bytes are
+ *     byte-identical to the legacy CSV builders that this
+ *     refactor replaces (the StructuredExport columns / rows /
+ *     comments are arranged so `serializeCsv(structured)` matches
+ *     the previous `buildCsv(rows)` output exactly — pinned by
+ *     golden-file tests in D5.6B).
+ *
+ *   • Flag on — `PermissionResolverService.resolveForUser` →
+ *     `ExportRedactionService.redactColumns` → serialiser →
+ *     headers (incl. `X-Export-Redacted-Columns`,
+ *     `X-Export-Audit-Id`) → `ExportAuditService.recordExport`.
  *
  * Audit failures are swallowed inside `AuditService.writeEvent`;
  * this layer never blocks the download on an audit failure.
  *
- * D5.6A registers the interceptor globally. No controller has
- * `@ExportGate` yet — every existing endpoint passes through.
+ * D5.6A registered the interceptor globally with no controllers
+ * wired. D5.6B begins the wiring on partner reconciliation +
+ * commission CSV exports.
  */
 
 @Injectable()
@@ -83,10 +96,6 @@ export class ExportInterceptor implements NestInterceptor {
       ctx.getClass(),
     ]);
     if (!gate) {
-      return next.handle();
-    }
-
-    if (!isD5DynamicPermissionsV1Enabled()) {
       return next.handle();
     }
 
@@ -113,23 +122,40 @@ export class ExportInterceptor implements NestInterceptor {
     data: unknown,
   ): Promise<unknown> {
     if (!isStructuredExport(data)) {
-      // The handler hasn't been refactored to the structured
-      // contract yet (D5.6A is foundation only — no controller
-      // wires this in this commit). Pass the payload through
-      // unchanged; later chunks will retire the legacy paths.
+      // Legacy controller still using `@Res() res.send(...)` —
+      // pass through. Later chunks will retire the legacy paths.
       this.logger.debug(
         `ExportInterceptor: route ${req.method} ${req.url} declared @ExportGate(${gate.primary}) but returned a non-structured payload; passthrough.`,
       );
       return data;
     }
 
-    const resolved = await this.resolver.resolveForUser({
-      tenantId: user.tid,
-      userId: user.sub,
-      roleId: user.rid,
-    });
+    // Always-serialise contract: when the controller returns a
+    // StructuredExport, the interceptor MUST serialise it before
+    // NestJS sends the response (otherwise NestJS would JSON-
+    // serialise the structured object and break the CSV download).
+    // The D5 flag controls whether redaction + audit happen, not
+    // whether serialisation happens.
+    const flagOn = isD5DynamicPermissionsV1Enabled();
 
-    const outcome = this.redactor.redactColumns(data, resolved);
+    let outcome;
+    if (flagOn) {
+      const resolved = await this.resolver.resolveForUser({
+        tenantId: user.tid,
+        userId: user.sub,
+        roleId: user.rid,
+      });
+      outcome = this.redactor.redactColumns(data, resolved);
+    } else {
+      // Flag off — no redaction, no audit. Bypass-shaped outcome
+      // so the rest of the pipeline reads the same.
+      outcome = {
+        redacted: data,
+        columnsExported: data.columns.map((c) => c.key),
+        columnsRedacted: [] as readonly string[],
+        bypassed: true,
+      };
+    }
 
     const filename =
       typeof gate.filename === 'function'
@@ -152,26 +178,31 @@ export class ExportInterceptor implements NestInterceptor {
       outcome.columnsRedacted.length === 0 ? '(none)' : outcome.columnsRedacted.join(','),
     );
 
-    // Persist audit metadata — best-effort.
-    try {
-      const result = await this.auditService.recordExport({
-        resource: gate.primary,
-        actorUserId: user.sub,
-        endpoint: `${req.method} ${stripQueryString(req.originalUrl ?? req.url)}`,
-        filters: extractFilters(req),
-        columnsExported: outcome.columnsExported,
-        columnsRedacted: outcome.columnsRedacted,
-        rowCount: outcome.redacted.rows.length,
-        bytesShipped,
-        flagState: 'on',
-      });
-      res.setHeader('X-Export-Audit-Id', result.entityId);
-    } catch (err) {
-      this.logger.warn(
-        `ExportInterceptor: audit write failed for ${gate.primary} export; continuing — ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    // Persist audit metadata — only when flag is on. Flag-off
+    // exports retain pre-D5.6 behaviour byte-for-byte AND skip
+    // the audit row, because the operator hasn't opted into the
+    // governance layer yet.
+    if (flagOn) {
+      try {
+        const result = await this.auditService.recordExport({
+          resource: gate.primary,
+          actorUserId: user.sub,
+          endpoint: `${req.method} ${stripQueryString(req.originalUrl ?? req.url)}`,
+          filters: extractFilters(req),
+          columnsExported: outcome.columnsExported,
+          columnsRedacted: outcome.columnsRedacted,
+          rowCount: outcome.redacted.rows.length,
+          bytesShipped,
+          flagState: 'on',
+        });
+        res.setHeader('X-Export-Audit-Id', result.entityId);
+      } catch (err) {
+        this.logger.warn(
+          `ExportInterceptor: audit write failed for ${gate.primary} export; continuing — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     return body;
