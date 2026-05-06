@@ -1458,6 +1458,8 @@
         "rbac.role.dependency_check": "Role dependency check",
         "rbac.role.dependency_warning_confirmed": "Role dependency warning confirmed",
         "rbac.role.change_previewed": "Role change preview",
+        "rbac.role.version_created": "Role version snapshot",
+        "rbac.role.version_reverted": "Role reverted to a previous version",
         "field_write_denied": "Field write denied"
       },
       "recentPreviews": {
@@ -1820,6 +1822,7 @@
         "capabilities": "Capability matrix",
         "scopes": "Data scope",
         "fields": "Field permissions",
+        "history": "History",
         "preview": "Preview"
       },
       "preview": {
@@ -1889,6 +1892,75 @@
         "canRead": "Read",
         "canWrite": "Write",
         "sensitive": "Sensitive"
+      },
+      "history": {
+        "header": "Version history",
+        "subtitle": "{count} version(s) recorded. Latest first.",
+        "actorSystem": "System",
+        "reasonPrefix": "Note:",
+        "actions": {
+          "viewDetails": "View details",
+          "revert": "Revert"
+        },
+        "trigger": {
+          "create": "Created",
+          "update": "Capabilities updated",
+          "duplicate": "Duplicated",
+          "scopes": "Scopes updated",
+          "field_permissions": "Field permissions updated",
+          "revert": "Reverted"
+        },
+        "counts": {
+          "granted": "{n} granted",
+          "revoked": "{n} revoked",
+          "fields": "{n} field changes",
+          "scopes": "{n} scope changes"
+        },
+        "risks": {
+          "exportCapabilityAdded": "Export added",
+          "exportCapabilityRevoked": "Export removed",
+          "backupExportChanged": "Backup export changed",
+          "auditVisibilityChanged": "Audit visibility changed",
+          "ownerHistoryVisibilityChanged": "Owner history visibility changed",
+          "permissionAdminChanged": "Permission admin changed",
+          "partnerMergeChanged": "Partner merge changed"
+        },
+        "empty": {
+          "title": "No role versions recorded yet.",
+          "body": "Versions are captured automatically every time the role's capabilities, scopes, or field permissions change. Save a change in the role builder to start the history."
+        },
+        "detail": {
+          "title": "Version v{version}",
+          "metadata": "Role metadata",
+          "capabilities": "Capabilities ({n})",
+          "scopes": "Data scope",
+          "fieldPermissions": "Field permissions ({n})",
+          "emptyScopes": "No scope rows captured at this version.",
+          "emptyFieldPermissions": "No field-permission rows captured at this version.",
+          "fields": {
+            "code": "Code",
+            "level": "Level",
+            "nameEn": "Name (English)",
+            "nameAr": "Name (Arabic)"
+          },
+          "close": "Close"
+        },
+        "revert": {
+          "title": "Revert to version v{version}",
+          "intro": "Reverting replays the snapshot of v{version} through the same dependency-check + change-preview chain. Critical lockout warnings still require typed confirmation.",
+          "reasonLabel": "Reason (optional)",
+          "reasonHint": "Up to 500 characters. Stored on the new version row for the audit trail.",
+          "typedConfirmation": {
+            "fieldLabel": "Type to confirm: {phrase}",
+            "fieldHint": "Case-sensitive. The button stays disabled until the phrase matches."
+          },
+          "typedConfirmationRequired": "This revert touches a critical lockout warning. Type the confirmation phrase to proceed.",
+          "actions": {
+            "cancel": "Cancel",
+            "confirm": "Revert"
+          },
+          "successToast": "Role reverted."
+        }
       },
       "review": {
         "title": "Review changes — {role}",

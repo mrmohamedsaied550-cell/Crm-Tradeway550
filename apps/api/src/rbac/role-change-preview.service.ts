@@ -420,7 +420,13 @@ function diffScopes(
   return { changed, added, removed };
 }
 
-function computeRiskSummary(input: {
+/**
+ * Phase D5 — D5.15-B: also exported so the version recorder can
+ * derive the same risk flags from a pre/post snapshot pair without
+ * round-tripping through the preview's current-state diff (which
+ * would return zeros after the write has landed).
+ */
+export function computeRiskSummary(input: {
   capabilityChanges: RoleChangePreviewResult['changes']['capabilities'];
   fieldChanges: RoleChangePreviewResult['changes']['fieldPermissions'];
 }): RoleChangePreviewResult['riskSummary'] {

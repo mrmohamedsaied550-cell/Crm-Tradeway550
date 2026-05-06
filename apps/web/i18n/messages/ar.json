@@ -1458,6 +1458,8 @@
         "rbac.role.dependency_check": "فحص اعتماديات الدور",
         "rbac.role.dependency_warning_confirmed": "تأكيد تحذير اعتماديات الدور",
         "rbac.role.change_previewed": "معاينة تغييرات الدور",
+        "rbac.role.version_created": "تسجيل نسخة من الدور",
+        "rbac.role.version_reverted": "إرجاع الدور إلى نسخة سابقة",
         "field_write_denied": "تم رفض كتابة حقل"
       },
       "recentPreviews": {
@@ -1820,6 +1822,7 @@
         "capabilities": "مصفوفة الصلاحيات",
         "scopes": "نطاق البيانات",
         "fields": "أذونات الحقول",
+        "history": "السجل",
         "preview": "معاينة"
       },
       "preview": {
@@ -1889,6 +1892,75 @@
         "canRead": "قراءة",
         "canWrite": "كتابة",
         "sensitive": "حسّاس"
+      },
+      "history": {
+        "header": "سجل النسخ",
+        "subtitle": "تم تسجيل {count} نسخة. الأحدث أولًا.",
+        "actorSystem": "النظام",
+        "reasonPrefix": "ملاحظة:",
+        "actions": {
+          "viewDetails": "عرض التفاصيل",
+          "revert": "إرجاع"
+        },
+        "trigger": {
+          "create": "إنشاء",
+          "update": "تحديث الصلاحيات",
+          "duplicate": "تكرار",
+          "scopes": "تحديث النطاق",
+          "field_permissions": "تحديث أذونات الحقول",
+          "revert": "إرجاع"
+        },
+        "counts": {
+          "granted": "{n} مُضافة",
+          "revoked": "{n} مُزالة",
+          "fields": "{n} تغيير حقول",
+          "scopes": "{n} تغيير نطاق"
+        },
+        "risks": {
+          "exportCapabilityAdded": "إضافة تصدير",
+          "exportCapabilityRevoked": "إزالة تصدير",
+          "backupExportChanged": "تغيير نسخة احتياطية",
+          "auditVisibilityChanged": "تغيير رؤية التدقيق",
+          "ownerHistoryVisibilityChanged": "تغيير رؤية سجل المالك",
+          "permissionAdminChanged": "تغيير إدارة الصلاحيات",
+          "partnerMergeChanged": "تغيير دمج الشريك"
+        },
+        "empty": {
+          "title": "لا توجد نسخ مسجّلة لهذا الدور بعد.",
+          "body": "يتم تسجيل النسخ تلقائيًا في كل مرة تتغير فيها صلاحيات أو نطاق أو أذونات حقول الدور. احفظ تغييرًا في محرر الأدوار لبدء السجل."
+        },
+        "detail": {
+          "title": "النسخة v{version}",
+          "metadata": "بيانات الدور",
+          "capabilities": "الصلاحيات ({n})",
+          "scopes": "نطاق البيانات",
+          "fieldPermissions": "أذونات الحقول ({n})",
+          "emptyScopes": "لا توجد صفوف نطاق مسجّلة في هذه النسخة.",
+          "emptyFieldPermissions": "لا توجد أذونات حقول مسجّلة في هذه النسخة.",
+          "fields": {
+            "code": "الرمز",
+            "level": "المستوى",
+            "nameEn": "الاسم (إنجليزي)",
+            "nameAr": "الاسم (عربي)"
+          },
+          "close": "إغلاق"
+        },
+        "revert": {
+          "title": "الإرجاع إلى النسخة v{version}",
+          "intro": "الإرجاع يُعيد تشغيل لقطة النسخة v{version} عبر نفس سلسلة فحص الاعتماديات ومعاينة التغييرات. التحذيرات الحرجة لا تزال تتطلب تأكيدًا مكتوبًا.",
+          "reasonLabel": "السبب (اختياري)",
+          "reasonHint": "حتى 500 حرف. يُخزَّن في صف النسخة الجديد لمسار التدقيق.",
+          "typedConfirmation": {
+            "fieldLabel": "اكتب للتأكيد: {phrase}",
+            "fieldHint": "حسّاسة لحالة الأحرف. الزر يظل معطّلًا حتى تتطابق العبارة."
+          },
+          "typedConfirmationRequired": "يطال هذا الإرجاع تحذيرًا حرجًا للقفل. اكتب عبارة التأكيد للاستمرار.",
+          "actions": {
+            "cancel": "إلغاء",
+            "confirm": "إرجاع"
+          },
+          "successToast": "تم إرجاع الدور."
+        }
       },
       "review": {
         "title": "مراجعة التغييرات — {role}",

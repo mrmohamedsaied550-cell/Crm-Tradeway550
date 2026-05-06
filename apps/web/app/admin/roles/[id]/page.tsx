@@ -13,6 +13,7 @@ import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { DependencyWarningsPanel } from '@/components/admin/roles/dependency-warnings-panel';
 import { ReviewChangesModal } from '@/components/admin/roles/review-changes-modal';
+import { RoleHistoryTab } from '@/components/admin/roles/role-history-tab';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
 import { ApiError, rolesApi } from '@/lib/api';
@@ -59,7 +60,7 @@ const SCOPE_VALUES: ReadonlyArray<RoleScopeRow['scope']> = [
   'global',
 ];
 
-type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields' | 'preview';
+type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields' | 'history' | 'preview';
 
 export default function RoleEditorPage(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -175,6 +176,7 @@ export default function RoleEditorPage(): JSX.Element {
             'capabilities',
             'scopes',
             'fields',
+            'history',
             ...(canPreview ? (['preview'] as const) : []),
           ] as const
         ).map((key) => (
@@ -217,6 +219,9 @@ export default function RoleEditorPage(): JSX.Element {
           onSaved={reload}
           toast={toast}
         />
+      ) : null}
+      {activeTab === 'history' ? (
+        <RoleHistoryTab roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
       ) : null}
       {activeTab === 'preview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
     </div>

@@ -212,6 +212,99 @@ export interface RoleChangePreviewScopeChange {
   to: RoleScopeRow['scope'];
 }
 
+/**
+ * Phase D5 — D5.15-B: role version history shapes.
+ *
+ * History rows are server-built snapshots of `(metadata,
+ * capabilities, scopes, fieldPermissions)` plus a structural
+ * change-summary that mirrors the D5.15-A diff vocabulary.
+ * No row VALUES are stored or returned — only structural
+ * identifiers.
+ */
+export type RoleVersionTriggerAction =
+  | 'create'
+  | 'update'
+  | 'duplicate'
+  | 'scopes'
+  | 'field_permissions'
+  | 'revert';
+
+export interface RoleVersionChangeSummary {
+  grantedCapabilities: readonly string[];
+  revokedCapabilities: readonly string[];
+  fieldPermissionChanges: {
+    readDeniedAdded: ReadonlyArray<{ resource: string; field: string }>;
+    readDeniedRemoved: ReadonlyArray<{ resource: string; field: string }>;
+    writeDeniedAdded: ReadonlyArray<{ resource: string; field: string }>;
+    writeDeniedRemoved: ReadonlyArray<{ resource: string; field: string }>;
+  };
+  scopeChanges: {
+    changed: ReadonlyArray<{ resource: string; from: string; to: string }>;
+    added: ReadonlyArray<{ resource: string; scope: string }>;
+    removed: ReadonlyArray<{ resource: string; scope: string }>;
+  };
+  riskFlags: {
+    exportCapabilityAdded: boolean;
+    exportCapabilityRevoked: boolean;
+    ownerHistoryVisibilityChanged: boolean;
+    auditVisibilityChanged: boolean;
+    backupExportChanged: boolean;
+    permissionAdminChanged: boolean;
+    partnerMergeChanged: boolean;
+  };
+}
+
+export interface RoleVersionListItem {
+  id: string;
+  versionNumber: number;
+  triggerAction: RoleVersionTriggerAction;
+  actor: {
+    userId: string | null;
+    name: string | null;
+    email: string | null;
+  };
+  reason: string | null;
+  createdAt: string;
+  changeSummary: RoleVersionChangeSummary;
+  counts: {
+    grantedCapabilities: number;
+    revokedCapabilities: number;
+    fieldPermissionChanges: number;
+    scopeChanges: number;
+  };
+}
+
+export interface RoleVersionSnapshot {
+  metadata: {
+    code: string;
+    nameEn: string;
+    nameAr: string;
+    level: number;
+    description: string | null;
+    isSystem: boolean;
+    isActive: boolean;
+  };
+  capabilities: readonly string[];
+  scopes: ReadonlyArray<{ resource: string; scope: string }>;
+  fieldPermissions: ReadonlyArray<{
+    resource: string;
+    field: string;
+    canRead: boolean;
+    canWrite: boolean;
+  }>;
+}
+
+export interface RoleVersionDetail extends RoleVersionListItem {
+  snapshot: RoleVersionSnapshot;
+}
+
+export interface RoleVersionListResult {
+  items: readonly RoleVersionListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface RoleChangePreviewResult {
   role: {
     id: string;

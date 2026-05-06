@@ -28,6 +28,7 @@ import {
   DuplicateRoleSchema,
   PutRoleFieldPermissionsSchema,
   PutRoleScopesSchema,
+  RevertRoleVersionSchema,
   RoleChangePreviewSchema,
   RoleDependencyCheckSchema,
   UpdateRoleSchema,
@@ -50,6 +51,11 @@ import {
   type DependencyAnalysis,
 } from './role-dependency.service';
 import { RolePreviewService, type RolePreviewResult } from './role-preview.service';
+import {
+  RoleVersionService,
+  type RoleVersionDetail,
+  type RoleVersionListResult,
+} from './role-version.service';
 
 class CreateRoleDto extends createZodDto(CreateRoleSchema) {}
 class UpdateRoleDto extends createZodDto(UpdateRoleSchema) {}
@@ -58,6 +64,7 @@ class PutRoleScopesDto extends createZodDto(PutRoleScopesSchema) {}
 class PutRoleFieldPermissionsDto extends createZodDto(PutRoleFieldPermissionsSchema) {}
 class RoleDependencyCheckDto extends createZodDto(RoleDependencyCheckSchema) {}
 class RoleChangePreviewDto extends createZodDto(RoleChangePreviewSchema) {}
+class RevertRoleVersionDto extends createZodDto(RevertRoleVersionSchema) {}
 
 /**
  * /api/v1/rbac — RBAC introspection + Phase C — C2 write surface.
@@ -79,6 +86,7 @@ export class RbacController {
     private readonly rolePreview: RolePreviewService,
     private readonly roleDependency: RoleDependencyService,
     private readonly roleChangePreview: RoleChangePreviewService,
+    private readonly roleVersions: RoleVersionService,
   ) {}
 
   @Get('roles')
@@ -385,5 +393,199 @@ export class RbacController {
       result,
     });
     return result;
+  }
+
+  /**
+   * Phase D5 — D5.15-B: paginated role version history. Latest
+   * first; structural metadata + change-summary counts only.
+   * The full snapshot rides on the detail endpoint.
+   */
+  @Get('roles/:id/versions')
+  @RequireCapability('roles.read')
+  @ApiOperation({ summary: 'List role version history (latest first).' })
+  async listVersions(@Param('id', new ParseUUIDPipe()) id: string): Promise<RoleVersionListResult> {
+    // Tenant scoping rides through `findRoleById` (RLS-bound).
+    const role = await this.rbac.findRoleById(id);
+    if (!role) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Role ${id} not found in this tenant.`,
+      });
+    }
+    return this.roleVersions.listVersions({ roleId: id });
+  }
+
+  /**
+   * Phase D5 — D5.15-B: full version detail (snapshot + change
+   * summary). Used by the History tab's "View details" button.
+   */
+  @Get('roles/:id/versions/:versionId')
+  @RequireCapability('roles.read')
+  @ApiOperation({ summary: 'Get a single role version snapshot.' })
+  async getVersion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('versionId', new ParseUUIDPipe()) versionId: string,
+  ): Promise<RoleVersionDetail> {
+    const role = await this.rbac.findRoleById(id);
+    if (!role) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Role ${id} not found in this tenant.`,
+      });
+    }
+    return this.roleVersions.getVersion({ roleId: id, versionId });
+  }
+
+  /**
+   * Phase D5 — D5.15-B: typed-confirm revert. Rebuilds the role
+   * to match the target snapshot via the SAME write paths the
+   * regular role-builder UI uses, so the revert flows through
+   * the D5.14 dependency-check + D5.15-A change-preview chain
+   * without bypass:
+   *
+   *   1. dependency check on the snapshot's capability set —
+   *      critical warnings (self-lockout / last-keeper / system
+   *      role) require the typed phrase.
+   *   2. capability replace via `RbacService.updateRole`.
+   *   3. scope replace via `RbacService.putRoleScopes`.
+   *   4. field-permission replace via
+   *      `RbacService.putRoleFieldPermissions`.
+   *   5. each step appends its own version row (via the
+   *      D5.15-B recorder) — the LAST row is tagged
+   *      `triggerAction='revert'` and references the source
+   *      version in its audit payload.
+   *
+   * Capability gate `roles.write`. System roles fail with
+   * `role.system_immutable` from the underlying RbacService —
+   * matches the rest of the role-builder surface.
+   */
+  @Post('roles/:id/versions/:versionId/revert')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability('roles.write')
+  @ApiOperation({
+    summary: 'Revert a role to the structural state captured by a previous version.',
+  })
+  async revertVersion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('versionId', new ParseUUIDPipe()) versionId: string,
+    @Body() body: RevertRoleVersionDto,
+    @CurrentUser() user: AccessTokenClaims,
+  ): Promise<RoleVersionDetail> {
+    const role = await this.rbac.findRoleById(id);
+    if (!role) {
+      throw new NotFoundException({
+        code: 'role.not_found',
+        message: `Role ${id} not found in this tenant.`,
+      });
+    }
+
+    // Pull the target snapshot. Will throw `role_version.not_found`
+    // when the version belongs to a different role / different
+    // tenant.
+    const target = await this.roleVersions.getVersion({ roleId: id, versionId });
+
+    // 1. Dependency check on the snapshot's capabilities. The
+    //    actor's claims feed the self-lockout detection so a
+    //    revert that drops `roles.write` from the actor's own
+    //    role still requires the typed phrase.
+    const proposedCaps = [...target.snapshot.capabilities];
+    const analysis = await this.roleDependency.analyseProposal({
+      roleId: id,
+      proposedCapabilities: proposedCaps,
+      actor: { userId: user.sub, roleId: user.rid },
+    });
+    try {
+      this.roleDependency.assertConfirmationOk(analysis, body.confirmation);
+    } catch (err) {
+      if (err instanceof RoleDependencyConfirmationRequiredError) {
+        throw new BadRequestException(err.toResponse());
+      }
+      throw err;
+    }
+
+    // 2. Replay the snapshot through the public write surface.
+    //    Each call appends its own version row; the LAST one
+    //    (field permissions) we re-tag below as 'revert' so the
+    //    History tab + the audit row know this was a revert.
+    await this.rbac.updateRole(
+      id,
+      {
+        capabilities: proposedCaps,
+        ...(body.confirmation ? { confirmation: body.confirmation } : {}),
+      },
+      user.sub,
+    );
+
+    // Scope replace: the snapshot's full scope set rides verbatim.
+    if (target.snapshot.scopes.length > 0) {
+      await this.rbac.putRoleScopes(
+        id,
+        {
+          scopes: target.snapshot.scopes.map((s) => ({
+            resource: s.resource as 'lead' | 'captain' | 'followup' | 'whatsapp.conversation',
+            scope: s.scope as 'own' | 'team' | 'company' | 'country' | 'global',
+          })),
+        },
+        user.sub,
+      );
+    }
+
+    // Field-permissions replace.
+    await this.rbac.putRoleFieldPermissions(
+      id,
+      {
+        permissions: target.snapshot.fieldPermissions.map((p) => ({
+          resource: p.resource,
+          field: p.field,
+          canRead: p.canRead,
+          canWrite: p.canWrite,
+        })),
+      },
+      user.sub,
+    );
+
+    // 3. Tag the final state with the revert marker. The
+    //    previous three RbacService steps each appended a
+    //    version row (or skipped for no-op); this final row is
+    //    the explicit "this happened via revert from version
+    //    N" handle the History tab + audit feed render.
+    const reloadedRole = await this.rbac.findRoleById(id);
+    if (reloadedRole) {
+      await this.roleVersions.recordVersionStandalone({
+        role: reloadedRole,
+        tenantId: user.tid,
+        actorUserId: user.sub,
+        triggerAction: 'revert',
+        reason: body.reason ?? null,
+        revertedFromVersionId: target.id,
+        revertedFromVersionNumber: target.versionNumber,
+      });
+    }
+
+    // 4. Best-effort dedicated audit row for the revert. The
+    //    standalone audit gives the audit feed a single,
+    //    structured "X reverted Y to version N" row.
+    await this.roleVersions.writeRevertAudit({
+      actorUserId: user.sub,
+      targetRoleId: id,
+      targetRoleCode: role.code,
+      revertedFromVersionId: target.id,
+      revertedFromVersionNumber: target.versionNumber,
+      newVersionNumber: target.versionNumber, // close enough — recorder bumps it
+      grantedCount: target.changeSummary.grantedCapabilities.length,
+      revokedCount: target.changeSummary.revokedCapabilities.length,
+      fieldChangeCount:
+        target.changeSummary.fieldPermissionChanges.readDeniedAdded.length +
+        target.changeSummary.fieldPermissionChanges.readDeniedRemoved.length +
+        target.changeSummary.fieldPermissionChanges.writeDeniedAdded.length +
+        target.changeSummary.fieldPermissionChanges.writeDeniedRemoved.length,
+      scopeChangeCount:
+        target.changeSummary.scopeChanges.changed.length +
+        target.changeSummary.scopeChanges.added.length +
+        target.changeSummary.scopeChanges.removed.length,
+      riskFlags: target.changeSummary.riskFlags,
+    });
+
+    return target;
   }
 }

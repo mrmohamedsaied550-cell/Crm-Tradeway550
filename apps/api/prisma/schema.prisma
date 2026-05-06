@@ -93,6 +93,9 @@ model Tenant {
   partnerRecords              PartnerRecord[]
   leadEvidence                LeadEvidence[]
   partnerMilestoneConfigs     PartnerMilestoneConfig[]
+  /// Phase D5 — D5.15-B: append-only role version history. One row
+  /// per role-write that produces a real change.
+  roleVersions                RoleVersion[]
 
   @@map("tenants")
 }
@@ -152,6 +155,12 @@ model Role {
   /// for absent rows is read=TRUE / write=TRUE — restrictions are
   /// explicit denials.
   fieldPermissions FieldPermission[]
+  /// Phase D5 — D5.15-B: append-only role version history. One row
+  /// per save (capability / scope / field-permission write or
+  /// `create` / `duplicate` / `revert`). Powers the admin History
+  /// tab and the typed-confirm revert flow. NEVER consulted by the
+  /// permission resolver — purely a governance surface.
+  versions         RoleVersion[]
 
   @@unique([tenantId, code])
   @@index([tenantId, isActive])
@@ -211,6 +220,51 @@ model RoleScope {
   @@id([roleId, resource])
   @@index([tenantId, resource])
   @@map("role_scopes")
+}
+
+/// Phase D5 — D5.15-B: append-only role version history.
+///
+/// One row per role-write that produces a real change. The runtime
+/// permission resolver does NOT read this table; it is a
+/// governance + audit surface that powers:
+///
+///   - `GET /rbac/roles/:id/versions`              — admin History tab
+///   - `GET /rbac/roles/:id/versions/:versionId`   — version detail
+///   - `POST /rbac/roles/:id/versions/:versionId/revert`
+///       — typed-confirm revert that re-uses the D5.14 dependency-check
+///         + D5.15-A change-preview chain.
+///
+/// `snapshot` is structural metadata only (capability codes, resource
+/// + field names, scope strings, role metadata). `changeSummary`
+/// mirrors the D5.15-A diff shape (granted / revoked /
+/// fieldPermissionChanges / scopeChanges + riskFlags) so the History
+/// tab renders without recomputation.
+///
+/// `triggerAction` discriminates the write path that produced the
+/// row: 'create' | 'update' | 'duplicate' | 'scopes' |
+/// 'field_permissions' | 'revert'. The CHECK constraint in the
+/// migration enforces the closed set.
+model RoleVersion {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roleId        String   @map("role_id") @db.Uuid
+  role          Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  versionNumber Int      @map("version_number")
+  /// Soft-linked. Cleared (NULL) if the user is deleted; the version
+  /// row itself is preserved.
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  reason        String?
+  triggerAction String   @map("trigger_action")
+  snapshot      Json
+  changeSummary Json     @map("change_summary")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([roleId, versionNumber])
+  @@index([tenantId, roleId, createdAt(sort: Desc)])
+  @@index([roleId, versionNumber])
+  @@map("role_versions")
 }
 
 /// Phase C — C1: per-(role × resource × field) read/write toggle.
@@ -383,6 +437,10 @@ model User {
   /// later D4.x chunks wire the sync engine, evidence flow, etc.
   triggeredPartnerSnapshots   PartnerSnapshot[]      @relation("PartnerSnapshotTrigger")
   capturedLeadEvidence        LeadEvidence[]         @relation("LeadEvidenceCapturer")
+  /// Phase D5 — D5.15-B: role version rows authored by this user.
+  /// Soft-linked (ON DELETE SET NULL) so the version row outlives
+  /// a user that is later deleted.
+  authoredRoleVersions        RoleVersion[]
 
   @@unique([tenantId, email])
   @@index([tenantId, status])

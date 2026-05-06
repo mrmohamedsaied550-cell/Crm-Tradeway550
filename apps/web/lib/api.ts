@@ -91,6 +91,8 @@ import type {
   RolePreviewResult,
   RoleScopeRow,
   RoleSummary,
+  RoleVersionDetail,
+  RoleVersionListResult,
   RotationHistoryResponse,
   RotationOutcome,
   HandoverMode,
@@ -575,6 +577,29 @@ export const rolesApi = {
     },
   ): Promise<RoleChangePreviewResult> =>
     apiFetch<RoleChangePreviewResult>(`/rbac/roles/${id}/change-preview`, {
+      method: 'POST',
+      body: input,
+    }),
+  /**
+   * Phase D5 — D5.15-B: paginated role version history. Latest
+   * first; structural metadata only.
+   */
+  listVersions: (id: string): Promise<RoleVersionListResult> =>
+    apiFetch<RoleVersionListResult>(`/rbac/roles/${id}/versions`),
+  getVersion: (id: string, versionId: string): Promise<RoleVersionDetail> =>
+    apiFetch<RoleVersionDetail>(`/rbac/roles/${id}/versions/${versionId}`),
+  /**
+   * Phase D5 — D5.15-B: typed-confirm revert. Routes through the
+   * same D5.14 dependency-check + D5.15-A change-preview chain
+   * the regular role builder uses, so the revert can never
+   * bypass the lockout safety guard.
+   */
+  revertVersion: (
+    id: string,
+    versionId: string,
+    input: { confirmation?: string; reason?: string } = {},
+  ): Promise<RoleVersionDetail> =>
+    apiFetch<RoleVersionDetail>(`/rbac/roles/${id}/versions/${versionId}/revert`, {
       method: 'POST',
       body: input,
     }),

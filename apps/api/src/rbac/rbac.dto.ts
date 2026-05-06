@@ -205,6 +205,27 @@ export const PutRoleScopesSchema = z
   }, 'each resource must appear at most once in scopes');
 export type PutRoleScopesDto = z.infer<typeof PutRoleScopesSchema>;
 
+/**
+ * Phase D5 — D5.15-B: revert endpoint body. The capability /
+ * scope / field-permission set ride from the snapshot the
+ * caller targets; the body only carries the (optional) typed
+ * confirmation phrase + reason. Critical lockout warnings
+ * (D5.14) gate the revert just like a regular save.
+ */
+export const RevertRoleVersionSchema = z
+  .object({
+    /**
+     * Echoed back when the revert diff produces a critical
+     * warning (self-lockout / last-keeper). Identical contract
+     * to the PATCH `confirmation` field from D5.14.
+     */
+    confirmation: z.string().trim().min(0).max(64).optional(),
+    /** Optional admin note for "why was this reverted". */
+    reason: z.string().trim().min(0).max(500).optional(),
+  })
+  .strict();
+export type RevertRoleVersionDto = z.infer<typeof RevertRoleVersionSchema>;
+
 /** PUT /rbac/roles/:id/field-permissions — body. */
 export const PutRoleFieldPermissionsSchema = z
   .object({
