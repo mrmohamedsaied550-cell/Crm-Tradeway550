@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 
 import { normalizeE164 } from '../crm/phone.util';
 import type {
@@ -48,8 +48,32 @@ export class MetaCloudProvider implements WhatsAppProvider {
   /**
    * Allow tests to inject a `fetch` stub. Production wiring uses the
    * global `fetch` (Node 20+).
+   *
+   * `@Optional()` is required because `FetchFn` is a TypeScript
+   * function-type alias, which is erased at runtime — TS emits
+   * `Function` in the constructor's `design:paramtypes` metadata.
+   * Without `@Optional()`, NestJS tries to resolve a provider for
+   * token `Function`, finds none, and throws on boot with the
+   * canonical "argument Function at index [0] is available in the
+   * WhatsAppModule context" error (this was the actual staging boot
+   * crash that this hotfix resolves).
+   *
+   * With `@Optional()`, Nest passes `undefined` when no matching
+   * provider exists; the existing default
+   * (`globalThis.fetch as unknown as FetchFn`) keeps both DI
+   * construction (Nest passes nothing → falls back to global fetch)
+   * and direct test construction
+   * (`new MetaCloudProvider(fakeFetch)`) working unchanged.
+   *
+   * The cleaner long-term shape is a Symbol-based injection token
+   * (e.g. `META_CLOUD_FETCH`) provided via `useValue: fetch`; that
+   * requires module wiring of the token + a provider entry. Out of
+   * scope for the minimal hotfix — the `@Optional()` form is
+   * structurally equivalent and behaviourally identical at runtime.
    */
-  constructor(private readonly fetchImpl: FetchFn = globalThis.fetch as unknown as FetchFn) {}
+  constructor(
+    @Optional() private readonly fetchImpl: FetchFn = globalThis.fetch as unknown as FetchFn,
+  ) {}
 
   // ─────── GET handshake ───────
 
