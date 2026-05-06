@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 
 /**
  * Phase D5 — D5.1: in-process LRU cache for resolved permission
@@ -70,7 +70,29 @@ export class PermissionCacheService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly entries = new Map<string, PermissionCacheEntry<any>>();
 
-  constructor(opts: PermissionCacheOptions = {}) {
+  /**
+   * `@Optional()` is required because `PermissionCacheOptions` is a
+   * TypeScript interface, which is erased at runtime — TypeScript
+   * emits `Object` in the constructor's `design:paramtypes`
+   * metadata. Without `@Optional()`, NestJS tries to resolve a
+   * provider for token `Object`, finds none, and throws on boot
+   * with the canonical "argument Object at index [0] is available
+   * in the RbacModule context" message (this was the actual
+   * staging boot crash that this hotfix resolves).
+   *
+   * With `@Optional()`, Nest silently passes `undefined` when no
+   * matching provider exists; the `= {}` default keeps both DI
+   * construction (Nest passes nothing → defaults to `{}`) and
+   * direct test construction (`new PermissionCacheService({...})`)
+   * working unchanged.
+   *
+   * The cleaner long-term shape is a Symbol-based injection token
+   * via `@Inject(PERMISSION_CACHE_OPTIONS)`; that requires module
+   * wiring of the token + a provider entry. Out of scope for the
+   * minimal hotfix — the `@Optional()` form is structurally
+   * equivalent and behaviourally identical at runtime.
+   */
+  constructor(@Optional() opts: PermissionCacheOptions = {}) {
     this.maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   }
