@@ -397,6 +397,16 @@
         "slaDue": "تستحق",
         "captainLabel": "الكابتن",
         "captainBadge": "كابتن",
+        "journey": {
+          "label": "رحلة دورة الحياة",
+          "emptyState": "مراحل خط الأنابيب لم تُصنَّف بعد حسب خطوات الرحلة.",
+          "steps": {
+            "fresh_lead": "ليد جديد",
+            "signup": "تسجيل",
+            "active": "نشط",
+            "dft": "أول رحلة"
+          }
+        },
         "captainOnboarding": "كابتن · {status}",
         "captainNotYet": "لم يتم التحويل بعد",
         "captainLost": "تم وضعه كمفقود",

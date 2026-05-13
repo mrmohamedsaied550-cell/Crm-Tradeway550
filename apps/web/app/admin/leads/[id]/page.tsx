@@ -42,6 +42,7 @@ import { StageStatusPicker } from '@/components/admin/lead-detail/stage-status-p
 import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
+import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
 import {
   AttributionCard,
   LastActivityCard,
@@ -730,10 +731,11 @@ export default function LeadDetailPage(): JSX.Element {
           <div className="flex flex-wrap items-center gap-2">
             <LifecycleBadge state={lead.lifecycleState} />
             <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
-            {/* Phase B — B5: placeholder slot for the stage-specific
-                status badge (renders null today; activates when the
-                backend ships actual statuses). */}
-            <StageStatusSlot />
+            {/* Sprint 1.C — current stage-specific status (formerly
+                a render-null placeholder). Renders the active
+                status code humanised, or nothing when no status
+                is set. Edit surface is the lower picker. */}
+            <StageStatusSlot status={lead.currentStageStatus?.status ?? null} />
             <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
             {isConverted ? (
               <Badge tone="healthy">
@@ -742,6 +744,17 @@ export default function LeadDetailPage(): JSX.Element {
               </Badge>
             ) : null}
           </div>
+        </div>
+        {/* Sprint 1.C — Captain Masr lifecycle Journey Bar. Reads
+            `lead.stage.lifecycleCategory` (exposed by Sprint 1.B).
+            Renders the 4-step journey with the active step in the
+            lifecycle palette; when the stage isn't classified yet
+            the bar shows the empty-state hint and all steps appear
+            neutral. Sits under the badge row inside the header
+            card so the journey reads as part of "who this lead
+            is" rather than competing with the page chrome. */}
+        <div className="mt-4 border-t border-surface-border pt-4">
+          <JourneyBar current={lead.stage.lifecycleCategory ?? null} />
         </div>
       </section>
 

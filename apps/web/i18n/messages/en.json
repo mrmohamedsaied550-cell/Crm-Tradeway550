@@ -397,6 +397,16 @@
         "slaDue": "due",
         "captainLabel": "Captain",
         "captainBadge": "Captain",
+        "journey": {
+          "label": "Lifecycle journey",
+          "emptyState": "Pipeline stages aren't classified by journey step yet.",
+          "steps": {
+            "fresh_lead": "Fresh Lead",
+            "signup": "Signup",
+            "active": "Active",
+            "dft": "DFT"
+          }
+        },
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
