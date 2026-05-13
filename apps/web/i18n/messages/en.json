@@ -440,11 +440,51 @@
         "lostReasonLabel": "Lost reason",
         "viewCaptain": "View captain →",
         "quickActions": {
+          "addAction": "+ Add action",
           "call": "Call",
           "addNote": "Add note",
           "addFollowUp": "+ Follow-up",
           "moveStage": "Move stage",
           "terminalHint": "Lead is in a terminal stage"
+        },
+        "addAction": {
+          "routerTitle": "Add action",
+          "routerPrompt": "What do you want to update on this lead?",
+          "backToRouter": "Back",
+          "areas": {
+            "lifecycle": {
+              "title": "Lifecycle / Stage & Status",
+              "description": "Move the lead through the journey, set a new stage status, schedule the next action.",
+              "pendingTitle": "Lifecycle action coming next",
+              "pendingDescription": "Sprint 2.C wires Next Stage / Next Status pickers, communication method, follow-up auto-creation, reason capture, close / convert / approval previews — all driven by the Smart Status Rule schema shipped in Sprint 1.A."
+            },
+            "profile": {
+              "title": "Profile info",
+              "description": "Update contact, location, vehicle, acquisition and assignment fields.",
+              "pendingTitle": "Profile editor coming next",
+              "pendingDescription": "Sprint 2.D adds editable contact / assignment fields here with FieldGated so D5 field-level access still wins."
+            },
+            "documents": {
+              "title": "Documents",
+              "description": "Mark documents as Uploaded / Accepted / Rejected / Missing / Needs Resubmission.",
+              "pendingTitle": "Documents action coming next",
+              "pendingDescription": "Sprint 2.E ships the document status UI. Backend gap: no LeadDocument model exists yet — a later sprint adds the data layer."
+            },
+            "partnerData": {
+              "title": "Partner data",
+              "description": "Match, link, or review imported partner records against this contact.",
+              "pendingTitle": "Partner data action coming next",
+              "pendingDescription": "Sprint 2.F surfaces the apply / link / review actions. Backend gap: the D4 partner-data hub exposes read-only projections today; write paths (apply / merge with preview / approval) are tracked for a later sprint."
+            },
+            "note": {
+              "title": "Note only",
+              "description": "Add a free-text note to the activity timeline.",
+              "helper": "The note is saved as an activity row and appears in the Overview timeline.",
+              "fieldLabel": "Note",
+              "placeholder": "e.g. Captain confirmed he prefers Uber EG signup over inDrive — moving him to signup link sent.",
+              "submit": "Save note"
+            }
+          }
         },
         "navigator": {
           "prev": "Previous lead (Alt + ← or k)",

@@ -13,6 +13,7 @@ import {
   Mail,
   Phone,
   PhoneCall,
+  Plus,
   Repeat2,
   StickyNote,
   Trophy,
@@ -44,6 +45,7 @@ import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
 import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
+import { AddActionDrawer } from '@/components/admin/lead-detail/add-action-drawer';
 import {
   AttributionCard,
   LastActivityCard,
@@ -199,6 +201,11 @@ export default function LeadDetailPage(): JSX.Element {
     | 'operations'
     | 'audit';
   const [activeTab, setActiveTab] = useState<LeadDetailTab>('overview');
+
+  // Sprint 2.B — Add Action drawer state. Single entry point that
+  // routes to lifecycle / profile / documents / partner-data / note
+  // panels (each surfacing its own write path).
+  const [addActionOpen, setAddActionOpen] = useState<boolean>(false);
 
   // Tick once a minute so relative-time labels stay fresh in the
   // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
@@ -770,7 +777,8 @@ export default function LeadDetailPage(): JSX.Element {
         </div>
       </section>
 
-      {/* ───── Quick actions bar (B1: + Follow-up added) ───── */}
+      {/* ───── Quick actions bar (B1: + Follow-up added; Sprint 2.B:
+              + Add Action primary CTA) ───── */}
       <QuickActionsBar
         phone={lead.phone}
         currentStageCode={lead.stage.code}
@@ -779,11 +787,13 @@ export default function LeadDetailPage(): JSX.Element {
         setStageMenuOpen={setStageMenuOpen}
         disabled={isConverted}
         actionPending={actionPending}
+        onAddAction={() => setAddActionOpen(true)}
         onCall={() => focusComposer('call')}
         onAddNote={() => focusComposer('note')}
         onAddFollowUp={() => setFollowUpModalOpen(true)}
         onPickStage={(c) => void quickMoveToStage(c)}
         labels={{
+          addAction: tDetail('quickActions.addAction'),
           call: tDetail('quickActions.call'),
           addNote: tDetail('quickActions.addNote'),
           addFollowUp: tDetail('quickActions.addFollowUp'),
@@ -1230,6 +1240,17 @@ export default function LeadDetailPage(): JSX.Element {
         </section>
       </TabPanel>
 
+      {/* Sprint 2.B — Add Action drawer. Unified entry for any
+          lead update. Internal router screen lets the agent pick
+          an intent (Lifecycle / Profile / Documents / Partner /
+          Note) before showing the focused panel. */}
+      <AddActionDrawer
+        open={addActionOpen}
+        onClose={() => setAddActionOpen(false)}
+        lead={lead}
+        onApplied={() => void reload()}
+      />
+
       {/* Phase A — A6: lost-reason modal. Opens when the agent
           picks a stage with terminalKind='lost'. The modal returns
           { lostReasonId, lostNote? } via onConfirm; we replay the
@@ -1323,12 +1344,15 @@ interface QuickActionsBarProps {
   setStageMenuOpen: (open: boolean) => void;
   disabled: boolean;
   actionPending: string | null;
+  /** Sprint 2.B — opens the unified Add Action drawer. */
+  onAddAction: () => void;
   onCall: () => void;
   onAddNote: () => void;
   /** Phase B — B1: opens the FollowUpQuickModal. */
   onAddFollowUp: () => void;
   onPickStage: (code: LeadStageCode) => void;
   labels: {
+    addAction: string;
     call: string;
     addNote: string;
     addFollowUp: string;
@@ -1354,6 +1378,7 @@ function QuickActionsBar({
   setStageMenuOpen,
   disabled,
   actionPending,
+  onAddAction,
   onCall,
   onAddNote,
   onAddFollowUp,
@@ -1382,10 +1407,19 @@ function QuickActionsBar({
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+      {/* Sprint 2.B — unified Add Action entry. First button so it
+          reads as the primary path for any lead update; the
+          existing call / note / follow-up buttons remain as quick
+          shortcuts for the high-frequency cases. */}
+      <Button variant="primary" size="md" onClick={onAddAction} disabled={disabled}>
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        {labels.addAction}
+      </Button>
+
       <a
         href={`tel:${phone}`}
         onClick={onCall}
-        className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-surface-border bg-surface-card px-4 text-sm font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
       >
         <PhoneCall className="h-4 w-4" aria-hidden="true" />
         {labels.call}
