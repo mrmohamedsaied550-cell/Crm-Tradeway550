@@ -14,9 +14,16 @@ import { AdminAuthGuard } from '@/components/admin/auth-guard';
  * into /admin/* without a session triggers 401s with "Missing or
  * malformed Authorization header" instead of cleanly bouncing to login.
  */
+/**
+ * Sprint 0 — admin shell layout. `min-h-[calc(100vh-...)]` lets the
+ * dark sidebar stretch to viewport height while the global Header +
+ * <main> padding stay in place; the sidebar uses `self-stretch` so
+ * it tracks this minimum height rather than collapsing to its
+ * intrinsic content. Content gutter widened to `gap-6` is preserved.
+ */
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex w-full gap-6">
+    <div className="flex min-h-[calc(100vh-7rem)] w-full gap-6">
       <AdminSideNav />
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <AuthBar />

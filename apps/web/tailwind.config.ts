@@ -59,6 +59,17 @@ const config: Config = {
           secondary: '#6B7280',
           tertiary: '#9CA3AF',
         },
+        // Sprint 0 — dark sidebar palette per approved visual direction.
+        // Used by the admin shell side-nav; kept as a named scale so future
+        // dark surfaces (settings panels, mobile drawer) can reuse it.
+        sidebar: {
+          bg: '#0F172A',
+          hover: '#1E293B',
+          border: '#1E293B',
+          text: '#CBD5E1', // slate-300 — default link text on dark
+          textMuted: '#94A3B8', // slate-400 — section headers / disabled
+          textActive: '#FFFFFF', // active route + section header on hover
+        },
       },
       fontFamily: {
         sans: [
