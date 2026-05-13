@@ -123,6 +123,12 @@ export class PipelinesController {
           order: true,
           isTerminal: true,
           terminalKind: true,
+          // Sprint 2.1 — match the catalogue-default surface
+          // (`PipelineService.list`) so the lead-detail drawer
+          // can populate Next Status options from any stage in
+          // the lead's pipeline without a per-stage round-trip.
+          lifecycleCategory: true,
+          allowedStatuses: true,
         },
       }),
     );

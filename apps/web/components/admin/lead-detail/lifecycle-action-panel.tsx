@@ -15,8 +15,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, followUpsApi, leadsApi } from '@/lib/api';
-import type { AllowedStatusEntry, Lead, StageStatusesResponse } from '@/lib/api-types';
+import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
+import type {
+  AllowedStatusEntry,
+  Lead,
+  PipelineStage,
+  StageStatusesResponse,
+} from '@/lib/api-types';
 
 /**
  * Sprint 2.C — Lifecycle action panel inside the Add Action drawer.
@@ -97,12 +102,25 @@ export function LifecycleActionPanel({
   const tCommon = useTranslations('admin.common');
   const locale = useLocale();
 
-  // ─────── Stage / status data (live from API) ───────
-  const [data, setData] = useState<StageStatusesResponse | null>(null);
+  // ─────── Live data ───────
+  // `current` = the lead's existing stage + recorded status + this
+  // stage's allowedStatuses (D3.3 endpoint, scope-checked).
+  // `stages` = the full pipeline catalogue (Sprint 2.1 — each stage
+  // now carries its own `allowedStatuses` + `lifecycleCategory` so
+  // cross-stage Next Status options resolve without an extra
+  // round-trip).
+  const [current, setCurrent] = useState<StageStatusesResponse | null>(null);
+  const [stages, setStages] = useState<PipelineStage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // ─────── Form state ───────
+  // `nextStageId` defaults to the lead's current stage so opening
+  // the drawer + picking only a status is a same-stage update. If
+  // the agent picks a different stage, the save path moves the
+  // lead first, then writes the status (if any) against the new
+  // stage.
+  const [nextStageId, setNextStageId] = useState<string>('');
   const [nextStatusCode, setNextStatusCode] = useState<string>('');
   const [communicationMethod, setCommunicationMethod] = useState<CommunicationMethod>('call');
   const [notes, setNotes] = useState<string>('');
@@ -116,11 +134,14 @@ export function LifecycleActionPanel({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    leadsApi
-      .getStageStatuses(lead.id)
-      .then((resp) => {
+    Promise.all([leadsApi.getStageStatuses(lead.id), pipelineApi.listStages()])
+      .then(([currentResp, stagesResp]) => {
         if (cancelled) return;
-        setData(resp);
+        setCurrent(currentResp);
+        setStages(stagesResp);
+        // Default Next Stage = current stage so the panel opens on
+        // "same-stage status update".
+        setNextStageId(currentResp.stage.id);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -135,11 +156,44 @@ export function LifecycleActionPanel({
     };
   }, [lead.id]);
 
+  // ─────── Reset status when stage changes ───────
+  // Picking a different Next Stage clears the status pick because
+  // the previously-selected code may not exist in the new stage's
+  // catalogue.
+  useEffect(() => {
+    setNextStatusCode('');
+  }, [nextStageId]);
+
+  // ─────── Derived: the picked Next Stage row + its catalogue ───────
+  const nextStage: PipelineStage | null = useMemo(
+    () => stages.find((s) => s.id === nextStageId) ?? null,
+    [stages, nextStageId],
+  );
+
+  const isCrossStage = useMemo(
+    () => current !== null && nextStage !== null && nextStage.id !== current.stage.id,
+    [current, nextStage],
+  );
+
+  /** Allowed statuses available for the picked Next Stage. */
+  const nextStageAllowedStatuses: readonly AllowedStatusEntry[] = useMemo(() => {
+    if (!current || !nextStage) return [];
+    // When the agent stays on the current stage, prefer the D3.3
+    // response — it has the same data but came through the
+    // lead-scoped endpoint (so any field-level redaction still
+    // applies). For cross-stage selections we read off the
+    // catalogue endpoint added in Sprint 2.1.
+    if (nextStage.id === current.stage.id) {
+      return current.allowedStatuses;
+    }
+    return nextStage.allowedStatuses ?? [];
+  }, [current, nextStage]);
+
   // ─────── Resolve the smart rule for the picked next status ───────
   const selectedRule: AllowedStatusEntry | null = useMemo(() => {
-    if (!data || !nextStatusCode) return null;
-    return data.allowedStatuses.find((s) => s.code === nextStatusCode) ?? null;
-  }, [data, nextStatusCode]);
+    if (!nextStatusCode) return null;
+    return nextStageAllowedStatuses.find((s) => s.code === nextStatusCode) ?? null;
+  }, [nextStageAllowedStatuses, nextStatusCode]);
 
   // ─────── Seed follow-up default-due when rule asks for one ───────
   useEffect(() => {
@@ -173,44 +227,72 @@ export function LifecycleActionPanel({
   );
 
   const currentStatusLabel: string = useMemo(() => {
-    if (!data?.currentStatus) return '';
-    const match = data.allowedStatuses.find((s) => s.code === data.currentStatus!.status);
-    return match ? labelFor(match) : data.currentStatus.status;
-  }, [data, labelFor]);
+    if (!current?.currentStatus) return '';
+    const match = current.allowedStatuses.find((s) => s.code === current.currentStatus!.status);
+    return match ? labelFor(match) : current.currentStatus.status;
+  }, [current, labelFor]);
 
   // ─────── Save ───────
+  // Sprint 2.1 — cross-stage flow:
+  //   1. If the picked Next Stage differs from the lead's current
+  //      stage, call `leadsApi.moveStage` first. The server-side
+  //      contract is unchanged — RBAC, lifecycle reclassification,
+  //      activity emission, SLA reset all run as before.
+  //   2. If a Next Status was picked, write it AFTER the move so
+  //      the status row attaches to the new current stage (the
+  //      server stamps the lead's currentStageStatusId post-move).
+  //   3. If the rule asks for a follow-up, create it last so a
+  //      failed earlier step doesn't leave an orphan follow-up.
+  // A picked status is optional in cross-stage mode (some agents
+  // just want to move the stage); same-stage mode still requires
+  // a status pick (without one, there's nothing to save).
   const submit = useCallback(async () => {
-    if (!data || !nextStatusCode || !selectedRule) return;
+    if (!current || !nextStage) return;
+    if (!isCrossStage && !nextStatusCode) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      // Compose the notes string with the communication-method
-      // prefix so the activity timeline shows how the agent
-      // reached the captain. Backend gap: no dedicated column
-      // for communication method yet — flagged for a later
-      // sprint.
-      const methodTag = `[via ${communicationMethod}]`;
-      const composedNotes = notes.trim().length > 0 ? `${methodTag} ${notes.trim()}` : methodTag;
+      // 1. Cross-stage move (when needed).
+      if (isCrossStage) {
+        // Server-side lost-stage handling requires a lostReasonId.
+        // That capture lives in the existing LostReasonModal (a
+        // Sprint 3 unification); for now, block with a clear
+        // message and route the agent to the existing surface.
+        if (nextStage.terminalKind === 'lost') {
+          setSubmitError(t('lostStageBlocker'));
+          setSubmitting(false);
+          return;
+        }
+        await leadsApi.moveStage(lead.id, { pipelineStageId: nextStage.id });
+      }
 
-      await leadsApi.setStageStatus(lead.id, {
-        status: nextStatusCode,
-        notes: composedNotes,
-      });
+      // 2. Status write (optional in cross-stage mode).
+      if (nextStatusCode) {
+        // Compose the notes string with the communication-method
+        // prefix so the activity timeline shows how the agent
+        // reached the captain. Backend gap: no dedicated column
+        // for communication method yet — flagged for a later
+        // sprint.
+        const methodTag = `[via ${communicationMethod}]`;
+        const composedNotes = notes.trim().length > 0 ? `${methodTag} ${notes.trim()}` : methodTag;
+        await leadsApi.setStageStatus(lead.id, {
+          status: nextStatusCode,
+          notes: composedNotes,
+        });
 
-      // Optional follow-up auto-creation when the rule asks for it.
-      if (selectedRule.requiresFollowUp && followUpDueAt) {
-        // Convert datetime-local (no TZ) to an ISO string by treating
-        // it as local time.
-        const dueLocal = new Date(followUpDueAt);
-        if (!Number.isNaN(dueLocal.getTime())) {
-          await followUpsApi.create(lead.id, {
-            actionType: mapCommunicationToActionType(communicationMethod),
-            dueAt: dueLocal.toISOString(),
-            note:
-              selectedRule.defaultNextActionTitle ??
-              composedNotes.replace(`${methodTag} `, '') ??
-              '',
-          });
+        // 3. Optional follow-up auto-creation when the rule asks for it.
+        if (selectedRule?.requiresFollowUp && followUpDueAt) {
+          const dueLocal = new Date(followUpDueAt);
+          if (!Number.isNaN(dueLocal.getTime())) {
+            await followUpsApi.create(lead.id, {
+              actionType: mapCommunicationToActionType(communicationMethod),
+              dueAt: dueLocal.toISOString(),
+              note:
+                selectedRule.defaultNextActionTitle ??
+                composedNotes.replace(`${methodTag} `, '') ??
+                '',
+            });
+          }
         }
       }
 
@@ -222,7 +304,9 @@ export function LifecycleActionPanel({
       setSubmitting(false);
     }
   }, [
-    data,
+    current,
+    nextStage,
+    isCrossStage,
     nextStatusCode,
     selectedRule,
     notes,
@@ -231,6 +315,7 @@ export function LifecycleActionPanel({
     lead.id,
     onApplied,
     onClose,
+    t,
   ]);
 
   // ─────── Loading / empty / error states ───────
@@ -240,17 +325,15 @@ export function LifecycleActionPanel({
   if (loadError) {
     return <Notice tone="error">{loadError}</Notice>;
   }
-  if (!data) {
+  if (!current) {
     return <Notice tone="info">{t('noData')}</Notice>;
   }
-  if (data.allowedStatuses.length === 0) {
-    return (
-      <Notice tone="info">
-        <p className="text-sm font-medium">{t('noStatusesTitle')}</p>
-        <p className="mt-1 text-xs text-ink-secondary">{t('noStatusesDescription')}</p>
-      </Notice>
-    );
-  }
+
+  // Disable the save button when the form is in an unsubmittable
+  // state: same-stage with no status picked (nothing to save) or
+  // cross-stage to a stage with no catalogue when no status was
+  // chosen (the move itself is still saveable — that's allowed).
+  const saveDisabled = submitting || !nextStage || (!isCrossStage && nextStatusCode.length === 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -258,7 +341,7 @@ export function LifecycleActionPanel({
       <section className="rounded-lg border border-surface-border bg-surface-card p-3">
         <p className="text-xs uppercase tracking-wide text-ink-tertiary">{t('currentLabel')}</p>
         <p className="mt-1 text-sm">
-          <span className="font-medium text-ink-primary">{data.stage.name}</span>
+          <span className="font-medium text-ink-primary">{current.stage.name}</span>
           {currentStatusLabel ? (
             <>
               <span className="mx-2 text-ink-tertiary">·</span>
@@ -273,21 +356,70 @@ export function LifecycleActionPanel({
         </p>
       </section>
 
-      {/* ───── Next Status picker ───── */}
-      <Field label={t('nextStatusLabel')}>
+      {/* ───── Next Stage picker (Sprint 2.1) ─────
+          Lists every stage in the lead's pipeline (ordered).
+          Defaults to the current stage so opening the drawer +
+          picking only a status is a same-stage update; choosing
+          a different stage promotes the save to a cross-stage
+          move + (optional) status write. */}
+      <Field label={t('nextStageLabel')}>
         <Select
-          value={nextStatusCode}
-          onChange={(e) => setNextStatusCode(e.target.value)}
+          value={nextStageId}
+          onChange={(e) => setNextStageId(e.target.value)}
           disabled={submitting}
         >
-          <option value="">{t('nextStatusPlaceholder')}</option>
-          {data.allowedStatuses.map((s) => (
-            <option key={s.code} value={s.code}>
-              {labelFor(s)}
+          {stages.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {s.id === current.stage.id ? ` (${t('sameStageHint')})` : ''}
             </option>
           ))}
         </Select>
       </Field>
+
+      {/* ───── Cross-stage transition preview ───── */}
+      {isCrossStage && nextStage ? (
+        <Notice tone="info">
+          <p className="text-sm font-medium">{t('transitionPreviewTitle')}</p>
+          <p className="mt-1 text-xs text-ink-secondary">
+            {t('transitionPreviewBody', {
+              from: current.stage.name,
+              to: nextStage.name,
+            })}
+          </p>
+          {nextStage.terminalKind === 'lost' ? (
+            <p className="mt-2 text-xs font-medium text-status-breach">{t('lostStageBlocker')}</p>
+          ) : null}
+        </Notice>
+      ) : null}
+
+      {/* ───── Next Status picker ─────
+          Driven by the SELECTED stage's allowedStatuses, not the
+          lead's current one. Empty-state hint replaces the picker
+          when the chosen stage has nothing configured. */}
+      {nextStageAllowedStatuses.length > 0 ? (
+        <Field label={t('nextStatusLabel')}>
+          <Select
+            value={nextStatusCode}
+            onChange={(e) => setNextStatusCode(e.target.value)}
+            disabled={submitting}
+          >
+            <option value="">
+              {isCrossStage ? t('nextStatusOptionalPlaceholder') : t('nextStatusPlaceholder')}
+            </option>
+            {nextStageAllowedStatuses.map((s) => (
+              <option key={s.code} value={s.code}>
+                {labelFor(s)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : (
+        <Notice tone="info">
+          <p className="text-sm font-medium">{t('noStatusesTitle')}</p>
+          <p className="mt-1 text-xs text-ink-secondary">{t('noStatusesDescription')}</p>
+        </Notice>
+      )}
 
       {/* ───── Communication method ───── */}
       <Field label={t('communicationLabel')}>
@@ -333,12 +465,8 @@ export function LifecycleActionPanel({
         <Button variant="secondary" onClick={onClose} disabled={submitting}>
           {tCommon('cancel')}
         </Button>
-        <Button
-          onClick={() => void submit()}
-          loading={submitting}
-          disabled={nextStatusCode.length === 0}
-        >
-          {t('submit')}
+        <Button onClick={() => void submit()} loading={submitting} disabled={saveDisabled}>
+          {isCrossStage && nextStatusCode.length === 0 ? t('submitMoveOnly') : t('submit')}
         </Button>
       </div>
     </div>

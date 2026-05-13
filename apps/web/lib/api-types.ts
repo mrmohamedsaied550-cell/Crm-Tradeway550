@@ -465,6 +465,28 @@ export interface PipelineStage {
    * detail page can detect lost-stage moves and prompt for a reason.
    */
   terminalKind: 'won' | 'lost' | null;
+  /**
+   * Sprint 2.1 — Captain Masr lifecycle classifier on the stage.
+   * Surfaced by the catalogue endpoints so the Add Action →
+   * Lifecycle drawer can highlight the journey step for the
+   * picked Next Stage. Mirrors `LifecycleCategory`.
+   */
+  lifecycleCategory?: LifecycleCategory | null;
+  /**
+   * Sprint 2.1 — the stage's status catalogue (Sprint 1.A's
+   * `allowedStatuses` JSONB). Carries the optional Smart Status
+   * Rule metadata so the drawer can render rule-driven banners
+   * (follow-up auto-create, reason capture, close / convert /
+   * approval preview) for ANY stage the agent picks as Next
+   * Stage, not just the lead's current one.
+   *
+   * Null = no catalogue configured for this stage (admin needs
+   * to populate it via the future Lifecycle Builder). The UI
+   * renders an empty-state hint instead of a disabled picker.
+   * The response is the raw JSONB value — runtime validation
+   * happens at the consumer when needed.
+   */
+  allowedStatuses?: readonly AllowedStatusEntry[] | null;
 }
 
 /**
