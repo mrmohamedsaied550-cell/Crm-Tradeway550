@@ -19,6 +19,9 @@ import { Notice } from '@/components/ui/notice';
 import { ApiError, leadsApi } from '@/lib/api';
 import type { Lead } from '@/lib/api-types';
 import { LifecycleActionPanel } from './lifecycle-action-panel';
+import { ProfileActionPanel } from './profile-action-panel';
+import { DocumentsActionPanel } from './documents-action-panel';
+import { PartnerDataActionPanel } from './partner-data-action-panel';
 
 /**
  * Sprint 2.B — Smart Add Action drawer.
@@ -210,14 +213,25 @@ export function AddActionDrawer({
 
           {area === 'lifecycle' ? (
             // ─────── Sprint 2.C — Lifecycle action panel (LIVE) ───────
-            // Reads the lead's current stage + status + the stage's
-            // allowedStatuses catalogue (with Smart Status Rule
-            // metadata from Sprint 1.A). Surfaces rule-driven
-            // banners + auxiliary fields when the picked status
-            // declares them. Save writes through the existing
-            // leadsApi.setStageStatus + followUpsApi.create
-            // endpoints.
             <LifecycleActionPanel lead={lead} onApplied={onApplied} onClose={close} />
+          ) : area === 'profile' ? (
+            // ─────── Sprint 2.D — Profile action panel (LIVE) ───────
+            // Editable name / phone / email via leadsApi.update +
+            // FieldGated; backend gaps (location / vehicle /
+            // acquisition / assignment) are surfaced as a
+            // Notice block inside the panel.
+            <ProfileActionPanel lead={lead} onApplied={onApplied} onClose={close} />
+          ) : area === 'documents' ? (
+            // ─────── Sprint 2.E — Documents panel (SCAFFOLD) ───────
+            // 5 status states displayed read-only; backend gap is
+            // explicit (no LeadDocument model yet).
+            <DocumentsActionPanel lead={lead} onClose={close} />
+          ) : area === 'partnerData' ? (
+            // ─────── Sprint 2.F — Partner Data panel (SCAFFOLD) ───────
+            // Reuses the D4.4 PartnerDataCard read-only projection;
+            // backend gap (write paths apply/link/review) is
+            // explicit.
+            <PartnerDataActionPanel lead={lead} onClose={close} />
           ) : area === 'note' ? (
             // ─────── Sprint 2.G — Note Only panel (LIVE) ───────
             // Re-uses the same `leadsApi.addActivity` endpoint that

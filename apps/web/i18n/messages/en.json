@@ -113,7 +113,8 @@
       "clearFilters": "Clear filters",
       "errorTitle": "Couldn't load data",
       "select": "Select…",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "close": "Close"
     },
     "companies": {
       "title": "Companies",
@@ -521,20 +522,37 @@
             "profile": {
               "title": "Profile info",
               "description": "Update contact, location, vehicle, acquisition and assignment fields.",
-              "pendingTitle": "Profile editor coming next",
-              "pendingDescription": "Sprint 2.D adds editable contact / assignment fields here with FieldGated so D5 field-level access still wins."
+              "nameLabel": "Name",
+              "phoneLabel": "Phone",
+              "emailLabel": "Email",
+              "submit": "Save profile",
+              "placeholders": {
+                "heading": "Coming in later sprints (backend schema gap)",
+                "location": "Location (city, address, lat/lng) — no schema field yet.",
+                "vehicle": "Vehicle (plate, model, year, category) — no schema field yet.",
+                "acquisition": "Acquisition channel (separate from attribution.source) — no schema field yet.",
+                "assignment": "Assignment editor — already lives in the Operations tab; will be regrouped here in a polish pass."
+              }
             },
             "documents": {
               "title": "Documents",
               "description": "Mark documents as Uploaded / Accepted / Rejected / Missing / Needs Resubmission.",
-              "pendingTitle": "Documents action coming next",
-              "pendingDescription": "Sprint 2.E ships the document status UI. Backend gap: no LeadDocument model exists yet — a later sprint adds the data layer."
+              "gapTitle": "Documents tab — UI scaffold only",
+              "gapDescription": "Backend gap: no LeadDocument model exists yet, no upload endpoint, no status-update endpoint. Capability gates (lead.document.read / .write / .accept / .reject) need to be added when the model lands.",
+              "statusBreakdown": "Status breakdown (placeholder counts)",
+              "states": {
+                "uploaded": "Uploaded",
+                "accepted": "Accepted",
+                "rejected": "Rejected",
+                "missing": "Missing",
+                "needs_resubmission": "Needs resubmission"
+              }
             },
             "partnerData": {
               "title": "Partner data",
               "description": "Match, link, or review imported partner records against this contact.",
-              "pendingTitle": "Partner data action coming next",
-              "pendingDescription": "Sprint 2.F surfaces the apply / link / review actions. Backend gap: the D4 partner-data hub exposes read-only projections today; write paths (apply / merge with preview / approval) are tracked for a later sprint."
+              "gapTitle": "Partner data — read-only today",
+              "gapDescription": "The D4.4 projection (matched / mismatch / last sync) renders below. Write paths (apply / link to a different contact / mark as review) need POST /leads/:id/partner-data/{apply|link|review} endpoints + the partner.data.* capabilities. Sprint 4 owns the per-partner journey matrix."
             },
             "note": {
               "title": "Note only",
