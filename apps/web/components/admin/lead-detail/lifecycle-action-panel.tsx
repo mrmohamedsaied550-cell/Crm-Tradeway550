@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, followUpsApi, leadsApi, pipelineApi } from '@/lib/api';
+import { ApiError, followUpsApi, leadsApi, pipelineApi, transitionRequestsApi } from '@/lib/api';
 import type {
   AllowedStatusEntry,
   Lead,
@@ -232,6 +232,12 @@ export function LifecycleActionPanel({
     return match ? labelFor(match) : current.currentStatus.status;
   }, [current, labelFor]);
 
+  // ─────── Approval gate (Sprint 3) ───────
+  // The selected status' rule (or, as a fallback, the picked
+  // cross-stage transition's rule) decides whether this save
+  // routes through the new approval engine or applies directly.
+  const requiresApproval = useMemo(() => Boolean(selectedRule?.requiresApproval), [selectedRule]);
+
   // ─────── Save ───────
   // Sprint 2.1 — cross-stage flow:
   //   1. If the picked Next Stage differs from the lead's current
@@ -252,6 +258,24 @@ export function LifecycleActionPanel({
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // Sprint 3 — approval branch.
+      // When the picked status' rule has `requiresApproval`, the
+      // save creates a Pending Transition Request instead of
+      // moving the lead directly. The lead stays in its current
+      // stage / status / team / owner until an approver acts on
+      // the request via the Pending Approval card.
+      if (requiresApproval) {
+        await transitionRequestsApi.request(lead.id, {
+          toStageId: nextStage.id,
+          ...(nextStatusCode ? { requestedStatusCode: nextStatusCode } : {}),
+          ...(communicationMethod ? { communicationMethod } : {}),
+          ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}),
+        });
+        onApplied();
+        onClose();
+        return;
+      }
+
       // 1. Cross-stage move (when needed).
       if (isCrossStage) {
         // Server-side lost-stage handling requires a lostReasonId.
@@ -309,6 +333,7 @@ export function LifecycleActionPanel({
     isCrossStage,
     nextStatusCode,
     selectedRule,
+    requiresApproval,
     notes,
     communicationMethod,
     followUpDueAt,
@@ -466,7 +491,11 @@ export function LifecycleActionPanel({
           {tCommon('cancel')}
         </Button>
         <Button onClick={() => void submit()} loading={submitting} disabled={saveDisabled}>
-          {isCrossStage && nextStatusCode.length === 0 ? t('submitMoveOnly') : t('submit')}
+          {requiresApproval
+            ? t('submitRequestApproval')
+            : isCrossStage && nextStatusCode.length === 0
+              ? t('submitMoveOnly')
+              : t('submit')}
         </Button>
       </div>
     </div>

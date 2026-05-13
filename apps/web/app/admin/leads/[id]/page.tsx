@@ -46,6 +46,7 @@ import { NextActionCard } from '@/components/admin/lead-detail/next-action-card'
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
 import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
 import { AddActionDrawer } from '@/components/admin/lead-detail/add-action-drawer';
+import { PendingTransitionRequestCard } from '@/components/admin/lead-detail/pending-transition-request-card';
 import {
   AttributionCard,
   LastActivityCard,
@@ -834,6 +835,16 @@ export default function LeadDetailPage(): JSX.Element {
           onChanged={() => void reload()}
         />
       </div>
+
+      {/* ───── Sprint 3 — Pending Transition Request card ─────
+          Renders null when no pending or recently-rejected request
+          exists. Lives above the tabs so the agent / approver
+          never has to switch tabs to see what's waiting. */}
+      <PendingTransitionRequestCard
+        leadId={lead.id}
+        refreshKey={lead.updatedAt}
+        onChanged={() => void reload()}
+      />
 
       {/* ───── Sprint 2.A — Smart Tabs ───── */}
       <Tabs<LeadDetailTab>
