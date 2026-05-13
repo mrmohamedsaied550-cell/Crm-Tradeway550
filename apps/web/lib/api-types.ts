@@ -1375,7 +1375,36 @@ export interface AttemptHistoryResult {
  * `currentStatus` (a single row, possibly null) and `history` (every
  * status row recorded for the lead, newest first).
  */
-export interface AllowedStatusEntry {
+/**
+ * Sprint 1 (D6.1) — Smart Status Rule metadata block. Wire mirror
+ * of the backend's `SmartStatusRule` schema. Every field is
+ * optional — when admins haven't configured a rule, all flags are
+ * absent and the UI falls back to dumb stage-status semantics.
+ *
+ * Drives the Sprint 2.C Lifecycle action panel: follow-up
+ * auto-creation, reason capture, close / convert / approval
+ * preview banners.
+ */
+export type CloseJourneyType = 'lost' | 'rejected' | 'not_qualified';
+
+export interface SmartStatusRule {
+  requiresFollowUp?: boolean;
+  defaultNextActionTitle?: string;
+  defaultDueOffsetMinutes?: number;
+  defaultDueTime?: string;
+  requiresReason?: boolean;
+  reasonGroup?: string;
+  closeJourney?: boolean;
+  closeType?: CloseJourneyType;
+  autoMoveStage?: boolean;
+  nextStageCode?: string;
+  nextStatusCode?: string;
+  convertToCaptain?: boolean;
+  requiresApproval?: boolean;
+  requiredChecks?: readonly string[];
+}
+
+export interface AllowedStatusEntry extends SmartStatusRule {
   code: string;
   label: string;
   labelAr: string;

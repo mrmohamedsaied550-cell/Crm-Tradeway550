@@ -455,6 +455,66 @@
             "lifecycle": {
               "title": "Lifecycle / Stage & Status",
               "description": "Move the lead through the journey, set a new stage status, schedule the next action.",
+              "currentLabel": "Current",
+              "noStatusYet": "No status recorded for this stage yet",
+              "noStatusesTitle": "No statuses configured for the current stage",
+              "noStatusesDescription": "An admin needs to add status entries to this stage's allowedStatuses catalogue before agents can record a status update here. Sprint 7's Lifecycle Builder UI will surface this configuration.",
+              "noData": "Could not load stage data.",
+              "nextStatusLabel": "Next status",
+              "nextStatusPlaceholder": "Pick the new status…",
+              "communicationLabel": "Communication method",
+              "notesLabel": "Notes",
+              "notesPlaceholder": "Optional context — what happened, what the captain said, what to follow up on.",
+              "submit": "Save status update",
+              "communication": {
+                "call": "Call",
+                "whatsapp": "WhatsApp",
+                "sms": "SMS",
+                "manual": "Manual / in-person",
+                "partner_sheet": "Partner sheet",
+                "system": "System"
+              },
+              "rules": {
+                "requiresFollowUp": {
+                  "title": "A follow-up will be scheduled",
+                  "suggested": "Suggested action: {title}",
+                  "dueAtLabel": "Due at"
+                },
+                "requiresReason": {
+                  "title": "A reason is required",
+                  "description": "This status requires a reason. Sprint 3 surfaces the reason picker; for now the agent should capture the reason in the notes field below.",
+                  "descriptionWithGroup": "This status requires a reason from the \"{group}\" catalogue. Sprint 3 surfaces the reason picker; for now the agent should capture the reason in the notes field below."
+                },
+                "closeJourney": {
+                  "lost": {
+                    "title": "This will mark the lead as LOST",
+                    "description": "Saving this status closes the lead. Use the existing Move stage → Lost flow for the full lost-reason capture (Sprint 3 unifies these paths)."
+                  },
+                  "rejected": {
+                    "title": "This will mark the lead as REJECTED",
+                    "description": "Saving this status closes the lead as rejected. The full reason-capture modal is reachable via Move stage today; Sprint 3 unifies the paths."
+                  },
+                  "not_qualified": {
+                    "title": "This will mark the lead as NOT QUALIFIED",
+                    "description": "Saving this status closes the lead as not qualified. The full reason-capture modal is reachable via Move stage today; Sprint 3 unifies the paths."
+                  }
+                },
+                "convertToCaptain": {
+                  "title": "This will trigger Lead → Captain conversion",
+                  "description": "Saving this status surfaces the conversion preview. Use the existing Convert button in Operations until Sprint 3 wires the inline flow."
+                },
+                "requiresApproval": {
+                  "title": "Approval required before this transition takes effect",
+                  "description": "Sprint 3 wires the approval engine. Today the status will save in pending-approval state — a TL or Ops user will still need to confirm via the existing surface."
+                },
+                "autoMoveStage": {
+                  "title": "Stage will auto-advance",
+                  "description": "Once Sprint 3 wires auto-move, this status will move the lead to stage code: {next}."
+                },
+                "requiredChecks": {
+                  "title": "Required pre-conditions"
+                }
+              },
               "pendingTitle": "Lifecycle action coming next",
               "pendingDescription": "Sprint 2.C wires Next Stage / Next Status pickers, communication method, follow-up auto-creation, reason capture, close / convert / approval previews — all driven by the Smart Status Rule schema shipped in Sprint 1.A."
             },

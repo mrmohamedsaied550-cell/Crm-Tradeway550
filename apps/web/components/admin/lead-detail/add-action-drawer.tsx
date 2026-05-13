@@ -18,6 +18,7 @@ import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { ApiError, leadsApi } from '@/lib/api';
 import type { Lead } from '@/lib/api-types';
+import { LifecycleActionPanel } from './lifecycle-action-panel';
 
 /**
  * Sprint 2.B — Smart Add Action drawer.
@@ -207,7 +208,17 @@ export function AddActionDrawer({
 
           {error ? <Notice tone="error">{error}</Notice> : null}
 
-          {area === 'note' ? (
+          {area === 'lifecycle' ? (
+            // ─────── Sprint 2.C — Lifecycle action panel (LIVE) ───────
+            // Reads the lead's current stage + status + the stage's
+            // allowedStatuses catalogue (with Smart Status Rule
+            // metadata from Sprint 1.A). Surfaces rule-driven
+            // banners + auxiliary fields when the picked status
+            // declares them. Save writes through the existing
+            // leadsApi.setStageStatus + followUpsApi.create
+            // endpoints.
+            <LifecycleActionPanel lead={lead} onApplied={onApplied} onClose={close} />
+          ) : area === 'note' ? (
             // ─────── Sprint 2.G — Note Only panel (LIVE) ───────
             // Re-uses the same `leadsApi.addActivity` endpoint that
             // powers the inline composer; capability gate
