@@ -407,6 +407,33 @@
             "dft": "DFT"
           }
         },
+        "tabs": {
+          "ariaLabel": "Lead detail sections",
+          "overview": "Overview",
+          "profile": "Profile",
+          "partnerPresence": "Partner Presence",
+          "documents": "Documents",
+          "operations": "Operations",
+          "audit": "Audit",
+          "profilePending": {
+            "title": "Profile editor coming next",
+            "description": "Sprint 2.D will surface contact, location, vehicle, acquisition and assignment fields here with field-level access still respected."
+          },
+          "partnerPresenceHint": "Sprint 4 expands this into the per-partner journey matrix (Uber / inDrive / DiDi / Careem / Yango). Today this tab shows the existing partner data + evidence projections.",
+          "documentsPending": {
+            "title": "Documents tab coming next",
+            "description": "Sprint 2.E adds the Uploaded / Accepted / Rejected / Missing / Needs Resubmission states. Backend gap: no LeadDocument model exists yet — that lands in a later sprint."
+          },
+          "operationsPending": {
+            "title": "Operations tab coming next",
+            "description": "Sprint 2.D regroups assign, convert, reactivate, rotate, SLA and rotation history here. Until then these live in the Overview tab's right column."
+          },
+          "auditPending": {
+            "title": "Audit",
+            "description": "All audit entries for this lead are visible in the tenant-wide Audit Log, filtered by entity id."
+          },
+          "auditOpenFullAudit": "Open full audit log →"
+        },
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
