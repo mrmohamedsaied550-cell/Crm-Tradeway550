@@ -749,6 +749,31 @@ export class LeadsService {
               isTerminal: true,
               terminalKind: true,
               pipelineId: true,
+              // Sprint 1.B — surface the lifecycle classifier so the
+              // Lead Detail page can light the active step of the
+              // Journey Bar (Fresh Lead → Signup → Active → DFT).
+              // NULL on stages that don't participate in the journey
+              // — the bar simply renders all steps as inactive in
+              // that case (empty-state contract).
+              lifecycleCategory: true,
+            },
+          },
+          // Sprint 1.B — surface the current status row so the Lead
+          // Detail header can render the active status chip and the
+          // Add Action modal (Sprint 2) can read the Smart Status
+          // Rule it carries. Always nullable: legacy leads and
+          // newly-created leads have no status yet. The full smart-
+          // rule metadata lives in `stage.allowedStatuses` and is
+          // resolved at render time against the entry whose
+          // `code === currentStageStatus.status`.
+          currentStageStatus: {
+            select: {
+              id: true,
+              status: true,
+              notes: true,
+              setByUserId: true,
+              attemptIndex: true,
+              createdAt: true,
             },
           },
           captain: true,

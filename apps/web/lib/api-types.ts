@@ -651,8 +651,33 @@ export interface Lead {
    * wants). The `LeadStageCode` literal is kept only as a "well-known
    * codes" reference for callers that still need to pattern-match
    * against the canonical 5 (e.g. "is this lead converted?").
+   *
+   * Sprint 1.B — `lifecycleCategory` exposes the four-step Captain
+   * Masr journey (Fresh Lead → Signup → Active → DFT). NULL on stages
+   * that don't participate in the journey; the Journey Bar renders
+   * all four steps as inactive in that case.
    */
-  stage: { code: string; name: string; order: number; isTerminal: boolean };
+  stage: {
+    code: string;
+    name: string;
+    order: number;
+    isTerminal: boolean;
+    lifecycleCategory?: LifecycleCategory | null;
+  };
+  /**
+   * Sprint 1.B — current status row, surfaced for the Lead Detail
+   * header chip and the Add Action modal's Smart Status Rule
+   * lookup. Null when no agent has recorded a status in the
+   * current stage yet (legacy + freshly-created leads).
+   */
+  currentStageStatus?: {
+    id: string;
+    status: string;
+    notes: string | null;
+    setByUserId: string | null;
+    attemptIndex: number;
+    createdAt: string;
+  } | null;
   assignedToId: string | null;
   createdById: string | null;
   slaDueAt: string | null;
@@ -1183,6 +1208,22 @@ export interface LostReason {
 
 /** Phase A — A6: lead lifecycle classifier. Computed from stage.terminalKind. */
 export type LeadLifecycleState = 'open' | 'won' | 'lost' | 'archived';
+
+/**
+ * Sprint 1 (D6.1) — Captain Masr lifecycle classifier on a pipeline
+ * stage. The four canonical journey steps. NULL means the stage
+ * does not participate in the Journey Bar.
+ *
+ * Wire mirror of `apps/api/src/crm/lead-stage-status.dto.ts` →
+ * `LIFECYCLE_CATEGORIES`.
+ */
+export type LifecycleCategory = 'fresh_lead' | 'signup' | 'active' | 'dft';
+export const LIFECYCLE_CATEGORIES: ReadonlyArray<LifecycleCategory> = [
+  'fresh_lead',
+  'signup',
+  'active',
+  'dft',
+];
 
 // ───── Meta lead-ad sources (P2-06) ─────
 
