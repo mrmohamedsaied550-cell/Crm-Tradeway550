@@ -47,6 +47,8 @@ import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slo
 import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
 import { AddActionDrawer } from '@/components/admin/lead-detail/add-action-drawer';
 import { PendingTransitionRequestCard } from '@/components/admin/lead-detail/pending-transition-request-card';
+import { PartnerPresenceSummary } from '@/components/admin/lead-detail/partner-presence-summary';
+import { PartnerPresenceTable } from '@/components/admin/lead-detail/partner-presence-table';
 import {
   AttributionCard,
   LastActivityCard,
@@ -872,6 +874,15 @@ export default function LeadDetailPage(): JSX.Element {
         onChanged={() => void reload()}
       />
 
+      {/* ───── Sprint 4 — Partner Presence compact summary ─────
+          Always-visible chip row showing the lead's per-partner
+          status across imported sources (Uber EG / inDrive EG /
+          DiDi EG / Careem / Yango). Surfaces the one-contact /
+          many-partners model at the header level so the agent
+          doesn't have to switch to the Partner Presence tab to
+          read the headline. */}
+      <PartnerPresenceSummary leadId={lead.id} refreshKey={lead.updatedAt} />
+
       {/* ───── Sprint 2.A — Smart Tabs ───── */}
       <Tabs<LeadDetailTab>
         value={activeTab}
@@ -1208,17 +1219,20 @@ export default function LeadDetailPage(): JSX.Element {
         </section>
       </TabPanel>
 
-      {/* ───── Partner Presence tab ─────
-          Sprint 2.A — surfaces the existing Partner Data + Evidence
-          read-only cards (D4.4 + D4.8). Sprint 4 expands this into
-          the multi-partner per-contact journey matrix; for now we
-          show what's there with an empty-state hint when no
-          partner data exists. */}
+      {/* ───── Partner Presence tab (Sprint 4) ─────
+          Detailed per-partner journey table built on the existing
+          D4.4 verification projection — one row per partner the
+          lead has data for, with partner status / verification
+          chip / last sync / warnings. Followed by the Add Partner
+          Target placeholder + same-phone hint. Existing
+          PartnerDataCard + EvidenceCard render BELOW for the
+          merge / evidence detail that the new table doesn't
+          duplicate. */}
       <TabPanel id="partnerPresence" active={activeTab === 'partnerPresence'}>
         <div className="flex flex-col gap-3">
+          <PartnerPresenceTable leadId={lead.id} refreshKey={lead.updatedAt} />
           <PartnerDataCard leadId={lead.id} />
           <EvidenceCard leadId={lead.id} />
-          <Notice tone="info">{tDetail('tabs.partnerPresenceHint')}</Notice>
         </div>
       </TabPanel>
 
