@@ -514,6 +514,15 @@
               "submit": "Save status update",
               "submitMoveOnly": "Move stage",
               "submitRequestApproval": "Request approval",
+              "reason": {
+                "required": "Reason is required for this status",
+                "dropdownLabel": "Reason",
+                "dropdownPlaceholder": "Pick a reason…",
+                "textLabel": "Reason",
+                "textPlaceholder": "Type the reason for this status change",
+                "textPlaceholderWithGroup": "Type the reason ({group})",
+                "hint": "The reason is saved on the transition request / status event so reviewers and audit can see it."
+              },
               "communication": {
                 "call": "Call",
                 "whatsapp": "WhatsApp",

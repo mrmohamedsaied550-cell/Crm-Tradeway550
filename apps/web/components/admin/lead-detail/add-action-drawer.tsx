@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   ArrowLeft,
@@ -77,6 +77,18 @@ interface AddActionDrawerProps {
   lead: Lead | null;
   /** Caller-side callback after a successful write — usually `reload()`. */
   onApplied: () => void;
+  /**
+   * Sprint 3.1 — optional pre-selection. When set, the drawer
+   * opens directly on the matching area panel (skipping the
+   * "What do you want to update?" router). Used by the
+   * QuickActionsBar Move Stage shortcut so the agent lands on
+   * the Lifecycle panel with the target stage pre-picked —
+   * never bypasses approval rules because the panel routes
+   * through the standard save flow.
+   */
+  initialArea?: AddActionArea;
+  /** Pre-fill the Lifecycle panel's Next Stage selector. */
+  initialNextStageId?: string;
 }
 
 interface AreaDescriptor {
@@ -115,12 +127,24 @@ export function AddActionDrawer({
   onClose,
   lead,
   onApplied,
+  initialArea,
+  initialNextStageId,
 }: AddActionDrawerProps): JSX.Element | null {
   const t = useTranslations('admin.leads.detail.addAction');
   const tCommon = useTranslations('admin.common');
 
-  const [area, setArea] = useState<AddActionArea | null>(null);
+  const [area, setArea] = useState<AddActionArea | null>(initialArea ?? null);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-seed when the caller flips `open` true with a new
+  // initialArea — otherwise stale area state could outlive a
+  // close+reopen.
+  useEffect(() => {
+    if (open) {
+      setArea(initialArea ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialArea]);
 
   // ─────── Note Only state (Sprint 2.G) ───────
   const [noteBody, setNoteBody] = useState<string>('');
@@ -213,7 +237,12 @@ export function AddActionDrawer({
 
           {area === 'lifecycle' ? (
             // ─────── Sprint 2.C — Lifecycle action panel (LIVE) ───────
-            <LifecycleActionPanel lead={lead} onApplied={onApplied} onClose={close} />
+            <LifecycleActionPanel
+              lead={lead}
+              onApplied={onApplied}
+              onClose={close}
+              initialNextStageId={initialNextStageId ?? null}
+            />
           ) : area === 'profile' ? (
             // ─────── Sprint 2.D — Profile action panel (LIVE) ───────
             // Editable name / phone / email via leadsApi.update +

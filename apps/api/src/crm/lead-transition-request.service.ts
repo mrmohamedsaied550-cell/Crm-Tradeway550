@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
+import { CaptainsService } from './captains.service';
 import {
   parseAllowedStatusesJson,
   type AllowedStatusEntry,
@@ -54,6 +55,13 @@ export class LeadTransitionRequestService {
     private readonly prisma: PrismaService,
     private readonly leads: LeadsService,
     private readonly stageStatus: LeadStageStatusService,
+    /** Sprint 3.1 — reused by the approval engine when the picked
+     *  status' rule sets `convertToCaptain: true`. The existing
+     *  convert-from-lead path is the canonical Lead → Captain
+     *  transition: it creates the Captain row, moves the lead to
+     *  the converted stage, pauses SLA, flips lifecycleState to
+     *  'won', and writes the activity rows in one tx. */
+    private readonly captains: CaptainsService,
     private readonly audit: AuditService,
   ) {}
 
@@ -282,7 +290,30 @@ export class LeadTransitionRequestService {
     // 4. Handoff (best-effort).
     await this.applyHandoff(reqRow);
 
-    // 5. Flip the row + audit.
+    // 5. Sprint 3.1 — convert to captain when the rule asked for it.
+    //    Reuses the canonical CaptainsService.convertFromLead path
+    //    (creates Captain row + moves lead to converted + pauses
+    //    SLA + flips lifecycleState='won' + activity rows, all in
+    //    one tx). Profile / timeline / audit are preserved by
+    //    design — the convert path doesn't touch lead identity.
+    //
+    //    If the lead has already been converted (race with another
+    //    approver, or the snapshot is stale), the canonical path
+    //    throws ConflictException with `captain.already_exists`
+    //    which surfaces to the UI as a clean 409.
+    let convertedToCaptain = false;
+    const snapshot = (reqRow.ruleSnapshot ?? null) as SmartStatusRule | null;
+    if (snapshot?.convertToCaptain) {
+      // Let the convert path's exceptions propagate as-is —
+      // ConflictException with `captain.already_exists` etc.
+      // surface to the UI as clean 4xx responses. The request
+      // stays pending if convert throws, so the approver can
+      // re-decide once the underlying issue is resolved.
+      await this.captains.convertFromLead(reqRow.leadId, {}, userClaims.userId);
+      convertedToCaptain = true;
+    }
+
+    // 6. Flip the row + audit.
     await this.prisma.withTenant(tenantId, async (tx) => {
       await tx.leadTransitionRequest.update({
         where: { id: requestId },
@@ -304,6 +335,7 @@ export class LeadTransitionRequestService {
           toStageId: reqRow.toStageId,
           requestedStatusCode: reqRow.requestedStatusCode ?? null,
           handoffRule: reqRow.handoffRule ?? null,
+          convertedToCaptain,
         } as Prisma.InputJsonValue,
       });
     });

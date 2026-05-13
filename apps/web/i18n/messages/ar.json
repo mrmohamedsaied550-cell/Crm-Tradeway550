@@ -514,6 +514,15 @@
               "submit": "حفظ تحديث الحالة",
               "submitMoveOnly": "نقل المرحلة",
               "submitRequestApproval": "طلب اعتماد",
+              "reason": {
+                "required": "السبب مطلوب لهذه الحالة",
+                "dropdownLabel": "السبب",
+                "dropdownPlaceholder": "اختر السبب…",
+                "textLabel": "السبب",
+                "textPlaceholder": "اكتب سبب تغيير الحالة",
+                "textPlaceholderWithGroup": "اكتب السبب ({group})",
+                "hint": "يُحفظ السبب على طلب الانتقال / حدث الحالة ليراه المعتمدون والسجلّ."
+              },
               "communication": {
                 "call": "اتصال",
                 "whatsapp": "واتساب",

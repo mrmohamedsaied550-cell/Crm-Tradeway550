@@ -15,10 +15,18 @@ import {
 import { Button } from '@/components/ui/button';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, followUpsApi, leadsApi, pipelineApi, transitionRequestsApi } from '@/lib/api';
+import {
+  ApiError,
+  followUpsApi,
+  leadsApi,
+  lostReasonsApi,
+  pipelineApi,
+  transitionRequestsApi,
+} from '@/lib/api';
 import type {
   AllowedStatusEntry,
   Lead,
+  LostReason,
   PipelineStage,
   StageStatusesResponse,
 } from '@/lib/api-types';
@@ -91,12 +99,21 @@ interface LifecycleActionPanelProps {
   lead: Lead;
   onApplied: () => void;
   onClose: () => void;
+  /**
+   * Sprint 3.1 — optional pre-selection for the Next Stage
+   * dropdown. Used by the QuickActionsBar Move Stage shortcut
+   * so the agent lands on the panel with the target stage
+   * already picked. When null, the default is the lead's
+   * current stage (same-stage status update).
+   */
+  initialNextStageId?: string | null;
 }
 
 export function LifecycleActionPanel({
   lead,
   onApplied,
   onClose,
+  initialNextStageId,
 }: LifecycleActionPanelProps): JSX.Element {
   const t = useTranslations('admin.leads.detail.addAction.areas.lifecycle');
   const tCommon = useTranslations('admin.common');
@@ -111,6 +128,7 @@ export function LifecycleActionPanel({
   // round-trip).
   const [current, setCurrent] = useState<StageStatusesResponse | null>(null);
   const [stages, setStages] = useState<PipelineStage[]>([]);
+  const [lostReasons, setLostReasons] = useState<readonly LostReason[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -126,6 +144,15 @@ export function LifecycleActionPanel({
   const [notes, setNotes] = useState<string>('');
   /** ISO 8601 local datetime (input type=datetime-local format). */
   const [followUpDueAt, setFollowUpDueAt] = useState<string>('');
+  /**
+   * Sprint 3.1 — reason capture for statuses with
+   * `requiresReason: true`. `reasonCode` is a LostReason id when
+   * the rule's `reasonGroup === 'lost_reasons'` (dropdown);
+   * `reasonText` is a free-string fallback for other groups or
+   * when no catalogue is available.
+   */
+  const [reasonCode, setReasonCode] = useState<string>('');
+  const [reasonText, setReasonText] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -134,14 +161,30 @@ export function LifecycleActionPanel({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    Promise.all([leadsApi.getStageStatuses(lead.id), pipelineApi.listStages()])
-      .then(([currentResp, stagesResp]) => {
+    Promise.all([
+      leadsApi.getStageStatuses(lead.id),
+      pipelineApi.listStages(),
+      // Sprint 3.1 — lost-reasons catalogue for the reason
+      // dropdown (rendered only when the selected status' rule
+      // has reasonGroup='lost_reasons'). Failure here is
+      // non-fatal: the panel falls back to a free-text reason
+      // input.
+      lostReasonsApi.listActive().catch(() => [] as LostReason[]),
+    ])
+      .then(([currentResp, stagesResp, lostReasonsResp]) => {
         if (cancelled) return;
         setCurrent(currentResp);
         setStages(stagesResp);
-        // Default Next Stage = current stage so the panel opens on
-        // "same-stage status update".
-        setNextStageId(currentResp.stage.id);
+        setLostReasons(lostReasonsResp);
+        // Sprint 3.1 — when QuickActionsBar pre-picks a stage, the
+        // panel opens with that stage as Next Stage. The agent can
+        // still change it; the approval routing logic still applies
+        // regardless of how the panel was opened.
+        const validInitial =
+          initialNextStageId && stagesResp.some((s) => s.id === initialNextStageId)
+            ? initialNextStageId
+            : null;
+        setNextStageId(validInitial ?? currentResp.stage.id);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -154,15 +197,27 @@ export function LifecycleActionPanel({
     return () => {
       cancelled = true;
     };
-  }, [lead.id]);
+  }, [lead.id, initialNextStageId]);
 
   // ─────── Reset status when stage changes ───────
   // Picking a different Next Stage clears the status pick because
   // the previously-selected code may not exist in the new stage's
-  // catalogue.
+  // catalogue. Reset captured reason too — different status, fresh
+  // capture.
   useEffect(() => {
     setNextStatusCode('');
+    setReasonCode('');
+    setReasonText('');
   }, [nextStageId]);
+
+  // Reset captured reason whenever the selected status changes so a
+  // stale pick (e.g. switching from "not_interested" to
+  // "interested") doesn't sneak the previous reason into the
+  // save payload.
+  useEffect(() => {
+    setReasonCode('');
+    setReasonText('');
+  }, [nextStatusCode]);
 
   // ─────── Derived: the picked Next Stage row + its catalogue ───────
   const nextStage: PipelineStage | null = useMemo(
@@ -238,6 +293,18 @@ export function LifecycleActionPanel({
   // routes through the new approval engine or applies directly.
   const requiresApproval = useMemo(() => Boolean(selectedRule?.requiresApproval), [selectedRule]);
 
+  // ─────── Reason gate (Sprint 3.1) ───────
+  // `reasonGroup === 'lost_reasons'` → real LostReason dropdown.
+  // Any other group (or none, when the rule still asks for a
+  // reason) → required free-text input. Resolved value flows as
+  // `reasonCode` (uuid) for the catalogue path, else `reasonText`.
+  const requiresReason = useMemo(() => Boolean(selectedRule?.requiresReason), [selectedRule]);
+  const reasonGroup = selectedRule?.reasonGroup ?? null;
+  const useLostReasonsDropdown = reasonGroup === 'lost_reasons' && lostReasons.length > 0;
+  const reasonProvided = useLostReasonsDropdown
+    ? reasonCode.trim().length > 0
+    : reasonText.trim().length > 0;
+
   // ─────── Save ───────
   // Sprint 2.1 — cross-stage flow:
   //   1. If the picked Next Stage differs from the lead's current
@@ -255,6 +322,25 @@ export function LifecycleActionPanel({
   const submit = useCallback(async () => {
     if (!current || !nextStage) return;
     if (!isCrossStage && !nextStatusCode) return;
+    // Sprint 3.1 — block save when the rule demands a reason but
+    // none was captured. Same gate as the server-side check; the
+    // UI just surfaces a friendlier error before the round-trip.
+    if (requiresReason && !reasonProvided) {
+      setSubmitError(t('reason.required'));
+      return;
+    }
+
+    // Resolve the reason payload once so both the approval branch
+    // and the direct branch send the same shape.
+    const resolvedReason: { reasonCode?: string; reasonText?: string } = {};
+    if (requiresReason) {
+      if (useLostReasonsDropdown && reasonCode.trim().length > 0) {
+        resolvedReason.reasonCode = reasonCode.trim();
+      } else if (reasonText.trim().length > 0) {
+        resolvedReason.reasonText = reasonText.trim();
+      }
+    }
+
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -270,6 +356,7 @@ export function LifecycleActionPanel({
           ...(nextStatusCode ? { requestedStatusCode: nextStatusCode } : {}),
           ...(communicationMethod ? { communicationMethod } : {}),
           ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}),
+          ...resolvedReason,
         });
         onApplied();
         onClose();
@@ -297,8 +384,31 @@ export function LifecycleActionPanel({
         // reached the captain. Backend gap: no dedicated column
         // for communication method yet — flagged for a later
         // sprint.
+        //
+        // Sprint 3.1 — also fold the captured reason into the
+        // notes for the direct-apply path. The Sprint 3.A
+        // request endpoint persists reason in its own column;
+        // the direct setStageStatus path doesn't have that
+        // column yet, so prefixing the notes string is the
+        // current bridge.
         const methodTag = `[via ${communicationMethod}]`;
-        const composedNotes = notes.trim().length > 0 ? `${methodTag} ${notes.trim()}` : methodTag;
+        let reasonTag = '';
+        if (requiresReason) {
+          if (resolvedReason.reasonCode) {
+            const reason = lostReasons.find((r) => r.id === resolvedReason.reasonCode);
+            const label = reason
+              ? locale === 'ar' && reason.labelAr
+                ? reason.labelAr
+                : reason.labelEn
+              : resolvedReason.reasonCode;
+            reasonTag = ` [reason: ${label}]`;
+          } else if (resolvedReason.reasonText) {
+            reasonTag = ` [reason: ${resolvedReason.reasonText}]`;
+          }
+        }
+        const composedNotes = `${methodTag}${reasonTag}${
+          notes.trim().length > 0 ? ' ' + notes.trim() : ''
+        }`.trim();
         await leadsApi.setStageStatus(lead.id, {
           status: nextStatusCode,
           notes: composedNotes,
@@ -334,9 +444,16 @@ export function LifecycleActionPanel({
     nextStatusCode,
     selectedRule,
     requiresApproval,
+    requiresReason,
+    reasonProvided,
+    useLostReasonsDropdown,
+    reasonCode,
+    reasonText,
+    lostReasons,
     notes,
     communicationMethod,
     followUpDueAt,
+    locale,
     lead.id,
     onApplied,
     onClose,
@@ -358,7 +475,14 @@ export function LifecycleActionPanel({
   // state: same-stage with no status picked (nothing to save) or
   // cross-stage to a stage with no catalogue when no status was
   // chosen (the move itself is still saveable — that's allowed).
-  const saveDisabled = submitting || !nextStage || (!isCrossStage && nextStatusCode.length === 0);
+  // Sprint 3.1 — also block when the rule requires a reason but
+  // none was captured (server enforces too; this is a friendlier
+  // pre-check).
+  const saveDisabled =
+    submitting ||
+    !nextStage ||
+    (!isCrossStage && nextStatusCode.length === 0) ||
+    (requiresReason && !reasonProvided);
 
   return (
     <div className="flex flex-col gap-4">
@@ -469,6 +593,54 @@ export function LifecycleActionPanel({
           onFollowUpDueAtChange={setFollowUpDueAt}
           submitting={submitting}
         />
+      ) : null}
+
+      {/* ─────── Sprint 3.1 — real reason capture ───────
+          Renders the right input shape for the picked status'
+          reasonGroup:
+            - lost_reasons + catalogue present  → dropdown
+            - any other case (no group, or no catalogue) → required
+              free-text input
+          The save flow sends either reasonCode (uuid from
+          catalogue) or reasonText to the API; the server-side
+          `lead.transition.reason_required` check is mirrored
+          UI-side with the saveDisabled guard. */}
+      {requiresReason ? (
+        <section className="rounded-lg border border-status-warning/30 bg-status-warning/5 p-3">
+          <p className="mb-2 text-xs font-semibold text-status-warning">{t('reason.required')}</p>
+          {useLostReasonsDropdown ? (
+            <Field label={t('reason.dropdownLabel')}>
+              <Select
+                value={reasonCode}
+                onChange={(e) => setReasonCode(e.target.value)}
+                disabled={submitting}
+              >
+                <option value="">{t('reason.dropdownPlaceholder')}</option>
+                {lostReasons.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {locale === 'ar' && r.labelAr ? r.labelAr : r.labelEn}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            <Field label={t('reason.textLabel')}>
+              <Textarea
+                value={reasonText}
+                onChange={(e) => setReasonText(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder={
+                  reasonGroup
+                    ? t('reason.textPlaceholderWithGroup', { group: reasonGroup })
+                    : t('reason.textPlaceholder')
+                }
+                disabled={submitting}
+              />
+            </Field>
+          )}
+          <p className="mt-1 text-xs text-ink-tertiary">{t('reason.hint')}</p>
+        </section>
       ) : null}
 
       {/* ───── Notes ───── */}
