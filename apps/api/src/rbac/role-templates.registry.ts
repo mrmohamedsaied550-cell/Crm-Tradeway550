@@ -83,6 +83,9 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'lead.stage.move',
   'lead.assign',
   'lead.stage.status.write',
+  // Sprint 3 — agents can request transitions (the request enters
+  // the approval queue). They cannot approve their own.
+  'lead.transition.request',
   'followup.write',
   'followup.complete',
   'whatsapp.message.send',
@@ -103,6 +106,9 @@ const TEAM_LEAD_SAFE_EXTRAS: readonly CapabilityCode[] = [
   'lead.rotate',
   'lead.review.read',
   'lead.review.resolve',
+  // Sprint 3 — TLs can both request and approve transitions.
+  'lead.transition.request',
+  'lead.transition.approve',
   'whatsapp.handover',
   'whatsapp.conversation.assign',
   'whatsapp.conversation.reopen',
@@ -509,6 +515,9 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'lead.rotate',
       'lead.review.read',
       'lead.review.resolve',
+      // Sprint 3 — request + approve transitions.
+      'lead.transition.request',
+      'lead.transition.approve',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',
@@ -584,6 +593,9 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'lead.rotate',
       'lead.review.read',
       'lead.review.resolve',
+      // Sprint 3 — request + approve transitions.
+      'lead.transition.request',
+      'lead.transition.approve',
       'pipeline.write',
       'meta.leadsource.write',
       'followup.write',

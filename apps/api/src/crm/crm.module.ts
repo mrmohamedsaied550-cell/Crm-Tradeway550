@@ -22,6 +22,8 @@ import { LeadReviewService } from './lead-review.service';
 import { LeadReviewsController } from './lead-reviews.controller';
 import { AgentWorkspaceService } from './agent-workspace.service';
 import { AgentWorkspaceController } from './agent-workspace.controller';
+import { LeadTransitionRequestService } from './lead-transition-request.service';
+import { LeadTransitionRequestController } from './lead-transition-request.controller';
 
 /**
  * CRM Core module (C10 + C11 + C18 + C29 + P2-07).
@@ -42,6 +44,7 @@ import { AgentWorkspaceController } from './agent-workspace.controller';
     PipelinesController,
     LeadReviewsController,
     AgentWorkspaceController,
+    LeadTransitionRequestController,
   ],
   providers: [
     LeadsService,
@@ -60,6 +63,7 @@ import { AgentWorkspaceController } from './agent-workspace.controller';
     EscalationPolicyService,
     LeadReviewService,
     AgentWorkspaceService,
+    LeadTransitionRequestService,
   ],
   exports: [
     LeadsService,
@@ -78,6 +82,7 @@ import { AgentWorkspaceController } from './agent-workspace.controller';
     EscalationPolicyService,
     LeadReviewService,
     AgentWorkspaceService,
+    LeadTransitionRequestService,
   ],
 })
 export class CrmModule {}

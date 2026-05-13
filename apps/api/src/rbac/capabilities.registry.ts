@@ -84,6 +84,16 @@ export const CAPABILITY_DEFINITIONS = [
     description: 'Resolve a lead-review row (rotated / kept_owner / escalated / dismissed)',
   },
 
+  // Sprint 3 (D7.1) — stage-transition approval workflow.
+  {
+    code: 'lead.transition.request',
+    description: 'Submit a stage-transition request that requires approval (Sprint 3)',
+  },
+  {
+    code: 'lead.transition.approve',
+    description: 'Approve or reject pending lead stage-transition requests (Sprint 3)',
+  },
+
   // Meta lead-source registration (P2-06)
   { code: 'meta.leadsource.read', description: 'View Meta lead-ad sources (no secrets)' },
   { code: 'meta.leadsource.write', description: 'Create / update / delete Meta lead-ad sources' },
