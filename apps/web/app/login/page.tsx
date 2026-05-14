@@ -60,6 +60,7 @@ export default function LoginPage() {
         roleCode: result.user.role.code,
         roleNameEn: result.user.role.nameEn,
         roleNameAr: result.user.role.nameAr,
+        ...(result.user.avatarUrl !== undefined && { avatarUrl: result.user.avatarUrl }),
         capabilities: result.user.capabilities,
         // Phase C — C6: persist the role's field permission set on
         // login so `lib/permissions.ts` works on the first render

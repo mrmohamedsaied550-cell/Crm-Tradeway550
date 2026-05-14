@@ -26,6 +26,8 @@ const SAFE_USER_SELECT = {
   lastLoginAt: true,
   createdAt: true,
   updatedAt: true,
+  // Sprint 15 (D15) — optional profile image URL.
+  avatarUrl: true,
 } as const;
 
 /**
@@ -169,6 +171,9 @@ export class AdminUsersService {
           ...(dto.phone !== undefined && { phone: dto.phone }),
           ...(dto.language !== undefined && { language: dto.language }),
           ...(dto.status !== undefined && { status: dto.status }),
+          // Sprint 15 (D15) — avatar URL; null clears, string sets,
+          // undefined leaves unchanged.
+          ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
         },
         select: SAFE_USER_SELECT,
       }),

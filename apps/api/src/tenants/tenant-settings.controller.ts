@@ -9,12 +9,15 @@ import { JwtAuthGuard } from '../identity/jwt-auth.guard';
 import type { AccessTokenClaims } from '../identity/jwt.types';
 import { CapabilityGuard } from '../rbac/capability.guard';
 import { RequireCapability } from '../rbac/require-capability.decorator';
+import { UpdateTenantBrandingSchema } from './branding.dto';
+import { TenantBrandingService } from './branding.service';
 import { UpdateTenantSettingsSchema } from './tenant-settings.dto';
 import { TenantSettingsService } from './tenant-settings.service';
 
 class UpdateTenantSettingsDto extends createZodDto(UpdateTenantSettingsSchema) {}
 class UpdateDuplicateRulesDto extends createZodDto(DuplicateRulesSchema) {}
 class UpdateEscalationRulesDto extends createZodDto(EscalationRulesSchema) {}
+class UpdateTenantBrandingDto extends createZodDto(UpdateTenantBrandingSchema) {}
 
 /**
  * /api/v1/tenant/settings (P2-08)
@@ -28,7 +31,10 @@ class UpdateEscalationRulesDto extends createZodDto(EscalationRulesSchema) {}
 @Controller('tenant/settings')
 @UseGuards(JwtAuthGuard, CapabilityGuard)
 export class TenantSettingsController {
-  constructor(private readonly settings: TenantSettingsService) {}
+  constructor(
+    private readonly settings: TenantSettingsService,
+    private readonly branding: TenantBrandingService,
+  ) {}
 
   @Get()
   @RequireCapability('tenant.settings.read')
@@ -99,5 +105,34 @@ export class TenantSettingsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.settings.updateEscalationRules(body, user.sub);
+  }
+
+  /**
+   * Sprint 15 (D15) — per-tenant branding (system name, logo URL,
+   * favicon URL, login image URL, theme colors).
+   *
+   * Reads piggy-back on `tenant.settings.read` so every persona can
+   * fetch the tenant's branding (sidebar logo, login page, header
+   * name) — there is no field-level secret here, just public
+   * customisation.
+   *
+   * Writes use the existing `tenant.settings.write` capability rather
+   * than introducing a dedicated `tenant.branding.write` — the policy
+   * is the same (Ops Manager / Account Manager / Super Admin).
+   * The branding payload is URL-based only; binary upload is a
+   * separate future sprint.
+   */
+  @Get('branding')
+  @RequireCapability('tenant.settings.read')
+  @ApiOperation({ summary: 'Read tenant branding (logo URL, theme colors, etc.)' })
+  getBranding() {
+    return this.branding.getCurrent();
+  }
+
+  @Patch('branding')
+  @RequireCapability('tenant.settings.write')
+  @ApiOperation({ summary: 'Update tenant branding' })
+  updateBranding(@Body() body: UpdateTenantBrandingDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.branding.update(body, user.sub);
   }
 }

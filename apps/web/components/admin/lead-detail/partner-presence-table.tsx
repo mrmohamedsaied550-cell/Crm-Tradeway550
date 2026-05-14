@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, CheckCircle2, Network, Plus, ShieldQuestion } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { BrandLogo } from '@/components/ui/brand-logo';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
@@ -291,11 +292,6 @@ function PartnerRow({
       : projection.verificationStatus === 'not_found'
         ? ShieldQuestion
         : AlertTriangle;
-  const initials = projection.partnerSourceName
-    .split(/\s+/u)
-    .map((part) => part.charAt(0).toUpperCase())
-    .slice(0, 2)
-    .join('');
   const lastSync = projection.lastSyncAt
     ? new Date(projection.lastSyncAt).toLocaleDateString()
     : t('lastSyncNever');
@@ -303,12 +299,12 @@ function PartnerRow({
     <tr className="border-b border-surface-border last:border-b-0 hover:bg-surface">
       <td className="px-4 py-3 align-top">
         <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-50 text-[11px] font-semibold text-brand-700"
-          >
-            {initials || '–'}
-          </span>
+          {/* Sprint 15 (D15) — BrandLogo renders the partner logo when
+              the verification projection carries one; otherwise falls
+              back to initials. The projection doesn't include the
+              logoUrl yet; this surface degrades to initials cleanly
+              until a future sprint adds it to the projection. */}
+          <BrandLogo name={projection.partnerSourceName} src={null} size="sm" />
           <div className="flex min-w-0 flex-col">
             <span className="truncate font-medium text-ink-primary">
               {projection.partnerSourceName}

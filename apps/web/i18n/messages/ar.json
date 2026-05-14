@@ -62,6 +62,7 @@
       "lostReasons": "أسباب الخسارة",
       "audit": "سجلّ التدقيق",
       "tenantSettings": "الإعدادات",
+      "branding": "الهوية والأصول",
       "backup": "النسخ الاحتياطي",
       "whatsappReviewsBadge": "{n} عناصر مراجعة غير محلولة"
     },
@@ -1718,6 +1719,51 @@
       "lastSummary": "{rows} صف · تم التصدير {at}",
       "forbidden": "لا تملك صلاحية tenant.export — اطلب من المشرف منحها.",
       "opsHint": "للنسخ الاحتياطي الكامل لقاعدة البيانات استخدم scripts/backup.sh — راجع scripts/README.md."
+    },
+    "branding": {
+      "title": "الهوية والأصول",
+      "subtitle": "خصِّص اسم النظام والشعارات وألوان الواجهة لهذا المستأجر.",
+      "readOnlyHint": "يمكنك عرض الهوية دون تعديلها — اطلب من المسؤول صلاحية tenant.settings.write.",
+      "uploadGap": {
+        "title": "تخزين رفع الملفات غير مهيأ بعد",
+        "body": "تقبل هذه المرحلة روابط صور آمنة فقط (https:// أو مسار من /public). الرفع المباشر إلى تخزين المستأجر مرحلة لاحقة."
+      },
+      "sections": {
+        "identity": "هوية النظام",
+        "colors": "ألوان الواجهة",
+        "colorsHint": "يجب أن يكون اللون قيمة hex من 6 خانات مثل #1f3864. اتركه فارغًا للعودة للوحة الافتراضية.",
+        "preview": "معاينة مباشرة"
+      },
+      "fields": {
+        "systemName": "اسم النظام",
+        "systemNameHint": "يظهر في رأس الشريط الجانبي وفي صفحة تسجيل الدخول.",
+        "systemNamePlaceholder": "مثال: كابتن مصر CRM",
+        "workspaceName": "اسم مساحة العمل",
+        "workspaceNameHint": "يظهر تحت اسم النظام في عناوين عريضة.",
+        "workspaceNamePlaceholder": "مثال: التفعيل",
+        "logoUrl": "رابط شعار الشريط الجانبي",
+        "logoUrlHint": "صورة مربعة SVG أو PNG (64×64). اتركه فارغًا للرجوع إلى الحرف الأول.",
+        "faviconUrl": "رابط الـ favicon",
+        "faviconUrlHint": "غير مطبَّق بعد — راجع فجوة الرفع أعلاه.",
+        "loginImageUrl": "رابط صورة صفحة الدخول",
+        "loginImageUrlHint": "صورة اختيارية تظهر في صفحة تسجيل الدخول.",
+        "primaryColor": "اللون الأساسي",
+        "accentColor": "اللون المكمِّل",
+        "sidebarBgColor": "خلفية الشريط الجانبي",
+        "sidebarHoverColor": "تظليل الشريط الجانبي"
+      },
+      "errors": {
+        "invalidUrl": "يجب أن يبدأ الرابط بـ http:// أو https:// أو /",
+        "invalidColor": "اللون يجب أن يكون hex من 6 خانات مثل #1f3864"
+      },
+      "actions": {
+        "save": "حفظ الهوية",
+        "reset": "تراجُع"
+      },
+      "toast": {
+        "saved": "تم حفظ الهوية.",
+        "noChanges": "لا توجد تغييرات للحفظ."
+      }
     },
     "tenantSettings": {
       "title": "إعدادات المستأجر",

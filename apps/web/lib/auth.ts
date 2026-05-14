@@ -22,6 +22,8 @@ export interface MeCache {
   readonly roleCode: string;
   readonly roleNameEn: string;
   readonly roleNameAr: string;
+  /** Sprint 15 (D15) — optional profile image URL. */
+  readonly avatarUrl?: string | null;
   /** P2-01 — flat list of capability codes granted by the user's role. */
   readonly capabilities?: readonly string[];
   /**

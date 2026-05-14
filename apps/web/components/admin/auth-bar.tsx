@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { LogOut, ShieldAlert } from 'lucide-react';
+import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { NotificationBell } from '@/components/admin/notification-bell';
 import { MyPresenceDot } from '@/components/admin/my-presence-dot';
@@ -59,6 +60,10 @@ export function AuthBar(): JSX.Element {
           roleCode: u.role.code,
           roleNameEn: u.role.nameEn,
           roleNameAr: u.role.nameAr,
+          // Sprint 15 (D15) — carry the profile image URL into the
+          // localStorage cache so the auth bar shows the user's
+          // avatar on the next render without a fresh /auth/me call.
+          ...(u.avatarUrl !== undefined && { avatarUrl: u.avatarUrl }),
           capabilities: u.capabilities,
           // Phase C — C6: cache the role's per-(resource × field)
           // toggles so `lib/permissions.ts` and `<FieldGated>` can
@@ -133,15 +138,24 @@ export function AuthBar(): JSX.Element {
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-surface-border bg-surface-card px-3 py-2 text-sm">
-      <div className="flex flex-col leading-tight">
-        <span className="flex items-center gap-1.5 font-medium text-ink-primary">
-          <MyPresenceDot />
-          {me?.name ?? me?.email ?? '…'}
-        </span>
-        <span className="text-xs text-ink-secondary">
-          {me?.email ?? ''} · {me?.roleNameEn ?? me?.roleCode ?? ''}
-          {me?.tenantCode ? ` · ${me.tenantCode}` : ''}
-        </span>
+      <div className="flex items-center gap-2.5">
+        {/* Sprint 15 (D15) — avatar with presence dot overlay. The
+            relative wrapper keeps the dot in the bottom-right corner
+            without breaking layout when the avatar falls back to
+            initials (Avatar is `inline-flex shrink-0`). */}
+        <div className="relative">
+          <Avatar name={me?.name ?? null} src={me?.avatarUrl ?? null} size="md" />
+          <span className="absolute -bottom-0.5 -end-0.5">
+            <MyPresenceDot />
+          </span>
+        </div>
+        <div className="flex flex-col leading-tight">
+          <span className="font-medium text-ink-primary">{me?.name ?? me?.email ?? '…'}</span>
+          <span className="text-xs text-ink-secondary">
+            {me?.email ?? ''} · {me?.roleNameEn ?? me?.roleCode ?? ''}
+            {me?.tenantCode ? ` · ${me.tenantCode}` : ''}
+          </span>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <FollowUpBell />

@@ -52,6 +52,8 @@ export interface AdminUser {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Sprint 15 (D15) — optional profile image URL. */
+  avatarUrl?: string | null;
 }
 
 export interface PaginatedResult<T> {
@@ -775,6 +777,8 @@ export interface MeUser {
   name: string;
   language: string;
   roleId: string;
+  /** Sprint 15 (D15) — optional profile image URL. */
+  avatarUrl?: string | null;
   role: {
     id: string;
     code: string;
@@ -1760,6 +1764,9 @@ export interface PartnerSourceRow {
   lastSyncStatus: string | null;
   credentialUpdatedAt: string;
   isActive: boolean;
+  /** Sprint 15 (D15) — optional partner branding. */
+  logoUrl?: string | null;
+  brandColor?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1792,7 +1799,11 @@ export interface CreatePartnerSourceInput {
   credentials?: PartnerCredentialsInput | null;
 }
 
-export type UpdatePartnerSourceInput = Partial<CreatePartnerSourceInput>;
+export interface UpdatePartnerSourceInput extends Partial<CreatePartnerSourceInput> {
+  /** Sprint 15 (D15) — null clears, string sets, undefined keeps. */
+  logoUrl?: string | null;
+  brandColor?: string | null;
+}
 
 export interface PartnerTestConnectionResult {
   status: 'stubbed';

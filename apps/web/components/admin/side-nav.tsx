@@ -58,6 +58,7 @@ interface NavItem {
     | 'reports'
     | 'audit'
     | 'tenantSettings'
+    | 'branding'
     | 'calendar'
     | 'distribution'
     | 'lostReasons'
@@ -192,6 +193,15 @@ const PRIMARY_ITEMS: readonly NavItem[] = [
   {
     href: '/admin/tenant-settings',
     labelKey: 'tenantSettings',
+    icon: Settings,
+    cap: 'tenant.settings.read',
+  },
+  // Sprint 15 (D15) — Branding & Asset Settings. Same capability as
+  // tenant settings; sits next to it so operators discover it in the
+  // same nav cluster.
+  {
+    href: '/admin/settings/branding',
+    labelKey: 'branding',
     icon: Settings,
     cap: 'tenant.settings.read',
   },

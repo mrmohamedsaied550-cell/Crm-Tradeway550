@@ -228,6 +228,10 @@ export class PartnerSourcesService {
               : (dto.tabDiscoveryRule as unknown as Prisma.InputJsonValue),
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        // Sprint 15 (D15) — partner branding: null clears, string sets,
+        // undefined leaves unchanged.
+        ...(dto.logoUrl !== undefined && { logoUrl: dto.logoUrl }),
+        ...(dto.brandColor !== undefined && { brandColor: dto.brandColor }),
         ...credentialUpdate,
       };
       const updated = await tx.partnerSource.update({
@@ -408,6 +412,9 @@ export class PartnerSourcesService {
       lastSyncStatus: row.lastSyncStatus,
       credentialUpdatedAt: row.updatedAt.toISOString(),
       isActive: row.isActive,
+      // Sprint 15 (D15) — partner branding round-tripped through reads.
+      logoUrl: row.logoUrl,
+      brandColor: row.brandColor,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -435,6 +442,9 @@ export interface PartnerSourceDto {
    *  source's `updatedAt` since rotation always touches the row. */
   credentialUpdatedAt: string;
   isActive: boolean;
+  /** Sprint 15 (D15) — partner branding. */
+  logoUrl: string | null;
+  brandColor: string | null;
   createdAt: string;
   updatedAt: string;
 }

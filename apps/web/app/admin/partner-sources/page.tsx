@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { CheckCircle2, Database, KeyRound, Plus, ShieldOff } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { BrandLogo } from '@/components/ui/brand-logo';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
@@ -131,23 +132,33 @@ function PartnerSourceCard({
       className="flex flex-col gap-2 rounded-lg border border-surface-border bg-surface-card p-4 shadow-sm transition-colors hover:border-brand-600/40 hover:bg-brand-50/30"
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex flex-col gap-1">
-          <div className="inline-flex items-center gap-2">
-            <span className="text-base font-semibold text-ink-primary">{row.displayName}</span>
-            <Badge tone={row.isActive ? 'info' : 'neutral'}>
-              {row.isActive ? t('badges.active') : t('badges.disabled')}
-            </Badge>
-            <Badge tone="neutral">{row.partnerCode}</Badge>
+        <div className="flex items-start gap-3">
+          {/* Sprint 15 (D15) — Partner brand logo, falling back to
+              initials tinted with brandColor when no image is set. */}
+          <BrandLogo
+            name={row.displayName}
+            src={row.logoUrl ?? null}
+            brandColor={row.brandColor ?? null}
+            size="lg"
+          />
+          <div className="flex flex-col gap-1">
+            <div className="inline-flex items-center gap-2">
+              <span className="text-base font-semibold text-ink-primary">{row.displayName}</span>
+              <Badge tone={row.isActive ? 'info' : 'neutral'}>
+                {row.isActive ? t('badges.active') : t('badges.disabled')}
+              </Badge>
+              <Badge tone="neutral">{row.partnerCode}</Badge>
+            </div>
+            <p className="text-xs text-ink-tertiary">
+              {t(`adapters.${row.adapter}` as 'adapters.google_sheets')} ·{' '}
+              {t(`schedules.${row.scheduleKind}` as 'schedules.manual')}
+              {row.scheduleKind === 'cron' && row.cronSpec ? (
+                <span className="ms-1 font-mono">{row.cronSpec}</span>
+              ) : null}
+              {' · '}
+              {t(`tabModes.${row.tabMode}` as 'tabModes.fixed')}
+            </p>
           </div>
-          <p className="text-xs text-ink-tertiary">
-            {t(`adapters.${row.adapter}` as 'adapters.google_sheets')} ·{' '}
-            {t(`schedules.${row.scheduleKind}` as 'schedules.manual')}
-            {row.scheduleKind === 'cron' && row.cronSpec ? (
-              <span className="ms-1 font-mono">{row.cronSpec}</span>
-            ) : null}
-            {' · '}
-            {t(`tabModes.${row.tabMode}` as 'tabModes.fixed')}
-          </p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className="inline-flex items-center gap-1 text-xs text-ink-tertiary">
