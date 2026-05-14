@@ -861,6 +861,53 @@
                 "upload": "POST /leads/:id/documents — يقبل البيانات الوصفية والرابط؛ ويُسجِّل lead.document.uploaded.",
                 "status": "PATCH /leads/:id/documents/:docId — لتغيير الحالة؛ يُسجِّل lead.document.{accepted|rejected}.",
                 "capabilities": "صلاحيات: lead.document.read / .write / .accept / .reject؛ تحترم سلسلة التحكم بالحقول."
+              },
+              "uploadGapTitle": "تخزين الملفات غير مفعّل",
+              "uploadGapBody": "Sprint 12 يسجِّل بيانات الوثائق فقط. يمكنك تسجيل اسم الملف للإشارة إلى استلامه عبر واتساب/البريد. تخزين الملفات الفعلي يأتي في Sprint لاحق.",
+              "listHeading": "الوثائق",
+              "addHeading": "إضافة أو تحديث وثيقة",
+              "reasonLabel": "السبب",
+              "placeholderHint": "استخدم النموذج بالأسفل لتسجيل بيانات هذه الوثيقة المطلوبة.",
+              "noAccess": {
+                "title": "الوثائق مخفيّة",
+                "body": "لا تملك صلاحية lead.document.read لهذا العميل. اطلب الإذن إذا كنت بحاجة لتتبّع وثائق التسجيل."
+              },
+              "viewOnly": "عرض فقط",
+              "uploadedBy": "رفع بواسطة {name}",
+              "reviewedBy": "راجعها {name}",
+              "types": {
+                "national_id": "الهوية الوطنية",
+                "driving_license": "رخصة القيادة",
+                "vehicle_license": "رخصة السيارة",
+                "profile_photo": "الصورة الشخصية",
+                "other": "وثيقة أخرى"
+              },
+              "form": {
+                "type": "نوع الوثيقة",
+                "label": "التسمية (عند اختيار \"أخرى\")",
+                "fileName": "اسم الملف",
+                "fileNamePlaceholder": "مثال: national_id_front.jpg",
+                "fileNameHint": "اتركه فارغًا لتسجيل الوثيقة كمفقودة الآن."
+              },
+              "actions": {
+                "add": "إضافة سجل",
+                "markUploaded": "تأشير كمرفوع",
+                "accept": "قبول",
+                "reject": "رفض",
+                "needsResubmission": "يحتاج إعادة"
+              },
+              "rejectModal": {
+                "titleReject": "رفض الوثيقة",
+                "titleNeedsResubmission": "طلب إعادة رفع",
+                "reasonHint": "السبب مطلوب. سيظهر لمالك العميل في صفحة العميل.",
+                "placeholder": "مثال: الصورة غير واضحة — يرجى إعادة الرفع."
+              },
+              "toast": {
+                "added": "تم إضافة سجل الوثيقة.",
+                "uploaded": "تم تأشيرها كمرفوعة.",
+                "accepted": "تم قبول الوثيقة.",
+                "rejected": "تم رفض الوثيقة وإخطار مالك العميل.",
+                "needsResubmission": "تم وضع الوثيقة كتحتاج إعادة رفع."
               }
             },
             "partnerData": {
