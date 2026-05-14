@@ -216,7 +216,8 @@
           "status": "الحالة",
           "issues": "الملاحظات",
           "actions": "إجراءات",
-          "scope": "النطاق"
+          "scope": "النطاق",
+          "presence": "الحضور"
         },
         "issueChips": {
           "noTeam": "بدون فريق",
@@ -234,13 +235,21 @@
         "scopeNone": "بدون نطاق",
         "scopeUnavailable": "—",
         "scopeCompanyCount": "{n, plural, zero {بدون شركات} one {شركة واحدة} two {شركتان} few {# شركات} many {# شركة} other {# شركة}}",
-        "scopeCountryCount": "{n, plural, zero {بدون دول} one {دولة واحدة} two {دولتان} few {# دول} many {# دولة} other {# دولة}}"
+        "scopeCountryCount": "{n, plural, zero {بدون دول} one {دولة واحدة} two {دولتان} few {# دول} many {# دولة} other {# دولة}}",
+        "presence": {
+          "online": "متصل",
+          "away": "غير نشط",
+          "busy": "مشغول",
+          "offline": "غير متصل",
+          "unavailable": "—"
+        }
       },
       "readOnly": "للقراءة فقط",
       "advanced": {
         "noAccess": "ليست لديك صلاحية لفتح شاشات الإدارة المتقدّمة. اطلب من مسؤول صلاحيات القراءة المطلوبة."
       },
-      "scopeUnavailable": "إحصاءات النطاق غير متاحة. اطلب من المسؤول صلاحية users.read لرؤيتها."
+      "scopeUnavailable": "إحصاءات النطاق غير متاحة. اطلب من المسؤول صلاحية users.read لرؤيتها.",
+      "presenceUnavailable": "تعذّر تحميل الحضور المباشر. تعود الشريحة والمؤشّر إلى الحياد حتى التحديث التالي."
     },
     "companies": {
       "title": "الشركات",

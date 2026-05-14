@@ -216,7 +216,8 @@
           "status": "Status",
           "issues": "Issues",
           "actions": "Actions",
-          "scope": "Scope"
+          "scope": "Scope",
+          "presence": "Presence"
         },
         "issueChips": {
           "noTeam": "No team",
@@ -234,13 +235,21 @@
         "scopeNone": "No scope",
         "scopeUnavailable": "—",
         "scopeCompanyCount": "{n, plural, one {# company} other {# companies}}",
-        "scopeCountryCount": "{n, plural, one {# country} other {# countries}}"
+        "scopeCountryCount": "{n, plural, one {# country} other {# countries}}",
+        "presence": {
+          "online": "Online",
+          "away": "Away",
+          "busy": "In action",
+          "offline": "Offline",
+          "unavailable": "—"
+        }
       },
       "readOnly": "Read-only",
       "advanced": {
         "noAccess": "You don't have permission to open the underlying admin matrix pages. Ask an admin for the relevant *.read capability."
       },
-      "scopeUnavailable": "Scope counts unavailable. Ask an admin to grant users.read if you need to audit per-user scope assignments."
+      "scopeUnavailable": "Scope counts unavailable. Ask an admin to grant users.read if you need to audit per-user scope assignments.",
+      "presenceUnavailable": "Live presence couldn't be loaded. The chip and KPI fall back to neutral until the next refresh."
     },
     "companies": {
       "title": "Companies",
