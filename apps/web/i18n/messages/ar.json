@@ -890,6 +890,8 @@
               },
               "uploadGapTitle": "تخزين الملفات غير مفعّل",
               "uploadGapBody": "Sprint 12 يسجِّل بيانات الوثائق فقط. يمكنك تسجيل اسم الملف للإشارة إلى استلامه عبر واتساب/البريد. تخزين الملفات الفعلي يأتي في Sprint لاحق.",
+              "privacyTitle": "تُحفظ الملفات بشكل خاص",
+              "privacyBody": "تُخزَّن الملفات المرفوعة خارج أي مجلد عام ويتطلب عرضها أو تنزيلها صلاحية lead.document.read. الأنواع المسموح بها: JPEG, PNG, WebP, PDF — حتى 10 ميغابايت.",
               "listHeading": "الوثائق",
               "addHeading": "إضافة أو تحديث وثيقة",
               "reasonLabel": "السبب",
@@ -913,14 +915,21 @@
                 "label": "التسمية (عند اختيار \"أخرى\")",
                 "fileName": "اسم الملف",
                 "fileNamePlaceholder": "مثال: national_id_front.jpg",
-                "fileNameHint": "اتركه فارغًا لتسجيل الوثيقة كمفقودة الآن."
+                "fileNameHint": "اتركه فارغًا لتسجيل الوثيقة كمفقودة الآن.",
+                "file": "الملف",
+                "fileHint": "المسموح: JPEG, PNG, WebP, PDF بحد أقصى 10 ميغابايت. اترك فارغًا لإنشاء سجل بدون ملف."
               },
               "actions": {
                 "add": "إضافة سجل",
+                "addWithUpload": "إضافة ورفع",
                 "markUploaded": "تأشير كمرفوع",
                 "accept": "قبول",
                 "reject": "رفض",
-                "needsResubmission": "يحتاج إعادة"
+                "needsResubmission": "يحتاج إعادة",
+                "uploadFile": "رفع ملف",
+                "replaceFile": "استبدال الملف",
+                "viewFile": "عرض",
+                "downloadFile": "تنزيل"
               },
               "rejectModal": {
                 "titleReject": "رفض الوثيقة",
@@ -933,7 +942,18 @@
                 "uploaded": "تم تأشيرها كمرفوعة.",
                 "accepted": "تم قبول الوثيقة.",
                 "rejected": "تم رفض الوثيقة وإخطار مالك العميل.",
-                "needsResubmission": "تم وضع الوثيقة كتحتاج إعادة رفع."
+                "needsResubmission": "تم وضع الوثيقة كتحتاج إعادة رفع.",
+                "uploadSuccess": "تم رفع الملف.",
+                "uploadReplaced": "تم استبدال الملف."
+              },
+              "errors": {
+                "unsupportedType": "نوع الملف غير مدعوم. المسموح: JPEG, PNG, WebP, PDF.",
+                "tooLarge": "حجم الملف كبير. الحد الأقصى 10 ميغابايت.",
+                "empty": "الملف المختار فارغ.",
+                "missingFile": "لم يتم اختيار ملف.",
+                "fileMissingOnServer": "لم يتم رفع ملف لهذه الوثيقة بعد.",
+                "notFound": "الوثيقة غير موجودة.",
+                "storageUnavailable": "تخزين الملفات غير مهيأ في هذا النشر."
               }
             },
             "partnerData": {

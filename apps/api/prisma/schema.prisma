@@ -1492,6 +1492,18 @@ model LeadDocument {
   mimeType  String? @map("mime_type")
   sizeBytes Int?    @map("size_bytes")
 
+  /// Sprint 16 (D16) — private storage references.
+  /// `storageKey` is an opaque path within the active provider's
+  /// namespace; never exposed to the browser. `storageProvider`
+  /// tags which backend wrote the file ('local' for the dev disk
+  /// provider; future values: 's3', 'gcs', …). `fileHash` is the
+  /// SHA-256 of the bytes — used for integrity checks + dedupe.
+  /// All three are NULL on metadata-only rows (Sprint 12 path) and
+  /// populated once a real file is uploaded.
+  storageKey      String? @map("storage_key")
+  storageProvider String? @map("storage_provider")
+  fileHash        String? @map("file_hash")
+
   uploadedById String? @map("uploaded_by_id") @db.Uuid
   uploadedBy   User?   @relation("LeadDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
 

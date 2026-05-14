@@ -1,8 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { CheckCircle2, Circle, FileText, RotateCcw, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Circle,
+  Download,
+  Eye,
+  FileText,
+  RotateCcw,
+  Upload,
+  XCircle,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,6 +28,20 @@ import {
 import { hasCapability } from '@/lib/auth';
 import type { Lead } from '@/lib/api-types';
 import { cn } from '@/lib/utils';
+
+/**
+ * Sprint 16 (D16) — UX constants for the real upload flow.
+ *
+ * The MIME allow-list mirrors the server's `ALLOWED_DOCUMENT_MIMES`
+ * so the picker only offers types the API will accept. Default size
+ * cap mirrors `DEFAULT_UPLOAD_MAX_BYTES` (10 MiB). Client-side checks
+ * are courtesy only; the server is the source of truth and surfaces
+ * the same typed codes whether the violation comes from the file
+ * picker or a custom client.
+ */
+const ALLOWED_UPLOAD_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const ALLOWED_UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+const DEFAULT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
 /**
  * Sprint 12 (D12) — Lead Documents action panel.
@@ -98,9 +121,15 @@ export function DocumentsActionPanel({
   } | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
   const [addType, setAddType] = useState<string>('national_id');
-  const [addFileName, setAddFileName] = useState<string>('');
+  const [addFile, setAddFile] = useState<File | null>(null);
   const [addLabel, setAddLabel] = useState<string>('');
   const [addPending, setAddPending] = useState<boolean>(false);
+  // Sprint 16 (D16) — per-row "Upload / Replace" hidden inputs are
+  // triggered programmatically so the button can drive a real
+  // `<input type="file">` without an extra rendering layer. We key
+  // the ref map by document id and tear it down on unmount.
+  const fileInputs = useRef<Map<string, HTMLInputElement | null>>(new Map());
+  const addFileInput = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!canRead) {
@@ -146,27 +175,138 @@ export function DocumentsActionPanel({
     return out;
   }, [rows]);
 
+  /**
+   * Validate a picked file against the same allow-list and size cap
+   * the server enforces. Returns null when the file is acceptable,
+   * otherwise the translated error message (so the toast can render
+   * it directly).
+   */
+  function validatePickedFile(file: File): string | null {
+    if (!ALLOWED_UPLOAD_MIMES.has(file.type)) {
+      return t('errors.unsupportedType');
+    }
+    if (file.size > DEFAULT_UPLOAD_MAX_BYTES) {
+      return t('errors.tooLarge');
+    }
+    if (file.size === 0) {
+      return t('errors.empty');
+    }
+    return null;
+  }
+
   async function onAddOrMarkUploaded(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     if (!canWrite || addPending) return;
     setAddPending(true);
     setError(null);
     try {
-      await leadDocumentsApi.create(lead.id, {
-        type: addType,
-        status: addFileName.trim().length > 0 ? 'uploaded' : 'missing',
-        ...(addFileName.trim().length > 0 ? { fileName: addFileName.trim() } : {}),
-        ...(addLabel.trim().length > 0 ? { label: addLabel.trim() } : {}),
-      });
-      toast({ tone: 'success', title: t('toast.added') });
-      setAddFileName('');
+      // Sprint 16 (D16) — if a file is picked, create + upload in one
+      // gesture. Otherwise create a metadata-only row (status missing)
+      // so the operator can still pre-fill the checklist before bytes
+      // arrive.
+      if (addFile) {
+        const validationError = validatePickedFile(addFile);
+        if (validationError) {
+          setError(validationError);
+          return;
+        }
+        const created = await leadDocumentsApi.create(lead.id, {
+          type: addType,
+          status: 'missing',
+          ...(addLabel.trim().length > 0 ? { label: addLabel.trim() } : {}),
+        });
+        await leadDocumentsApi.upload(lead.id, created.id, addFile);
+        toast({ tone: 'success', title: t('toast.uploadSuccess') });
+      } else {
+        await leadDocumentsApi.create(lead.id, {
+          type: addType,
+          status: 'missing',
+          ...(addLabel.trim().length > 0 ? { label: addLabel.trim() } : {}),
+        });
+        toast({ tone: 'success', title: t('toast.added') });
+      }
+      setAddFile(null);
       setAddLabel('');
+      if (addFileInput.current) addFileInput.current.value = '';
       await refresh();
       onApplied?.();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      const message = err instanceof ApiError ? mapApiErrorMessage(err, t) : String(err);
+      setError(message);
     } finally {
       setAddPending(false);
+    }
+  }
+
+  /**
+   * Sprint 16 (D16) — per-row upload / replace. The button triggers
+   * the hidden input; this handler is invoked when the picker yields
+   * a file.
+   */
+  async function onPickedFileForRow(row: LeadDocumentRow, file: File | null): Promise<void> {
+    if (!file || !canWrite) return;
+    const validationError = validatePickedFile(file);
+    if (validationError) {
+      setError(validationError);
+      // Reset the input so a subsequent pick of the same file fires
+      // change again.
+      const input = fileInputs.current.get(row.id);
+      if (input) input.value = '';
+      return;
+    }
+    setPendingId(row.id);
+    setError(null);
+    try {
+      await leadDocumentsApi.upload(lead.id, row.id, file);
+      toast({
+        tone: 'success',
+        title: row.storageProvider ? t('toast.uploadReplaced') : t('toast.uploadSuccess'),
+      });
+      await refresh();
+      onApplied?.();
+    } catch (err) {
+      const message = err instanceof ApiError ? mapApiErrorMessage(err, t) : String(err);
+      setError(message);
+    } finally {
+      const input = fileInputs.current.get(row.id);
+      if (input) input.value = '';
+      setPendingId(null);
+    }
+  }
+
+  /**
+   * Sprint 16 (D16) — download the protected file as a Blob, then
+   * either open it in a new tab (inline preview for image / pdf) or
+   * trigger a save-as. The blob URL is revoked after the click so we
+   * don't accumulate references.
+   */
+  async function onViewOrDownload(row: LeadDocumentRow, mode: 'view' | 'download'): Promise<void> {
+    if (!canRead) return;
+    setPendingId(row.id);
+    setError(null);
+    try {
+      const { blob, fileName } = await leadDocumentsApi.downloadFile(lead.id, row.id);
+      const objectUrl = URL.createObjectURL(blob);
+      if (mode === 'view') {
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        // The opened tab keeps its own reference; revoke after a
+        // generous delay so the new tab finishes loading first.
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      } else {
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = fileName;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+      }
+    } catch (err) {
+      const message = err instanceof ApiError ? mapApiErrorMessage(err, t) : String(err);
+      setError(message);
+    } finally {
+      setPendingId(null);
     }
   }
 
@@ -248,8 +388,8 @@ export function DocumentsActionPanel({
   return (
     <div className="flex flex-col gap-4">
       <Notice tone="info">
-        <p className="text-sm font-medium">{t('uploadGapTitle')}</p>
-        <p className="mt-1 text-xs text-ink-secondary">{t('uploadGapBody')}</p>
+        <p className="text-sm font-medium">{t('privacyTitle')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{t('privacyBody')}</p>
       </Notice>
 
       {error ? <Notice tone="error">{error}</Notice> : null}
@@ -305,6 +445,14 @@ export function DocumentsActionPanel({
                     {row?.fileName ? (
                       <span className="truncate text-xs text-ink-tertiary">{row.fileName}</span>
                     ) : null}
+                    {/* Sprint 16 (D16) — show size + mime when the row
+                        actually has a stored file. */}
+                    {row?.storageProvider && row.sizeBytes ? (
+                      <span className="text-[11px] text-ink-tertiary">
+                        · {Math.round(row.sizeBytes / 1024)} KB
+                        {row.mimeType ? ` · ${row.mimeType}` : ''}
+                      </span>
+                    ) : null}
                   </header>
                   {row?.rejectionReason ? (
                     <p className="mt-2 text-xs text-status-breach">
@@ -324,6 +472,58 @@ export function DocumentsActionPanel({
                   {/* Action row — only when the user can perform something. */}
                   {row ? (
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                      {/* Sprint 16 (D16) — Upload / Replace via hidden file input. */}
+                      {canWrite ? (
+                        <>
+                          <input
+                            ref={(node) => {
+                              fileInputs.current.set(row.id, node);
+                            }}
+                            type="file"
+                            accept={ALLOWED_UPLOAD_ACCEPT}
+                            hidden
+                            onChange={(e) => {
+                              const picked = e.target.files?.[0] ?? null;
+                              void onPickedFileForRow(row, picked);
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => fileInputs.current.get(row.id)?.click()}
+                            disabled={isBusy}
+                          >
+                            <Upload className="me-1 h-3 w-3" aria-hidden="true" />
+                            {row.storageProvider
+                              ? t('actions.replaceFile')
+                              : t('actions.uploadFile')}
+                          </Button>
+                        </>
+                      ) : null}
+                      {/* View + Download — only when a file actually
+                          exists in private storage. */}
+                      {canRead && row.storageProvider ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void onViewOrDownload(row, 'view')}
+                            disabled={isBusy}
+                          >
+                            <Eye className="me-1 h-3 w-3" aria-hidden="true" />
+                            {t('actions.viewFile')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void onViewOrDownload(row, 'download')}
+                            disabled={isBusy}
+                          >
+                            <Download className="me-1 h-3 w-3" aria-hidden="true" />
+                            {t('actions.downloadFile')}
+                          </Button>
+                        </>
+                      ) : null}
                       {canWrite && status !== 'uploaded' && status !== 'accepted' ? (
                         <Button
                           size="sm"
@@ -411,16 +611,23 @@ export function DocumentsActionPanel({
               <Input value={addLabel} onChange={(e) => setAddLabel(e.target.value)} />
             </Field>
           ) : null}
-          <Field label={t('form.fileName')} hint={t('form.fileNameHint')}>
-            <Input
-              value={addFileName}
-              onChange={(e) => setAddFileName(e.target.value)}
-              placeholder={t('form.fileNamePlaceholder')}
+          <Field label={t('form.file')} hint={t('form.fileHint')}>
+            <input
+              ref={addFileInput}
+              type="file"
+              accept={ALLOWED_UPLOAD_ACCEPT}
+              onChange={(e) => setAddFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm text-ink-secondary file:me-3 file:rounded-md file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-xs file:font-medium file:text-brand-700 hover:file:bg-brand-100"
             />
+            {addFile ? (
+              <p className="mt-1 text-[11px] text-ink-tertiary">
+                {addFile.name} · {Math.round(addFile.size / 1024)} KB
+              </p>
+            ) : null}
           </Field>
           <div className="flex items-center justify-end gap-2">
             <Button type="submit" loading={addPending} disabled={!canWrite}>
-              {t('actions.add')}
+              {addFile ? t('actions.addWithUpload') : t('actions.add')}
             </Button>
           </div>
         </form>
@@ -489,4 +696,24 @@ function labelOf(
     return t(`types.${type}` as 'types.national_id');
   }
   return t('types.other');
+}
+
+/**
+ * Sprint 16 (D16) — translate the server's typed error codes into the
+ * panel's localised strings. Falls back to the raw message for codes
+ * we don't recognise so the operator at least sees something
+ * actionable instead of a blank toast.
+ */
+function mapApiErrorMessage(err: ApiError, t: ReturnType<typeof useTranslations>): string {
+  const codeMap: Record<string, string> = {
+    'lead.document.unsupported_type': t('errors.unsupportedType'),
+    'lead.document.too_large': t('errors.tooLarge'),
+    'lead.document.empty': t('errors.empty'),
+    'lead.document.missing_file': t('errors.missingFile'),
+    'lead.document.file_missing': t('errors.fileMissingOnServer'),
+    'lead.document.not_found': t('errors.notFound'),
+    'lead.document.storage_unavailable': t('errors.storageUnavailable'),
+  };
+  if (err.code && codeMap[err.code]) return codeMap[err.code]!;
+  return err.message;
 }
