@@ -122,6 +122,17 @@ export const CAPABILITY_DEFINITIONS = [
     description: 'Reject a lead document or mark it as needs_resubmission (reviewer action)',
   },
 
+  // CRM — lead partner targets (Sprint 13 / D13). Operator intent to
+  // pursue an additional partner journey on the same real person
+  // without duplicating the Lead / Contact. Distinct from the read-
+  // side partner.verification.* surface, which projects synced
+  // partner data.
+  { code: 'partner.target.read', description: 'View partner-target intent rows for a lead' },
+  {
+    code: 'partner.target.write',
+    description: 'Create / update partner-target rows for a lead (no duplicate contact)',
+  },
+
   // Follow-ups (P2-01)
   { code: 'followup.read', description: 'View follow-ups (all + mine)' },
   { code: 'followup.write', description: 'Create / delete follow-ups' },

@@ -102,6 +102,8 @@ model Tenant {
   userPresences               UserPresence[]
   /// Sprint 12 (D12) — per-lead document rows.
   leadDocuments               LeadDocument[]
+  /// Sprint 13 (D13) — per-lead partner-target rows.
+  leadPartnerTargets          LeadPartnerTarget[]
 
   @@map("tenants")
 }
@@ -492,6 +494,9 @@ model User {
   /// Sprint 12 (D12) — lead-document trail (parallel to captain).
   reviewedLeadDocuments       LeadDocument[]         @relation("LeadDocumentReviewer")
   uploadedLeadDocuments       LeadDocument[]         @relation("LeadDocumentUploader")
+  /// Sprint 13 (D13) — partner-target authorship + ownership.
+  authoredPartnerTargets      LeadPartnerTarget[]    @relation("LeadPartnerTargetAuthor")
+  ownedPartnerTargets         LeadPartnerTarget[]    @relation("LeadPartnerTargetOwner")
   /// Phase 1A — distribution engine back-relations.
   agentCapacity               AgentCapacity?
   routedLeads                 LeadRoutingLog[]       @relation("LeadRoutingLogChosen")
@@ -934,6 +939,10 @@ model Lead {
   /// Tracked metadata-only today; storage backend lands in a
   /// follow-up sprint. Status drives the Lead Detail panel chips.
   documents             LeadDocument[]
+  /// Sprint 13 (D13) — operator-driven partner-target intent. Lets
+  /// one real person/lead carry multiple partner journeys (Uber +
+  /// inDrive + DiDi) without duplicating the lead/contact row.
+  partnerTargets        LeadPartnerTarget[]
   /// Phase 1A — append-only routing decisions for this lead.
   routingLogs           LeadRoutingLog[]
   /// Phase D2 — D2.1: every duplicate-decision audit row that
@@ -1498,6 +1507,76 @@ model LeadDocument {
   @@map("lead_documents")
 }
 
+/// Sprint 13 (D13) — operator-driven partner-target intent.
+///
+/// Captures "we want to target this real person for this partner".
+/// One row per (lead, partnerSource) — never duplicates the
+/// Lead / Contact / Captain row. The Partner Presence panel
+/// blends these targets with the read-side PartnerVerification
+/// projection so the operator sees both "we have a target on
+/// inDrive" and "Uber sync matched a real captain row" in one
+/// place.
+///
+/// Status vocabulary (allow-listed at the DB layer):
+///   * `target`           — newly added; no work started.
+///   * `not_started`      — synonym for target (kept for spec
+///                          parity; service treats them the same).
+///   * `contacted`        — operator reached out.
+///   * `signup_started`   — partner-side onboarding underway.
+///   * `matched`          — partner sync matched a record on
+///                          this contact (typically set by the
+///                          reconciliation engine in a future
+///                          sprint; manually settable today).
+///   * `rejected`         — partner rejected the application.
+///   * `inactive`         — operator paused the target.
+///
+/// Dedupe contract:
+///   A unique index on (lead_id, partner_source_id) keeps the
+///   per-(lead, partner) row unique. The service throws a typed
+///   error on duplicate INSERT so the UI can surface a clean
+///   "target already exists" message.
+model LeadPartnerTarget {
+  id              String        @id @default(uuid()) @db.Uuid
+  tenantId        String        @map("tenant_id") @db.Uuid
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId          String        @map("lead_id") @db.Uuid
+  lead            Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  partnerSourceId String        @map("partner_source_id") @db.Uuid
+  partnerSource   PartnerSource @relation(fields: [partnerSourceId], references: [id], onDelete: Cascade)
+
+  status String @default("target")
+
+  /// Optional secondary anchors. Country + team default from the
+  /// partner source / lead's assignee team but the operator can
+  /// override.
+  countryId String?  @map("country_id") @db.Uuid
+  country   Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  teamId    String?  @map("team_id") @db.Uuid
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  /// Owner of the target workflow. NULL = unassigned. Defaults to
+  /// the lead's current assignee at create time when the caller
+  /// omits the field.
+  ownerUserId String? @map("owner_user_id") @db.Uuid
+  owner       User?   @relation("LeadPartnerTargetOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  createdById String @map("created_by_id") @db.Uuid
+  createdBy   User   @relation("LeadPartnerTargetAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+
+  note String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Dedupe contract — exactly one target row per (lead, partner).
+  @@unique([leadId, partnerSourceId])
+  @@index([tenantId, leadId])
+  @@index([tenantId, partnerSourceId])
+  @@index([tenantId, status])
+  @@index([tenantId, ownerUserId])
+  @@map("lead_partner_targets")
+}
+
 /// CaptainTrip (P2-09) — append-only ledger of a captain's trips.
 ///
 /// One row per delivered trip. The `tripId` is the operator's
@@ -1632,6 +1711,8 @@ model Country {
   whatsappConversations WhatsAppConversation[]
   /// Phase D4 — D4.1: partner sources scoped to this country.
   partnerSources        PartnerSource[]
+  /// Sprint 13 (D13) — partner targets that explicitly named this country.
+  leadPartnerTargets    LeadPartnerTarget[]
 
   // Same code may exist under different companies in one tenant, so the
   // uniqueness constraint includes companyId.
@@ -1672,6 +1753,8 @@ model Team {
 
   /// Sprint 9 (D9) — team-targeted notifications. See Notification.
   notifications Notification[]
+  /// Sprint 13 (D13) — partner targets routed to this team.
+  leadPartnerTargets LeadPartnerTarget[]
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
@@ -2747,6 +2830,8 @@ model PartnerSource {
   snapshots        PartnerSnapshot[]
   records          PartnerRecord[]
   milestoneConfigs PartnerMilestoneConfig[]
+  /// Sprint 13 (D13) — operator-driven targets pointing at this source.
+  leadPartnerTargets LeadPartnerTarget[]
 
   @@index([tenantId, companyId, countryId])
   @@index([tenantId, partnerCode, isActive])
