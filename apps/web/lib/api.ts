@@ -2062,7 +2062,52 @@ export const tenantSettingsApi = {
       method: 'PATCH',
       body: input,
     }),
+  /** Sprint 15 (D15) — read tenant branding (logo URL, theme colors, etc.). */
+  getBranding: (): Promise<TenantBranding> => apiFetch<TenantBranding>('/tenant/settings/branding'),
+  /** Sprint 15 (D15) — partial PATCH; undefined keeps, null clears, value sets. */
+  updateBranding: (input: UpdateTenantBrandingInput): Promise<TenantBranding> =>
+    apiFetch<TenantBranding>('/tenant/settings/branding', { method: 'PATCH', body: input }),
 };
+
+/**
+ * Sprint 15 (D15) — tenant branding shape.
+ *
+ * All fields are nullable: a fresh tenant has no branding set; the
+ * Settings UI and the sidebar/login renderers fall back to the
+ * approved design defaults when a value is null.
+ */
+export interface TenantBranding {
+  tenantId: string;
+  systemName: string | null;
+  workspaceName: string | null;
+  logoUrl: string | null;
+  faviconUrl: string | null;
+  loginImageUrl: string | null;
+  primaryColor: string | null;
+  accentColor: string | null;
+  sidebarBgColor: string | null;
+  sidebarHoverColor: string | null;
+  updatedAt: string | null;
+  updatedById: string | null;
+}
+
+/**
+ * Three-way null semantics:
+ *   - omitted → field is unchanged on the server
+ *   - `null`  → field is cleared
+ *   - value   → field is set
+ */
+export interface UpdateTenantBrandingInput {
+  systemName?: string | null;
+  workspaceName?: string | null;
+  logoUrl?: string | null;
+  faviconUrl?: string | null;
+  loginImageUrl?: string | null;
+  primaryColor?: string | null;
+  accentColor?: string | null;
+  sidebarBgColor?: string | null;
+  sidebarHoverColor?: string | null;
+}
 
 /**
  * Phase D3 — D3.7: agent-workspace "Needs attention now" feed.

@@ -62,6 +62,7 @@
       "lostReasons": "Lost reasons",
       "audit": "Audit Log",
       "tenantSettings": "Settings",
+      "branding": "Branding & Assets",
       "backup": "Backup",
       "whatsappReviewsBadge": "{n} unresolved reviews"
     },
@@ -1718,6 +1719,51 @@
       "lastSummary": "{rows} rows · exported {at}",
       "forbidden": "You don't have the tenant.export capability — ask an admin to grant it.",
       "opsHint": "For a full database backup (all tenants, every column) use scripts/backup.sh — see scripts/README.md."
+    },
+    "branding": {
+      "title": "Branding & Assets",
+      "subtitle": "Customise the system name, logos, and theme colors for this tenant.",
+      "readOnlyHint": "You can view branding but not change it — ask an admin for tenant.settings.write.",
+      "uploadGap": {
+        "title": "File upload storage is not configured yet",
+        "body": "This sprint accepts safe image URLs only (https:// or a /public path). Binary upload to a tenant bucket is a future sprint — paste a hosted URL for now."
+      },
+      "sections": {
+        "identity": "System identity",
+        "colors": "Theme colors",
+        "colorsHint": "Colors must be 6-digit hex like #1f3864. Leave empty to fall back to the approved palette.",
+        "preview": "Live preview"
+      },
+      "fields": {
+        "systemName": "System name",
+        "systemNameHint": "Shown in the admin sidebar header and login page heading.",
+        "systemNamePlaceholder": "e.g. Captain Masr CRM",
+        "workspaceName": "Workspace name",
+        "workspaceNameHint": "Shown under the system name on broad surfaces (header subtitle, login).",
+        "workspaceNamePlaceholder": "e.g. Activation",
+        "logoUrl": "Sidebar logo URL",
+        "logoUrlHint": "Square SVG or PNG, ideally 64×64. Leave empty to use the initial-letter fallback.",
+        "faviconUrl": "Favicon URL",
+        "faviconUrlHint": "Not applied yet — see the file-upload gap above; the Next.js metadata pipeline is static this sprint.",
+        "loginImageUrl": "Login page image URL",
+        "loginImageUrlHint": "Optional hero image shown on the sign-in screen.",
+        "primaryColor": "Primary",
+        "accentColor": "Accent",
+        "sidebarBgColor": "Sidebar background",
+        "sidebarHoverColor": "Sidebar hover"
+      },
+      "errors": {
+        "invalidUrl": "URL must start with http://, https://, or /",
+        "invalidColor": "Color must be a 6-digit hex like #1f3864"
+      },
+      "actions": {
+        "save": "Save branding",
+        "reset": "Reset"
+      },
+      "toast": {
+        "saved": "Branding saved.",
+        "noChanges": "No changes to save."
+      }
     },
     "tenantSettings": {
       "title": "Tenant settings",
