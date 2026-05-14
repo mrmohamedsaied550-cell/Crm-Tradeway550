@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { AdminSideNav } from '@/components/admin/side-nav';
 import { AuthBar } from '@/components/admin/auth-bar';
 import { AdminAuthGuard } from '@/components/admin/auth-guard';
+import { PresenceHeartbeat } from '@/components/admin/presence-heartbeat';
 
 /**
  * Admin shell — side-nav on the left (right under RTL), main content on the
@@ -29,6 +30,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <AuthBar />
         <AdminAuthGuard>{children}</AdminAuthGuard>
       </div>
+      <PresenceHeartbeat />
     </div>
   );
 }
