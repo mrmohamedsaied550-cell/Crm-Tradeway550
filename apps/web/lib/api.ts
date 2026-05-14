@@ -1212,6 +1212,9 @@ export const conversationsApi = {
       accountId?: string;
       status?: ConversationStatus;
       phone?: string;
+      /** Sprint 18 (D18) — case-insensitive substring search across
+       *  phone + contact displayName + linked-lead name. */
+      search?: string;
       queue?: ConversationQueue;
       limit?: number;
       offset?: number;

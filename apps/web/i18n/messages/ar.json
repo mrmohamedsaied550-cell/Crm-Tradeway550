@@ -2201,7 +2201,15 @@
         "label": "تصفية الصندوق",
         "mine": "محادثاتي",
         "all": "كل المحادثات في نطاقي",
-        "statusLabel": "الحالة"
+        "statusLabel": "الحالة",
+        "accountLabel": "الحساب",
+        "accountAll": "كل الحسابات",
+        "accountAriaLabel": "تصفية حسب حساب واتساب"
+      },
+      "search": {
+        "placeholder": "ابحث برقم الهاتف أو الاسم أو العميل…",
+        "ariaLabel": "بحث في المحادثات",
+        "clearAriaLabel": "مسح البحث"
       },
       "triage": {
         "label": "فرز الصندوق",

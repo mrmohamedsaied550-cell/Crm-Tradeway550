@@ -2201,7 +2201,15 @@
         "label": "Inbox filter",
         "mine": "Mine",
         "all": "All in scope",
-        "statusLabel": "Status"
+        "statusLabel": "Status",
+        "accountLabel": "Account",
+        "accountAll": "All accounts",
+        "accountAriaLabel": "Filter by WhatsApp account"
+      },
+      "search": {
+        "placeholder": "Search phone, name, or lead…",
+        "ariaLabel": "Search conversations",
+        "clearAriaLabel": "Clear search"
       },
       "triage": {
         "label": "Inbox triage",
