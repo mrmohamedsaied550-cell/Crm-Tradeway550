@@ -32,6 +32,7 @@ import { DuplicatesModule } from './duplicates/duplicates.module';
 // Phase D4 — D4.2: Partner Data Hub configuration. Behind the
 // D4_PARTNER_HUB_V1 flag; no sync engine yet, just admin CRUD.
 import { PartnerModule } from './partner/partner.module';
+import { StorageModule } from './storage/storage.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { buildLoggerConfig } from './common/logger';
 
@@ -76,6 +77,7 @@ import { buildLoggerConfig } from './common/logger';
     DistributionModule,
     DuplicatesModule,
     PartnerModule,
+    StorageModule,
     HealthModule,
   ],
   providers: [
