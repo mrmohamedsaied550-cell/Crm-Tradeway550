@@ -2645,6 +2645,22 @@
         "moduleCounts": {
           "summary": "{on} / {total} caps"
         }
+      },
+      "fieldHybrid": {
+        "searchPlaceholder": "Search by field, label, or resource",
+        "filterLabel": "Filter field rows",
+        "filters": {
+          "all": "All ({n})",
+          "sensitive": "Sensitive ({n})",
+          "hidden": "Hidden ({n})",
+          "editable": "Editable ({n})",
+          "overrides": "Overrides ({n})"
+        },
+        "resourceCount": "{n} of {total}",
+        "emptyFiltered": {
+          "title": "No field rows match the current filter.",
+          "body": "Try clearing the search or switching back to All."
+        }
       }
     },
     "duplicateRules": {

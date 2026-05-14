@@ -2645,6 +2645,22 @@
         "moduleCounts": {
           "summary": "{on} / {total} صلاحية"
         }
+      },
+      "fieldHybrid": {
+        "searchPlaceholder": "بحث بالاسم أو العنوان أو المورد",
+        "filterLabel": "تصفية صفوف الحقول",
+        "filters": {
+          "all": "الكل ({n})",
+          "sensitive": "حسّاسة ({n})",
+          "hidden": "مخفيّة ({n})",
+          "editable": "قابلة للتحرير ({n})",
+          "overrides": "مُعدّلة ({n})"
+        },
+        "resourceCount": "{n} من {total}",
+        "emptyFiltered": {
+          "title": "لا توجد حقول مطابقة للمُرشِّح الحالي.",
+          "body": "جرّب مسح البحث أو العودة إلى الكل."
+        }
       }
     },
     "duplicateRules": {

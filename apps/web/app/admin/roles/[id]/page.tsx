@@ -952,6 +952,7 @@ function FieldPermissionsTab({
 }: FieldPermissionsTabProps): JSX.Element {
   const t = useTranslations('admin.roles');
   const tCommon = useTranslations('admin.common');
+  const tFieldHybrid = useTranslations('admin.roles.fieldHybrid');
 
   /**
    * Build the working set: for every catalogue entry, find the
@@ -980,6 +981,13 @@ function FieldPermissionsTab({
   }, [initialMap]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sprint 7.D — filters live alongside the existing table so an
+  // operator can narrow to the rows they care about. They are pure
+  // UI state — no impact on save behaviour or row inclusion.
+  type FieldFilter = 'all' | 'sensitive' | 'hidden' | 'editable' | 'overrides';
+  const [filter, setFilter] = useState<FieldFilter>('all');
+  const [query, setQuery] = useState<string>('');
 
   function setCell(
     resource: string,
@@ -1041,74 +1049,187 @@ function FieldPermissionsTab({
     return Array.from(m.entries());
   }, [fieldCatalogue]);
 
+  // Sprint 7.D — search + filter applied to the catalogue. The
+  // working map keeps every row so a hidden filter doesn't lose
+  // unsaved toggles; we just hide the matching tr.
+  const matches = useCallback(
+    (entry: FieldCatalogueEntry): boolean => {
+      const q = query.trim().toLowerCase();
+      if (q) {
+        const hay =
+          `${entry.field} ${entry.labelEn} ${entry.labelAr ?? ''} ${entry.resource}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      const cur = working.get(`${entry.resource}::${entry.field}`) ?? {
+        canRead: entry.defaultRead,
+        canWrite: entry.defaultWrite,
+      };
+      switch (filter) {
+        case 'all':
+          return true;
+        case 'sensitive':
+          return entry.sensitive;
+        case 'hidden':
+          return !cur.canRead;
+        case 'editable':
+          return cur.canWrite;
+        case 'overrides':
+          return cur.canRead !== entry.defaultRead || cur.canWrite !== entry.defaultWrite;
+        default:
+          return true;
+      }
+    },
+    [query, filter, working],
+  );
+
+  // Counts shown on the filter chips (computed against the full
+  // catalogue, not the search query, so the chip totals stay stable
+  // as the operator types).
+  const counts = useMemo(() => {
+    let sensitive = 0;
+    let hidden = 0;
+    let editable = 0;
+    let overrides = 0;
+    for (const e of fieldCatalogue) {
+      const cur = working.get(`${e.resource}::${e.field}`) ?? {
+        canRead: e.defaultRead,
+        canWrite: e.defaultWrite,
+      };
+      if (e.sensitive) sensitive += 1;
+      if (!cur.canRead) hidden += 1;
+      if (cur.canWrite) editable += 1;
+      if (cur.canRead !== e.defaultRead || cur.canWrite !== e.defaultWrite) overrides += 1;
+    }
+    return { all: fieldCatalogue.length, sensitive, hidden, editable, overrides };
+  }, [fieldCatalogue, working]);
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('fieldsIntro')}</p>
-      {byResource.map(([resource, entries]) => (
-        <section key={resource} className="overflow-hidden rounded-md border border-surface-border">
-          <header className="border-b border-surface-border bg-surface px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-            {resource}
-          </header>
-          <table className="w-full text-sm">
-            <thead className="bg-surface-card text-xs text-ink-tertiary">
-              <tr>
-                <th className="px-3 py-2 text-start font-medium">{t('fields.field')}</th>
-                <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canRead')}</th>
-                <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canWrite')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {entries.map((entry) => {
-                const key = `${entry.resource}::${entry.field}`;
-                const cur = working.get(key) ?? {
-                  canRead: entry.defaultRead,
-                  canWrite: entry.defaultWrite,
-                };
-                return (
-                  <tr key={key} className="hover:bg-brand-50/30">
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col leading-tight">
-                        <code className="font-mono text-xs text-ink-primary">{entry.field}</code>
-                        <span className="text-[11px] text-ink-tertiary">
-                          {entry.labelEn}
-                          {entry.sensitive ? (
-                            <span className="ms-1 inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
-                              {t('fields.sensitive')}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={cur.canRead}
-                        onChange={(e) =>
-                          setCell(entry.resource, entry.field, 'canRead', e.target.checked)
-                        }
-                        disabled={!editable || submitting}
-                        aria-label={t('fields.canRead')}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={cur.canWrite}
-                        onChange={(e) =>
-                          setCell(entry.resource, entry.field, 'canWrite', e.target.checked)
-                        }
-                        disabled={!editable || submitting}
-                        aria-label={t('fields.canWrite')}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      ))}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={tFieldHybrid('searchPlaceholder')}
+          aria-label={tFieldHybrid('searchPlaceholder')}
+          className="max-w-sm"
+        />
+        <div
+          role="tablist"
+          aria-label={tFieldHybrid('filterLabel')}
+          className="flex flex-wrap gap-1"
+        >
+          {(
+            [
+              ['all', counts.all],
+              ['sensitive', counts.sensitive],
+              ['hidden', counts.hidden],
+              ['editable', counts.editable],
+              ['overrides', counts.overrides],
+            ] as ReadonlyArray<[FieldFilter, number]>
+          ).map(([key, n]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              onClick={() => setFilter(key)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                filter === key
+                  ? 'border-brand-200 bg-brand-50 text-brand-700'
+                  : 'border-surface-border bg-surface-card text-ink-secondary hover:border-brand-200 hover:bg-brand-50/40',
+              )}
+            >
+              {tFieldHybrid(`filters.${key}` as 'filters.all', { n })}
+            </button>
+          ))}
+        </div>
+      </div>
+      {byResource.map(([resource, entries]) => {
+        const visible = entries.filter(matches);
+        if (visible.length === 0) return null;
+        return (
+          <section
+            key={resource}
+            className="overflow-hidden rounded-md border border-surface-border"
+          >
+            <header className="flex items-center justify-between border-b border-surface-border bg-surface px-3 py-2 text-xs">
+              <span className="font-semibold uppercase tracking-wide text-ink-tertiary">
+                {resource}
+              </span>
+              <span className="text-[11px] text-ink-tertiary">
+                {tFieldHybrid('resourceCount', { n: visible.length, total: entries.length })}
+              </span>
+            </header>
+            <table className="w-full text-sm">
+              <thead className="bg-surface-card text-xs text-ink-tertiary">
+                <tr>
+                  <th className="px-3 py-2 text-start font-medium">{t('fields.field')}</th>
+                  <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canRead')}</th>
+                  <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canWrite')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {visible.map((entry) => {
+                  const key = `${entry.resource}::${entry.field}`;
+                  const cur = working.get(key) ?? {
+                    canRead: entry.defaultRead,
+                    canWrite: entry.defaultWrite,
+                  };
+                  return (
+                    <tr key={key} className="hover:bg-brand-50/30">
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col leading-tight">
+                          <code className="font-mono text-xs text-ink-primary">{entry.field}</code>
+                          <span className="text-[11px] text-ink-tertiary">
+                            {entry.labelEn}
+                            {entry.sensitive ? (
+                              <span className="ms-1 inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
+                                {t('fields.sensitive')}
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={cur.canRead}
+                          onChange={(e) =>
+                            setCell(entry.resource, entry.field, 'canRead', e.target.checked)
+                          }
+                          disabled={!editable || submitting}
+                          aria-label={t('fields.canRead')}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={cur.canWrite}
+                          onChange={(e) =>
+                            setCell(entry.resource, entry.field, 'canWrite', e.target.checked)
+                          }
+                          disabled={!editable || submitting}
+                          aria-label={t('fields.canWrite')}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </section>
+        );
+      })}
+      {byResource.every(([, entries]) => entries.filter(matches).length === 0) ? (
+        <Notice tone="info">
+          <p className="text-sm font-medium">{tFieldHybrid('emptyFiltered.title')}</p>
+          <p className="mt-1 text-xs text-ink-secondary">{tFieldHybrid('emptyFiltered.body')}</p>
+        </Notice>
+      ) : null}
       {editable ? (
         <div className="flex items-center justify-end">
           <Button onClick={() => void onSubmit()} loading={submitting}>
