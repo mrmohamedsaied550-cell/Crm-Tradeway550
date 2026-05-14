@@ -861,6 +861,53 @@
                 "upload": "POST /leads/:id/documents — accepts file metadata + URL; emits lead.document.uploaded audit.",
                 "status": "PATCH /leads/:id/documents/:docId — operator transitions status; emits lead.document.{accepted|rejected} audit.",
                 "capabilities": "Capabilities: lead.document.read / .write / .accept / .reject; respected by the field-level access chain."
+              },
+              "uploadGapTitle": "File upload storage not configured",
+              "uploadGapBody": "Sprint 12 tracks documents as metadata only. You can record a file name to log \"we have the document via WhatsApp / email\" but the binary storage backend ships in a follow-up sprint.",
+              "listHeading": "Documents",
+              "addHeading": "Add or update a document",
+              "reasonLabel": "Reason",
+              "placeholderHint": "Use the form below to record metadata for this required document.",
+              "noAccess": {
+                "title": "Documents tab hidden",
+                "body": "You do not have lead.document.read for this lead. Ask an admin to grant it if you need to track signup paperwork."
+              },
+              "viewOnly": "View only",
+              "uploadedBy": "Uploaded by {name}",
+              "reviewedBy": "Reviewed by {name}",
+              "types": {
+                "national_id": "National ID",
+                "driving_license": "Driving licence",
+                "vehicle_license": "Vehicle licence",
+                "profile_photo": "Profile photo",
+                "other": "Other document"
+              },
+              "form": {
+                "type": "Document type",
+                "label": "Label (when type = Other)",
+                "fileName": "File name",
+                "fileNamePlaceholder": "e.g. national_id_front.jpg",
+                "fileNameHint": "Leave blank to record the document as Missing for now."
+              },
+              "actions": {
+                "add": "Add record",
+                "markUploaded": "Mark uploaded",
+                "accept": "Accept",
+                "reject": "Reject",
+                "needsResubmission": "Needs resubmission"
+              },
+              "rejectModal": {
+                "titleReject": "Reject document",
+                "titleNeedsResubmission": "Ask for resubmission",
+                "reasonHint": "Reason is required. The lead's assignee will see this on Lead Detail.",
+                "placeholder": "e.g. Photo is blurry — please re-upload."
+              },
+              "toast": {
+                "added": "Document record added.",
+                "uploaded": "Marked as uploaded.",
+                "accepted": "Document accepted.",
+                "rejected": "Document rejected. The lead assignee has been notified.",
+                "needsResubmission": "Document marked needs resubmission."
               }
             },
             "partnerData": {

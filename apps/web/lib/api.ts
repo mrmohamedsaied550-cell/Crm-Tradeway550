@@ -1618,6 +1618,91 @@ export const presenceApi = {
 };
 
 // ───────────────────────────────────────────────────────────────────────
+// Lead Documents (Sprint 12 / D12)
+// ───────────────────────────────────────────────────────────────────────
+
+export type LeadDocumentStatus =
+  | 'missing'
+  | 'uploaded'
+  | 'accepted'
+  | 'rejected'
+  | 'needs_resubmission';
+
+export interface LeadDocumentRow {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  type: string;
+  label: string | null;
+  status: LeadDocumentStatus;
+  fileName: string | null;
+  fileUrl: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  uploadedById: string | null;
+  uploadedBy: { id: string; name: string; email: string } | null;
+  reviewedById: string | null;
+  reviewedBy: { id: string; name: string; email: string } | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Sprint 12 (D12) — registry of the standard 4 required types
+ *  rendered in the UI even when no row exists in the database. */
+export const LEAD_DOCUMENT_DEFAULT_TYPES = [
+  'national_id',
+  'driving_license',
+  'vehicle_license',
+  'profile_photo',
+] as const;
+
+export const leadDocumentsApi = {
+  listForLead: (
+    leadId: string,
+    query: { status?: LeadDocumentStatus; type?: string } = {},
+  ): Promise<LeadDocumentRow[]> =>
+    apiFetch<LeadDocumentRow[]>(`/leads/${leadId}/documents`, {
+      query: {
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.type ? { type: query.type } : {}),
+      },
+    }),
+  create: (
+    leadId: string,
+    body: {
+      type: string;
+      label?: string;
+      status?: 'missing' | 'uploaded';
+      fileName?: string;
+      mimeType?: string;
+      sizeBytes?: number;
+      note?: string;
+    },
+  ): Promise<{ id: string }> =>
+    apiFetch<{ id: string }>(`/leads/${leadId}/documents`, { method: 'POST', body }),
+  update: (
+    leadId: string,
+    documentId: string,
+    body: {
+      label?: string;
+      status?: LeadDocumentStatus;
+      fileName?: string;
+      mimeType?: string;
+      sizeBytes?: number;
+      rejectionReason?: string;
+      note?: string;
+    },
+  ): Promise<{ id: string }> =>
+    apiFetch<{ id: string }>(`/leads/${leadId}/documents/${documentId}`, {
+      method: 'PATCH',
+      body,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Audit (C40)
 // ───────────────────────────────────────────────────────────────────────
 

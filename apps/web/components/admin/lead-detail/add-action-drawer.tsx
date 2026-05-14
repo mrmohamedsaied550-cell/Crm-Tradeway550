@@ -284,7 +284,10 @@ export function AddActionDrawer({
             // ─────── Sprint 2.E — Documents panel (SCAFFOLD) ───────
             // 5 status states displayed read-only; backend gap is
             // explicit (no LeadDocument model yet).
-            <DocumentsActionPanel lead={lead} onClose={close} />
+            // Sprint 12 (D12) — the panel is now live. `onApplied`
+            // bubbles up so the parent Lead Detail page can refresh
+            // its timeline + counters after each accept/reject.
+            <DocumentsActionPanel lead={lead} onClose={close} onApplied={onApplied} />
           ) : area === 'partnerData' ? (
             // ─────── Sprint 2.F — Partner Data panel (SCAFFOLD) ───────
             // Reuses the D4.4 PartnerDataCard read-only projection;
