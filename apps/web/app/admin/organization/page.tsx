@@ -147,6 +147,27 @@ export default function OrganizationPage(): JSX.Element {
   // Tree-row expansion state. Keyed by `${level}:${id}`.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
+  // 6.1 — In-page People filter so KPI cards / issue rows can deep-link
+  // into the affected user subset without leaving the page or depending
+  // on a not-yet-wired ?filter param on /admin/users.
+  type PeopleFilter = 'all' | 'noTeam' | 'noRole';
+  const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>('all');
+
+  // 6.1 — RBAC capability snapshot. Read once on mount and on every
+  // refresh so the gates re-evaluate after a re-login / role change.
+  const canReadUsers = hasCapability('users.read');
+  const canWriteUsers = hasCapability('users.write');
+  const canWriteTeam = hasCapability('org.team.write');
+  const canReadCompanies = hasCapability('org.company.read');
+  const canReadCountries = hasCapability('org.country.read');
+  const canReadTeams = hasCapability('org.team.read');
+  const canReadRoles = hasCapability('roles.read');
+  const isReadOnly =
+    !hasCapability('org.company.write') &&
+    !hasCapability('org.country.write') &&
+    !hasCapability('org.team.write') &&
+    !hasCapability('users.write');
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -268,6 +289,15 @@ export default function OrganizationPage(): JSX.Element {
     });
   }
 
+  // 6.1 — Focus People table and apply a filter in one click.
+  function focusPeople(filter: PeopleFilter): void {
+    setPeopleFilter(filter);
+    if (typeof window !== 'undefined') {
+      const el = document.getElementById('org-people');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
   // ─────── render ───────
 
   return (
@@ -277,6 +307,11 @@ export default function OrganizationPage(): JSX.Element {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {isReadOnly ? (
+              <Badge tone="neutral" aria-label={t('readOnly')}>
+                {t('readOnly')}
+              </Badge>
+            ) : null}
             <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
               <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
               {tCommon('refresh')}
@@ -320,28 +355,28 @@ export default function OrganizationPage(): JSX.Element {
             label={t('kpis.companies')}
             count={counts.companies}
             icon={Building2}
-            href="/admin/companies"
+            href={canReadCompanies ? '/admin/companies' : undefined}
             loading={loading}
           />
           <KpiCard
             label={t('kpis.countries')}
             count={counts.countries}
             icon={Globe}
-            href="/admin/countries"
+            href={canReadCountries ? '/admin/countries' : undefined}
             loading={loading}
           />
           <KpiCard
             label={t('kpis.teams')}
             count={counts.teams}
             icon={Users2}
-            href="/admin/teams"
+            href={canReadTeams ? '/admin/teams' : undefined}
             loading={loading}
           />
           <KpiCard
             label={t('kpis.users')}
             count={counts.users}
             icon={UserCog}
-            href="/admin/users"
+            href={canReadUsers ? '/admin/users' : undefined}
             loading={loading}
           />
           <KpiCard
@@ -349,6 +384,7 @@ export default function OrganizationPage(): JSX.Element {
             count={counts.activeUsers}
             icon={UserCog}
             tone="healthy"
+            href={canReadUsers ? '/admin/users' : undefined}
             loading={loading}
           />
           <KpiCard
@@ -364,6 +400,9 @@ export default function OrganizationPage(): JSX.Element {
             count={counts.usersWithoutTeam}
             icon={AlertTriangle}
             tone={counts.usersWithoutTeam > 0 ? 'warning' : 'healthy'}
+            onClick={
+              canReadUsers && counts.usersWithoutTeam > 0 ? () => focusPeople('noTeam') : undefined
+            }
             loading={loading}
           />
           <KpiCard
@@ -385,7 +424,12 @@ export default function OrganizationPage(): JSX.Element {
         >
           {t('sections.issues')}
         </h2>
-        <DataQualityList counts={counts} t={t} />
+        <DataQualityList
+          counts={counts}
+          canReadUsers={canReadUsers}
+          onFocusPeople={focusPeople}
+          t={t}
+        />
       </section>
 
       {/* ─── Organization tree ─── */}
@@ -447,6 +491,7 @@ export default function OrganizationPage(): JSX.Element {
                       rolesById={rolesById}
                       expanded={expanded}
                       toggle={toggle}
+                      canWriteTeam={canWriteTeam}
                       t={t}
                     />
                   ) : null}
@@ -459,13 +504,47 @@ export default function OrganizationPage(): JSX.Element {
 
       {/* ─── People table ─── */}
       <section aria-labelledby="org-people" className="flex flex-col gap-3">
-        <h2
-          id="org-people"
-          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
-        >
-          {t('sections.people')}
-        </h2>
-        <PeopleTable users={data.users} teams={data.teams} rolesById={rolesById} t={t} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2
+            id="org-people"
+            className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+          >
+            {t('sections.people')}
+          </h2>
+          {canReadUsers ? (
+            <div
+              role="tablist"
+              aria-label={t('people.filters.label')}
+              className="inline-flex items-center gap-1 rounded-md border border-surface-border bg-surface-card p-0.5 text-xs"
+            >
+              <PeopleFilterTab
+                active={peopleFilter === 'all'}
+                onClick={() => setPeopleFilter('all')}
+                label={t('people.filters.all', { n: data.users.length })}
+              />
+              <PeopleFilterTab
+                active={peopleFilter === 'noTeam'}
+                onClick={() => setPeopleFilter('noTeam')}
+                label={t('people.filters.noTeam', { n: counts.usersWithoutTeam })}
+                tone={counts.usersWithoutTeam > 0 ? 'warning' : 'neutral'}
+              />
+              <PeopleFilterTab
+                active={peopleFilter === 'noRole'}
+                onClick={() => setPeopleFilter('noRole')}
+                label={t('people.filters.noRole', { n: counts.usersWithoutRole })}
+                tone={counts.usersWithoutRole > 0 ? 'warning' : 'neutral'}
+              />
+            </div>
+          ) : null}
+        </div>
+        <PeopleTable
+          users={data.users}
+          teams={data.teams}
+          rolesById={rolesById}
+          filter={peopleFilter}
+          canEdit={canWriteUsers}
+          t={t}
+        />
       </section>
 
       {/* ─── Advanced admin links ─── */}
@@ -477,12 +556,31 @@ export default function OrganizationPage(): JSX.Element {
           {t('sections.advanced')}
         </h2>
         <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <AdvancedLink href="/admin/companies" label={tNav('companies')} icon={Building2} />
-          <AdvancedLink href="/admin/countries" label={tNav('countries')} icon={Globe} />
-          <AdvancedLink href="/admin/teams" label={tNav('teams')} icon={Users2} />
-          <AdvancedLink href="/admin/users" label={tNav('users')} icon={UserCog} />
-          <AdvancedLink href="/admin/roles" label={tNav('roles')} icon={ShieldCheck} />
+          {canReadCompanies ? (
+            <AdvancedLink href="/admin/companies" label={tNav('companies')} icon={Building2} />
+          ) : null}
+          {canReadCountries ? (
+            <AdvancedLink href="/admin/countries" label={tNav('countries')} icon={Globe} />
+          ) : null}
+          {canReadTeams ? (
+            <AdvancedLink href="/admin/teams" label={tNav('teams')} icon={Users2} />
+          ) : null}
+          {canReadUsers ? (
+            <AdvancedLink href="/admin/users" label={tNav('users')} icon={UserCog} />
+          ) : null}
+          {canReadRoles ? (
+            <AdvancedLink href="/admin/roles" label={tNav('roles')} icon={ShieldCheck} />
+          ) : null}
         </ul>
+        {!canReadCompanies &&
+        !canReadCountries &&
+        !canReadTeams &&
+        !canReadUsers &&
+        !canReadRoles ? (
+          <Notice tone="info">
+            <p className="text-sm font-medium">{t('advanced.noAccess')}</p>
+          </Notice>
+        ) : null}
       </section>
     </div>
   );
@@ -519,6 +617,7 @@ function KpiCard({
   icon: Icon,
   tone = 'info',
   href,
+  onClick,
   hint,
   loading,
 }: {
@@ -527,6 +626,7 @@ function KpiCard({
   icon: typeof Building2;
   tone?: 'healthy' | 'warning' | 'breach' | 'info' | 'neutral';
   href?: string;
+  onClick?: () => void;
   hint?: string;
   loading: boolean;
 }): JSX.Element {
@@ -537,11 +637,12 @@ function KpiCard({
     info: 'border-status-info/30 bg-status-info/5 text-status-info',
     neutral: 'border-surface-border bg-surface-card text-ink-secondary',
   } as const;
+  const interactive = Boolean(href || onClick);
   const inner = (
     <div
       className={cn(
         'flex h-full flex-col gap-2 rounded-lg border bg-surface-card p-4 shadow-card transition-colors',
-        href ? 'hover:border-brand-200 hover:bg-brand-50' : '',
+        interactive ? 'hover:border-brand-200 hover:bg-brand-50' : '',
         toneClasses[tone].split(' ')[0],
       )}
     >
@@ -564,11 +665,29 @@ function KpiCard({
       {hint ? <p className="text-[11px] leading-snug text-ink-tertiary">{hint}</p> : null}
     </div>
   );
-  return <li>{href ? <Link href={href}>{inner}</Link> : inner}</li>;
+  if (href) {
+    return (
+      <li>
+        <Link href={href}>{inner}</Link>
+      </li>
+    );
+  }
+  if (onClick) {
+    return (
+      <li>
+        <button type="button" onClick={onClick} className="block w-full text-start">
+          {inner}
+        </button>
+      </li>
+    );
+  }
+  return <li>{inner}</li>;
 }
 
 function DataQualityList({
   counts,
+  canReadUsers,
+  onFocusPeople,
   t,
 }: {
   counts: {
@@ -580,40 +699,33 @@ function DataQualityList({
     countriesWithoutTeams: number;
     companiesWithoutCountries: number;
   };
+  canReadUsers: boolean;
+  onFocusPeople: (filter: 'noTeam' | 'noRole') => void;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
-  const issues = [
-    {
-      key: 'usersWithoutTeam',
-      n: counts.usersWithoutTeam,
-      href: '/admin/users',
-    },
-    {
-      key: 'usersWithoutRole',
-      n: counts.usersWithoutRole,
-      href: '/admin/users',
-    },
-    {
-      key: 'teamsWithoutTl',
-      n: counts.teamsWithoutTl,
-      href: '/admin/teams',
-    },
-    {
-      key: 'teamsWithoutUsers',
-      n: counts.teamsWithoutUsers,
-      href: '/admin/teams',
-    },
-    {
-      key: 'countriesWithoutTeams',
-      n: counts.countriesWithoutTeams,
-      href: '/admin/countries',
-    },
+  type IssueRow =
+    | { key: 'usersWithoutTeam' | 'usersWithoutRole'; n: number; filter: 'noTeam' | 'noRole' }
+    | {
+        key:
+          | 'teamsWithoutTl'
+          | 'teamsWithoutUsers'
+          | 'countriesWithoutTeams'
+          | 'companiesWithoutCountries';
+        n: number;
+        href: string;
+      };
+  const issues: readonly IssueRow[] = [
+    { key: 'usersWithoutTeam', n: counts.usersWithoutTeam, filter: 'noTeam' },
+    { key: 'usersWithoutRole', n: counts.usersWithoutRole, filter: 'noRole' },
+    { key: 'teamsWithoutTl', n: counts.teamsWithoutTl, href: '/admin/teams' },
+    { key: 'teamsWithoutUsers', n: counts.teamsWithoutUsers, href: '/admin/teams' },
+    { key: 'countriesWithoutTeams', n: counts.countriesWithoutTeams, href: '/admin/countries' },
     {
       key: 'companiesWithoutCountries',
       n: counts.companiesWithoutCountries,
       href: '/admin/companies',
     },
-  ] as const;
+  ];
   const active = issues.filter((i) => i.n > 0);
   if (active.length === 0) {
     return (
@@ -624,22 +736,46 @@ function DataQualityList({
   }
   return (
     <ul className="flex flex-col gap-2">
-      {active.map((i) => (
-        <li key={i.key}>
-          <Link
-            href={i.href}
-            className="flex items-center justify-between gap-3 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 transition-colors hover:border-status-warning/50"
-          >
-            <span className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-status-warning" aria-hidden="true" />
-              <span className="text-sm font-medium text-ink-primary">
-                {t(`issues.${i.key}` as 'issues.usersWithoutTeam', { n: i.n })}
-              </span>
+      {active.map((i) => {
+        const label = (
+          <span className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-status-warning" aria-hidden="true" />
+            <span className="text-sm font-medium text-ink-primary">
+              {t(`issues.${i.key}` as 'issues.usersWithoutTeam', { n: i.n })}
             </span>
-            <ArrowRight className="h-4 w-4 text-status-warning" aria-hidden="true" />
-          </Link>
-        </li>
-      ))}
+          </span>
+        );
+        const arrow = <ArrowRight className="h-4 w-4 text-status-warning" aria-hidden="true" />;
+        const cls =
+          'flex w-full items-center justify-between gap-3 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 text-start transition-colors hover:border-status-warning/50';
+        if ('filter' in i) {
+          if (!canReadUsers) {
+            return (
+              <li key={i.key}>
+                <div className={cn(cls, 'cursor-not-allowed opacity-70')} aria-disabled="true">
+                  {label}
+                </div>
+              </li>
+            );
+          }
+          return (
+            <li key={i.key}>
+              <button type="button" onClick={() => onFocusPeople(i.filter)} className={cls}>
+                {label}
+                {arrow}
+              </button>
+            </li>
+          );
+        }
+        return (
+          <li key={i.key}>
+            <Link href={i.href} className={cls}>
+              {label}
+              {arrow}
+            </Link>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -651,6 +787,7 @@ function CountryList({
   rolesById,
   expanded,
   toggle,
+  canWriteTeam,
   t,
 }: {
   countries: readonly Country[];
@@ -659,6 +796,7 @@ function CountryList({
   rolesById: Map<string, RoleSummary>;
   expanded: ReadonlySet<string>;
   toggle: (key: string) => void;
+  canWriteTeam: boolean;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
   if (countries.length === 0) {
@@ -698,7 +836,13 @@ function CountryList({
               {teams.length === 0 ? <Badge tone="warning">{t('issues.noTeams')}</Badge> : null}
             </button>
             {isExpanded ? (
-              <TeamList teams={teams} usersByTeam={usersByTeam} rolesById={rolesById} t={t} />
+              <TeamList
+                teams={teams}
+                usersByTeam={usersByTeam}
+                rolesById={rolesById}
+                canWriteTeam={canWriteTeam}
+                t={t}
+              />
             ) : null}
           </li>
         );
@@ -711,11 +855,13 @@ function TeamList({
   teams,
   usersByTeam,
   rolesById,
+  canWriteTeam,
   t,
 }: {
   teams: readonly Team[];
   usersByTeam: Map<string, AdminUser[]>;
   rolesById: Map<string, RoleSummary>;
+  canWriteTeam: boolean;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
   if (teams.length === 0) {
@@ -749,13 +895,17 @@ function TeamList({
               {usersInTeam.length === 0 ? (
                 <Badge tone="warning">{t('issues.noUsers')}</Badge>
               ) : null}
-              <Link
-                href={`/admin/teams`}
-                className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-              >
-                {t('tree.edit')}
-                <ArrowRight className="h-3 w-3" aria-hidden="true" />
-              </Link>
+              {canWriteTeam ? (
+                <Link
+                  href={`/admin/teams`}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                >
+                  {t('tree.edit')}
+                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
+              ) : (
+                <span className="text-[11px] text-ink-tertiary">{t('tree.readOnly')}</span>
+              )}
             </div>
           </li>
         );
@@ -764,15 +914,50 @@ function TeamList({
   );
 }
 
+function PeopleFilterTab({
+  active,
+  onClick,
+  label,
+  tone = 'neutral',
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  tone?: 'warning' | 'neutral';
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'rounded px-2.5 py-1 font-medium transition-colors',
+        active
+          ? 'bg-brand-50 text-brand-700'
+          : tone === 'warning'
+            ? 'text-status-warning hover:bg-status-warning/5'
+            : 'text-ink-secondary hover:bg-surface',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
 function PeopleTable({
   users,
   teams,
   rolesById,
+  filter,
+  canEdit,
   t,
 }: {
   users: readonly AdminUser[];
   teams: readonly Team[];
   rolesById: Map<string, RoleSummary>;
+  filter: 'all' | 'noTeam' | 'noRole';
+  canEdit: boolean;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
   if (!hasCapability('users.read')) {
@@ -783,10 +968,25 @@ function PeopleTable({
       </Notice>
     );
   }
+  const filtered =
+    filter === 'noTeam'
+      ? users.filter((u) => !u.teamId)
+      : filter === 'noRole'
+        ? users.filter((u) => !u.roleId)
+        : users;
   if (users.length === 0) {
     return (
       <Notice tone="info">
         <p className="text-sm font-medium">{t('people.empty')}</p>
+      </Notice>
+    );
+  }
+  if (filtered.length === 0) {
+    return (
+      <Notice tone="success">
+        <p className="text-sm font-medium">
+          {filter === 'noTeam' ? t('people.allHaveTeam') : t('people.allHaveRole')}
+        </p>
       </Notice>
     );
   }
@@ -806,7 +1006,7 @@ function PeopleTable({
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => {
+            {filtered.map((u) => {
               const role = rolesById.get(u.roleId);
               const team = u.teamId ? teamsById.get(u.teamId) : null;
               const issues: string[] = [];
@@ -878,13 +1078,17 @@ function PeopleTable({
                     )}
                   </td>
                   <td className="px-4 py-3 align-top text-end">
-                    <Link
-                      href={`/admin/users`}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-                    >
-                      {t('people.edit')}
-                      <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                    </Link>
+                    {canEdit ? (
+                      <Link
+                        href={`/admin/users`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                      >
+                        {t('people.edit')}
+                        <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                      </Link>
+                    ) : (
+                      <span className="text-[11px] text-ink-tertiary">{t('people.readOnly')}</span>
+                    )}
                   </td>
                 </tr>
               );

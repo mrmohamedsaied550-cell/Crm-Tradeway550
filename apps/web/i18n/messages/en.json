@@ -199,7 +199,8 @@
         "usersCount": "{n, plural, one {# user} other {# users}}",
         "noCountries": "This company has no countries yet.",
         "noTeams": "This country has no teams yet.",
-        "edit": "Manage"
+        "edit": "Manage",
+        "readOnly": "View only"
       },
       "people": {
         "empty": "No users to show.",
@@ -219,7 +220,20 @@
         "issueChips": {
           "noTeam": "No team",
           "noRole": "No role"
-        }
+        },
+        "filters": {
+          "label": "Filter people",
+          "all": "All ({n})",
+          "noTeam": "No team ({n})",
+          "noRole": "No role ({n})"
+        },
+        "allHaveTeam": "Every visible user has a team.",
+        "allHaveRole": "Every visible user has a role.",
+        "readOnly": "View only"
+      },
+      "readOnly": "Read-only",
+      "advanced": {
+        "noAccess": "You don't have permission to open the underlying admin matrix pages. Ask an admin for the relevant *.read capability."
       }
     },
     "companies": {
