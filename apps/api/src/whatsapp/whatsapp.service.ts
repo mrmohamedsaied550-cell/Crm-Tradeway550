@@ -44,6 +44,58 @@ export function pickAutoLinkLead<T>(matches: readonly T[]): T | null {
   return matches.length === 1 ? (matches[0] as T) : null;
 }
 
+/**
+ * Sprint 14 (D14) — translate a triage queue label into a Prisma
+ * WhereInput fragment. The queue refines the existing scope filter;
+ * it is AND'd in, never replacing scope.
+ *
+ *   - `unassigned`    open conversations with no assignee
+ *   - `mine`          assignee = current user
+ *   - `waiting_reply` open + last message was inbound
+ *                     (lastInboundAt = lastMessageAt)
+ *   - `needs_review`  has at least one unresolved review row
+ *   - `linked`        attached to a Lead
+ *   - `unlinked`      open + no Lead attached yet
+ *   - `today`         most recent activity within the current UTC day
+ *
+ * When the caller is `mine` but has no userId (e.g. legacy fixtures),
+ * we return a never-match clause so the result is empty instead of
+ * accidentally widening to every conversation.
+ */
+export function buildQueueWhere(
+  queue: 'unassigned' | 'mine' | 'waiting_reply' | 'needs_review' | 'linked' | 'unlinked' | 'today',
+  userId: string | undefined,
+): Prisma.WhatsAppConversationWhereInput {
+  switch (queue) {
+    case 'unassigned':
+      return { status: 'open', assignedToId: null };
+    case 'mine':
+      return userId ? { assignedToId: userId } : { id: '00000000-0000-0000-0000-000000000000' };
+    case 'waiting_reply':
+      // Proxy: open conversation where the customer has ever sent a
+      // message (lastInboundAt IS NOT NULL). Strict "last message is
+      // inbound" requires column-to-column equality (lastInboundAt =
+      // lastMessageAt) which Prisma `where` can't express; a precise
+      // `lastDirection` column is deferred. The proxy over-includes
+      // threads we've already replied to, which is the safe-conservative
+      // direction for a triage view.
+      return { status: 'open', lastInboundAt: { not: null } };
+    case 'needs_review':
+      return { review: { is: { resolvedAt: null } } };
+    case 'linked':
+      return { leadId: { not: null } };
+    case 'unlinked':
+      return { status: 'open', leadId: null };
+    case 'today': {
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      return { lastMessageAt: { gte: start } };
+    }
+    default:
+      return {};
+  }
+}
+
 /** Routing record returned by the cross-tenant phone-number-id lookup. */
 export interface RoutedAccount {
   id: string;
@@ -831,6 +883,11 @@ export class WhatsAppService {
   /**
    * Tenant-scoped paginated conversations list — newest activity first.
    * Filters by accountId / status / free-text phone match.
+   *
+   * Sprint 14 (D14) — accepts an optional triage `queue` filter that is
+   * AND'd into the existing scope rule. The queue refines the visible
+   * set; it never widens it. See `buildQueueWhere` below for the exact
+   * semantics of each queue value.
    */
   async listConversations(
     tenantId: string,
@@ -838,6 +895,14 @@ export class WhatsAppService {
       accountId?: string;
       status?: 'open' | 'closed';
       phone?: string;
+      queue?:
+        | 'unassigned'
+        | 'mine'
+        | 'waiting_reply'
+        | 'needs_review'
+        | 'linked'
+        | 'unlinked'
+        | 'today';
       limit?: number;
       offset?: number;
     } = {},
@@ -862,9 +927,10 @@ export class WhatsAppService {
         ...(opts.status && { status: opts.status }),
         ...(opts.phone && { phone: { contains: opts.phone } }),
       };
-      const where: Prisma.WhatsAppConversationWhereInput = scopeWhere
-        ? { AND: [baseWhere, scopeWhere] }
-        : baseWhere;
+      const queueWhere = opts.queue ? buildQueueWhere(opts.queue, userClaims?.userId) : null;
+      const where: Prisma.WhatsAppConversationWhereInput = {
+        AND: [baseWhere, ...(scopeWhere ? [scopeWhere] : []), ...(queueWhere ? [queueWhere] : [])],
+      };
       const [rawItems, total] = await Promise.all([
         tx.whatsAppConversation.findMany({
           where,
@@ -910,6 +976,61 @@ export class WhatsAppService {
         );
       }
       return { items, total, limit: opts.limit ?? 50, offset: opts.offset ?? 0 };
+    });
+  }
+
+  /**
+   * Sprint 14 (D14) — inbox triage summary. Returns the count for each
+   * queue in a single round-trip so the operator's KPI cards stay
+   * consistent with the list filters they drive. Every count is
+   * scope-aware (same `resolveConversationScopeWhere` as the list
+   * endpoint) and respects the active tenant via `withTenant`.
+   *
+   * The returned shape includes both the conversation-side counts and
+   * an `unresolvedReviews` count so the "Needs review" card can render
+   * without a second call to `/whatsapp/reviews/count`.
+   */
+  async getInboxSummary(
+    tenantId: string,
+    opts: { accountId?: string } = {},
+    userClaims?: ScopeUserClaims,
+  ): Promise<{
+    open: number;
+    unassigned: number;
+    mine: number;
+    waitingReply: number;
+    needsReview: number;
+    linked: number;
+    unlinked: number;
+    today: number;
+  }> {
+    const scopeWhere = await this.resolveConversationScopeWhere(userClaims);
+    const userId = userClaims?.userId;
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const baseWhere: Prisma.WhatsAppConversationWhereInput = {
+        ...(opts.accountId && { accountId: opts.accountId }),
+      };
+      const withScope = (extra: Prisma.WhatsAppConversationWhereInput) =>
+        scopeWhere ? { AND: [baseWhere, scopeWhere, extra] } : { AND: [baseWhere, extra] };
+
+      const [open, unassigned, mine, waitingReply, needsReview, linked, unlinked, today] =
+        await Promise.all([
+          tx.whatsAppConversation.count({ where: withScope({ status: 'open' }) }),
+          tx.whatsAppConversation.count({
+            where: withScope(buildQueueWhere('unassigned', userId)),
+          }),
+          tx.whatsAppConversation.count({ where: withScope(buildQueueWhere('mine', userId)) }),
+          tx.whatsAppConversation.count({
+            where: withScope(buildQueueWhere('waiting_reply', userId)),
+          }),
+          tx.whatsAppConversation.count({
+            where: withScope(buildQueueWhere('needs_review', userId)),
+          }),
+          tx.whatsAppConversation.count({ where: withScope(buildQueueWhere('linked', userId)) }),
+          tx.whatsAppConversation.count({ where: withScope(buildQueueWhere('unlinked', userId)) }),
+          tx.whatsAppConversation.count({ where: withScope(buildQueueWhere('today', userId)) }),
+        ]);
+      return { open, unassigned, mine, waitingReply, needsReview, linked, unlinked, today };
     });
   }
 
