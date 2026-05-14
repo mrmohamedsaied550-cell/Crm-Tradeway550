@@ -1248,6 +1248,19 @@ export const conversationsApi = {
 export const transitionRequestsApi = {
   list: (leadId: string): Promise<LeadTransitionRequestRow[]> =>
     apiFetch<LeadTransitionRequestRow[]>(`/leads/${leadId}/transition-requests`),
+  /**
+   * Sprint 5 — calling user's transition requests across all leads
+   * in the tenant. Used by the Sales Dashboard ("Returned to Me",
+   * "Waiting Approval") and the TL Dashboard ("Approval Queue").
+   */
+  mine: (
+    state?: 'pending' | 'rejected' | 'approved' | 'cancelled',
+  ): Promise<LeadTransitionRequestRow[]> =>
+    apiFetch<LeadTransitionRequestRow[]>('/lead-transition-requests/mine', {
+      query: state ? { state } : {},
+    }),
+  approverQueue: (): Promise<LeadTransitionRequestRow[]> =>
+    apiFetch<LeadTransitionRequestRow[]>('/lead-transition-requests/approver-queue'),
   request: (
     leadId: string,
     body: {

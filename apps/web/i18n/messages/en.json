@@ -85,7 +85,38 @@
       "countriesDesc": "Operating units inside a company",
       "teamsDesc": "Sales / Activation / Driving teams",
       "usersDesc": "Operators with role and team assignment",
-      "leadsDesc": "Prospective captains in the funnel"
+      "leadsDesc": "Prospective captains in the funnel",
+      "greeting": "Welcome, {name}",
+      "headingGuest": "Today's work",
+      "subtitle": "Priority queues, returns, and approvals — drop into the highest-priority lead with one click.",
+      "startWork": "Start work",
+      "nothingWaiting": "Nothing waiting",
+      "sections": {
+        "myWork": "My work",
+        "teamLeader": "Team leader"
+      },
+      "queues": {
+        "returnedToMe": "Returned to me",
+        "overdue": "Overdue",
+        "dueToday": "Due today",
+        "fresh": "Fresh leads",
+        "noAnswer": "No answer",
+        "followUp": "Follow-up",
+        "waitingApproval": "Waiting approval",
+        "signup": "Signup in progress",
+        "approverQueue": "Approval queue",
+        "returnedHandoffs": "Returned handoffs",
+        "teamLeads": "Team leads",
+        "agentBreakdown": "Agent breakdown"
+      },
+      "noAnswerGap": "Counts come from stage-status writes; full filter lands when the status-aware list endpoint ships.",
+      "returnedHandoffsGap": "Team-wide rejections roll up here once the TL scope filter ships.",
+      "teamLeadsGap": "Per-team totals roll up here once the team-aware list endpoint ships.",
+      "agentBreakdownGap": "Per-agent breakdown ships with the TL list endpoint.",
+      "allClear": {
+        "title": "All clear",
+        "body": "No overdue follow-ups, no rejected handoffs, and no fresh leads in your queue right now."
+      }
     },
     "common": {
       "create": "Create",
@@ -242,6 +273,18 @@
     "leads": {
       "title": "Leads",
       "subtitle": "Prospective captains in the funnel.",
+      "queueBar": {
+        "label": "Quick queues",
+        "freshMine": "Fresh leads",
+        "overdue": "Overdue",
+        "dueToday": "Due today",
+        "noAnswer": "No answer",
+        "followUpMine": "Follow-up",
+        "waitingApproval": "Waiting approval",
+        "returnedToMe": "Returned to me",
+        "signup": "Signup",
+        "notWiredHint": "This queue needs an endpoint that isn't a straight /leads filter (transition-request, follow-up, or per-team rollup). Filters have been cleared; the matching dedicated view ships in a follow-up sprint."
+      },
       "lifecycle": {
         "open": "Open",
         "won": "Won",

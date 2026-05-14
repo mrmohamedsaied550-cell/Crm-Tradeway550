@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
@@ -112,6 +112,23 @@ const EMPTY_CREATE_FORM: CreateForm = {
 
 const SOURCES: readonly LeadSource[] = ['manual', 'meta', 'tiktok', 'whatsapp', 'import'] as const;
 
+/**
+ * Sprint 5.C — Quick Queue chips shown at the top of the Leads
+ * Workspace. Order matches the priority on the Sales Dashboard.
+ * Keys must stay in sync with the dashboard's `queueHref(key)`
+ * values + the filter-mapping switch in this page.
+ */
+const QUEUE_CHIPS: ReadonlyArray<{ key: string }> = [
+  { key: 'freshMine' },
+  { key: 'overdue' },
+  { key: 'dueToday' },
+  { key: 'noAnswer' },
+  { key: 'followUpMine' },
+  { key: 'waitingApproval' },
+  { key: 'returnedToMe' },
+  { key: 'signup' },
+];
+
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'breached') return 'breach';
   if (s === 'paused') return 'inactive';
@@ -176,6 +193,13 @@ export default function LeadsPage(): JSX.Element {
     setMeId(getCachedMe()?.userId ?? null);
   }, []);
 
+  // Sprint 5.C — read the `?queue=…` URL param from the Sales/TL
+  // dashboard. The mapping → filter-state useEffect lives below
+  // (after the filter state declarations).
+  const searchParams = useSearchParams();
+  const queueParam = searchParams?.get('queue') ?? null;
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
+
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -229,6 +253,49 @@ export default function LeadsPage(): JSX.Element {
   // by default so first-attempt rows stay in the picture.
   const [filterReturning, setFilterReturning] = useState<boolean>(false);
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
+
+  /**
+   * Sprint 5.C — apply the `?queue=<key>` URL param onto the
+   * existing filter state. Known keys map to (stage / assignee /
+   * overdue) combinations; unmapped keys (transition-request
+   * queues, status-aware "no answer", per-team rollups) still
+   * navigate cleanly but surface a notice explaining the gap.
+   */
+  useEffect(() => {
+    if (!queueParam) {
+      setQueueNotice(null);
+      return;
+    }
+    const myId = getCachedMe()?.userId ?? null;
+    switch (queueParam) {
+      case 'freshMine':
+        setFilterStage('new');
+        if (myId) setFilterAssignee(myId);
+        setFilterOverdue(false);
+        break;
+      case 'overdue':
+        setFilterStage('');
+        if (myId) setFilterAssignee(myId);
+        setFilterOverdue(true);
+        break;
+      case 'signup':
+        setFilterStage('interested' as LeadStageCode);
+        setFilterAssignee('');
+        setFilterOverdue(false);
+        break;
+      default:
+        // dueToday / followUpMine / returnedToMe / waitingApproval /
+        // approverQueue / returnedHandoffs / noAnswer / teamLeads /
+        // agentBreakdown — show notice + clear filters so the
+        // list reads as "all leads, with this queue's intended
+        // filter still pending".
+        setFilterStage('');
+        setFilterAssignee('');
+        setFilterOverdue(false);
+        break;
+    }
+    setQueueNotice(queueParam);
+  }, [queueParam]);
 
   const [creating, setCreating] = useState<boolean>(false);
   const [form, setForm] = useState<CreateForm>(EMPTY_CREATE_FORM);
@@ -853,6 +920,63 @@ export default function LeadsPage(): JSX.Element {
           </div>
         }
       />
+
+      {/* ───── Sprint 5.C — Quick Queue chip bar ─────
+          Mirrors the Sales Dashboard tiles as a row of chips at
+          the top of the workspace. Clicking a chip pushes
+          ?queue=<key> into the URL; the effect above re-applies
+          the matching filter state. Active chip mirrors the
+          current queueParam. */}
+      <nav aria-label={t('queueBar.label')} className="flex flex-wrap gap-2">
+        {QUEUE_CHIPS.map((q) => {
+          const active = queueParam === q.key;
+          return (
+            <Link
+              key={q.key}
+              href={`/admin/leads?queue=${encodeURIComponent(q.key)}`}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                active
+                  ? 'border-brand-200 bg-brand-50 text-brand-700'
+                  : 'border-surface-border bg-surface-card text-ink-secondary hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700',
+              )}
+            >
+              {t(`queueBar.${q.key}` as 'queueBar.freshMine')}
+            </Link>
+          );
+        })}
+        {queueParam ? (
+          <Link
+            href="/admin/leads"
+            className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface-card px-3 py-1.5 text-xs font-medium text-ink-tertiary hover:text-ink-primary"
+          >
+            ✕ {tCommon('clearFilters')}
+          </Link>
+        ) : null}
+      </nav>
+
+      {/* Notice for queues that don't yet map onto a /leads?
+          filter — keeps the URL navigation honest about what
+          the page is showing right now. */}
+      {queueNotice &&
+      [
+        'dueToday',
+        'followUpMine',
+        'returnedToMe',
+        'waitingApproval',
+        'approverQueue',
+        'returnedHandoffs',
+        'noAnswer',
+        'teamLeads',
+        'agentBreakdown',
+      ].includes(queueNotice) ? (
+        <Notice tone="info">
+          <p className="text-sm font-medium">
+            {t(`queueBar.${queueNotice}` as 'queueBar.dueToday')}
+          </p>
+          <p className="mt-1 text-xs text-ink-secondary">{t('queueBar.notWiredHint')}</p>
+        </Notice>
+      ) : null}
 
       {/*
        * Phase 1 — Lens row. Pipeline picker on the left, view-mode
