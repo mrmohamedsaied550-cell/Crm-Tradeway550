@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
@@ -11,6 +17,7 @@ import { LeadsService } from './leads.service';
 import type {
   CreateLeadPartnerTargetDto,
   ListLeadPartnerTargetsQueryDto,
+  UpdateLeadPartnerTargetDto,
 } from './lead-partner-targets.dto';
 
 /**
@@ -231,6 +238,194 @@ export class LeadPartnerTargetsService {
       }
 
       return created;
+    });
+  }
+
+  /**
+   * Sprint 17 (D17) — partial update of an existing partner target.
+   *
+   * Closes the Sprint 13 PATCH deferral. Status, owner, team, country,
+   * and note can be changed; `partnerSourceId` is intentionally
+   * immutable so the unique-index dedupe key on
+   * `(lead_id, partner_source_id)` keeps holding and the audit trail
+   * stays interpretable.
+   *
+   * Permission model: same shape as `create()` — controller gates on
+   * `partner.target.write`, service additionally enforces lead scope
+   * via `LeadsService.findByIdInScopeOrThrow`. The target itself is
+   * looked up under the active tenant context so RLS guarantees a
+   * caller can never PATCH a target that belongs to a different
+   * tenant (cross-tenant id surfaces as a clean 404).
+   *
+   * Notifications:
+   *   - When the owner changes AND the new owner is not the caller,
+   *     ship the same generic notification used on create.
+   */
+  async update(
+    leadId: string,
+    targetId: string,
+    dto: UpdateLeadPartnerTargetDto,
+    userClaims: ScopeUserClaims,
+  ): Promise<{ id: string }> {
+    const tenantId = requireTenantId();
+    await this.leads.findByIdInScopeOrThrow(leadId, userClaims);
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const before = await tx.leadPartnerTarget.findFirst({
+        where: { id: targetId, leadId },
+        select: {
+          id: true,
+          status: true,
+          countryId: true,
+          teamId: true,
+          ownerUserId: true,
+          note: true,
+          partnerSource: {
+            select: { id: true, partnerCode: true, displayName: true },
+          },
+        },
+      });
+      if (!before) {
+        throw new NotFoundException({
+          code: 'lead.partner_target.not_found',
+          message: `Partner target ${targetId} not found for lead ${leadId}.`,
+        });
+      }
+
+      // Validate optional FKs the same way create() does so the UI
+      // surfaces typed errors instead of a raw FK failure. Skipped
+      // when the caller is clearing the field (null) or leaving it
+      // alone (undefined).
+      if (typeof dto.ownerUserId === 'string') {
+        const owner = await tx.user.findUnique({
+          where: { id: dto.ownerUserId },
+          select: { id: true },
+        });
+        if (!owner) {
+          throw new BadRequestException({
+            code: 'lead.partner_target.owner_invalid',
+            message: 'Owner user not found in the active tenant',
+          });
+        }
+      }
+      if (typeof dto.teamId === 'string') {
+        const team = await tx.team.findUnique({
+          where: { id: dto.teamId },
+          select: { id: true },
+        });
+        if (!team) {
+          throw new BadRequestException({
+            code: 'lead.partner_target.team_invalid',
+            message: 'Team not found in the active tenant',
+          });
+        }
+      }
+      if (typeof dto.countryId === 'string') {
+        const country = await tx.country.findUnique({
+          where: { id: dto.countryId },
+          select: { id: true },
+        });
+        if (!country) {
+          throw new BadRequestException({
+            code: 'lead.partner_target.country_invalid',
+            message: 'Country not found in the active tenant',
+          });
+        }
+      }
+
+      // Build the update payload. Three-way null semantics: undefined
+      // skips, null clears (for nullable columns), value sets.
+      const data: Prisma.LeadPartnerTargetUpdateInput = {
+        ...(dto.status !== undefined && { status: dto.status }),
+        ...(dto.countryId !== undefined && { countryId: dto.countryId }),
+        ...(dto.teamId !== undefined && { teamId: dto.teamId }),
+        ...(dto.ownerUserId !== undefined && { ownerUserId: dto.ownerUserId }),
+        ...(dto.note !== undefined && { note: dto.note }),
+      };
+
+      const updated = await tx.leadPartnerTarget.update({
+        where: { id: targetId },
+        data,
+        select: { id: true, ownerUserId: true },
+      });
+
+      // Compute changed-fields list for the audit payload. Only the
+      // keys actually present in the PATCH body are considered, so a
+      // no-op PATCH still records "the operator looked but didn't
+      // change anything" via an empty changedFields array.
+      const changedFields = (Object.keys(dto) as (keyof UpdateLeadPartnerTargetDto)[]).filter(
+        (key) => {
+          const next = dto[key] as unknown;
+          const prev = (before as unknown as Record<string, unknown>)[key] ?? null;
+          return JSON.stringify(next ?? null) !== JSON.stringify(prev);
+        },
+      );
+
+      await this.audit.writeInTx(tx, tenantId, {
+        action: 'lead.partner_target.updated',
+        entityType: 'lead_partner_target',
+        entityId: targetId,
+        actorUserId: userClaims.userId,
+        payload: {
+          leadId,
+          targetId,
+          partnerSourceId: before.partnerSource?.id,
+          partnerCode: before.partnerSource?.partnerCode,
+          changedFields,
+          ...(dto.status !== undefined && { status: dto.status }),
+        } as Prisma.InputJsonValue,
+      });
+      await tx.leadActivity.create({
+        data: {
+          tenantId,
+          leadId,
+          type: 'system',
+          body:
+            dto.status !== undefined && dto.status !== before.status
+              ? `Partner target moved to ${dto.status} (${before.partnerSource?.displayName ?? ''}).`
+              : `Partner target updated (${before.partnerSource?.displayName ?? ''}).`,
+          createdById: userClaims.userId,
+          payload: {
+            kind: 'partner_target',
+            targetId,
+            partnerSourceId: before.partnerSource?.id,
+            partnerCode: before.partnerSource?.partnerCode,
+            event: 'updated',
+            changedFields,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      // Notify the new owner when ownership changed AND the new
+      // owner is not the caller themselves. Best-effort, same
+      // privacy contract as create() (generic body, no partner
+      // identity in the notification).
+      const ownerChanged = dto.ownerUserId !== undefined && dto.ownerUserId !== before.ownerUserId;
+      if (
+        ownerChanged &&
+        this.notifications &&
+        updated.ownerUserId !== null &&
+        updated.ownerUserId !== userClaims.userId
+      ) {
+        await this.notifications
+          .createInTx(tx, tenantId, {
+            recipientUserId: updated.ownerUserId,
+            kind: 'lead.partner_target.assigned',
+            title: 'Partner target assigned to you',
+            body: 'A partner target was assigned to you. Open the lead for the details.',
+            severity: 'info',
+            actionUrl: `/admin/leads/${leadId}`,
+            payload: {
+              leadId,
+              targetId,
+            } as Prisma.InputJsonValue,
+          })
+          .catch(() => {
+            /* swallow */
+          });
+      }
+
+      return { id: updated.id };
     });
   }
 }

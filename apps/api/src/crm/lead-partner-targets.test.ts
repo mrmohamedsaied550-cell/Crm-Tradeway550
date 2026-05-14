@@ -462,4 +462,271 @@ describe('crm — lead partner targets (Sprint 13 / D13)', () => {
     assert.ok(auditRows.some((r) => r.action === 'lead.partner_target.created'));
     assert.ok(activityRows.some((r) => (r.body ?? '').includes('Careem EG')));
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Sprint 17 (D17) — PATCH coverage
+  // ───────────────────────────────────────────────────────────────────────
+
+  it('update() flips status + emits lead.partner_target.updated audit', async () => {
+    // Use yet another partner source to avoid the dedupe rule.
+    const source = await rawTx(tenantId, (tx) =>
+      tx.partnerSource.create({
+        data: {
+          tenantId,
+          companyId,
+          countryId,
+          partnerCode: 'd17_status',
+          displayName: 'D17 status source',
+          adapter: 'manual_upload',
+          scheduleKind: 'manual',
+        },
+      }),
+    );
+    const created = await inTenant(() =>
+      svc.create(
+        leadId,
+        { partnerSourceId: source.id },
+        { userId: actorUserId, tenantId, roleId: 'role-x' },
+      ),
+    );
+    await inTenant(() =>
+      svc.update(
+        leadId,
+        created.id,
+        { status: 'contacted' },
+        { userId: actorUserId, tenantId, roleId: 'role-x' },
+      ),
+    );
+    const row = await rawTx(tenantId, (tx) =>
+      tx.leadPartnerTarget.findUniqueOrThrow({ where: { id: created.id } }),
+    );
+    assert.equal(row.status, 'contacted');
+
+    const audit = await rawTx(tenantId, (tx) =>
+      tx.auditEvent.findFirst({
+        where: {
+          entityType: 'lead_partner_target',
+          entityId: created.id,
+          action: 'lead.partner_target.updated',
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+    assert.ok(audit);
+    const payload = audit!.payload as { changedFields?: string[]; status?: string };
+    assert.deepEqual(payload.changedFields, ['status']);
+    assert.equal(payload.status, 'contacted');
+
+    const activity = await rawTx(tenantId, (tx) =>
+      tx.leadActivity.findFirst({
+        where: { leadId, body: { contains: 'moved to contacted' } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+    assert.ok(activity);
+  });
+
+  it('update() with null clears nullable fields (owner / team / country / note)', async () => {
+    const source = await rawTx(tenantId, (tx) =>
+      tx.partnerSource.create({
+        data: {
+          tenantId,
+          companyId,
+          countryId,
+          partnerCode: 'd17_clear',
+          displayName: 'D17 clear source',
+          adapter: 'manual_upload',
+          scheduleKind: 'manual',
+        },
+      }),
+    );
+    const created = await inTenant(() =>
+      svc.create(
+        leadId,
+        { partnerSourceId: source.id, note: 'pre-clear' },
+        { userId: actorUserId, tenantId, roleId: 'role-x' },
+      ),
+    );
+    await inTenant(() =>
+      svc.update(
+        leadId,
+        created.id,
+        { note: null, ownerUserId: null },
+        { userId: actorUserId, tenantId, roleId: 'role-x' },
+      ),
+    );
+    const row = await rawTx(tenantId, (tx) =>
+      tx.leadPartnerTarget.findUniqueOrThrow({ where: { id: created.id } }),
+    );
+    assert.equal(row.note, null);
+    assert.equal(row.ownerUserId, null);
+  });
+
+  it('update() rejects an unknown targetId with lead.partner_target.not_found', async () => {
+    await assert.rejects(
+      () =>
+        inTenant(() =>
+          svc.update(
+            leadId,
+            '00000000-0000-0000-0000-000000000000',
+            { status: 'contacted' },
+            { userId: actorUserId, tenantId, roleId: 'role-x' },
+          ),
+        ),
+      (err: unknown) => {
+        const e = err as { response?: { code?: string } };
+        return e.response?.code === 'lead.partner_target.not_found';
+      },
+    );
+  });
+
+  it('update() rejects an invalid ownerUserId with lead.partner_target.owner_invalid', async () => {
+    const source = await rawTx(tenantId, (tx) =>
+      tx.partnerSource.create({
+        data: {
+          tenantId,
+          companyId,
+          countryId,
+          partnerCode: 'd17_owner',
+          displayName: 'D17 owner source',
+          adapter: 'manual_upload',
+          scheduleKind: 'manual',
+        },
+      }),
+    );
+    const created = await inTenant(() =>
+      svc.create(
+        leadId,
+        { partnerSourceId: source.id },
+        { userId: actorUserId, tenantId, roleId: 'role-x' },
+      ),
+    );
+    await assert.rejects(
+      () =>
+        inTenant(() =>
+          svc.update(
+            leadId,
+            created.id,
+            { ownerUserId: '00000000-0000-0000-0000-000000000000' },
+            { userId: actorUserId, tenantId, roleId: 'role-x' },
+          ),
+        ),
+      (err: unknown) => {
+        const e = err as { response?: { code?: string } };
+        return e.response?.code === 'lead.partner_target.owner_invalid';
+      },
+    );
+  });
+
+  it('update() of a foreign target is invisible (tenant isolation)', async () => {
+    // Plant a fresh foreign-tenant lead + source + target, then try
+    // to PATCH it under tenant A's context. RLS hides the row so the
+    // service raises not_found (cleanest possible signal for the UI).
+    const isoCompany = await rawTx(otherTenantId, (tx) =>
+      tx.company.create({
+        data: { tenantId: otherTenantId, code: `d17iso-${Date.now()}`, name: 'D17 iso co' },
+      }),
+    );
+    const isoCountry = await rawTx(otherTenantId, (tx) =>
+      tx.country.create({
+        data: {
+          tenantId: otherTenantId,
+          companyId: isoCompany.id,
+          code: 'EG',
+          name: 'Egypt',
+        },
+      }),
+    );
+    const isoPipeline = await rawTx(otherTenantId, (tx) =>
+      tx.pipeline.create({
+        data: { tenantId: otherTenantId, name: `D17 iso PL ${Date.now()}`, isDefault: false },
+      }),
+    );
+    const isoStage = await rawTx(otherTenantId, (tx) =>
+      tx.pipelineStage.create({
+        data: {
+          tenantId: otherTenantId,
+          pipelineId: isoPipeline.id,
+          code: 'fresh',
+          name: 'Fresh',
+          order: 1,
+          isTerminal: false,
+        },
+      }),
+    );
+    const isoRole = await rawTx(otherTenantId, (tx) =>
+      tx.role.upsert({
+        where: { tenantId_code: { tenantId: otherTenantId, code: 'sales_agent' } },
+        update: {},
+        create: {
+          tenantId: otherTenantId,
+          code: 'sales_agent',
+          nameAr: 'وكيل',
+          nameEn: 'Sales Agent',
+          level: 30,
+        },
+      }),
+    );
+    const isoActor = await rawTx(otherTenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: otherTenantId,
+          roleId: isoRole.id,
+          email: `d17-iso-actor-${Date.now()}@example.com`,
+          name: 'D17 iso actor',
+          passwordHash: 'x',
+          status: 'active',
+        },
+      }),
+    );
+    const isoLead = await rawTx(otherTenantId, (tx) =>
+      tx.lead.create({
+        data: {
+          tenantId: otherTenantId,
+          pipelineId: isoPipeline.id,
+          stageId: isoStage.id,
+          name: 'D17 iso lead',
+          phone: `+201000${Date.now()}`.slice(0, 16),
+        },
+      }),
+    );
+    const isoSource = await rawTx(otherTenantId, (tx) =>
+      tx.partnerSource.create({
+        data: {
+          tenantId: otherTenantId,
+          companyId: isoCompany.id,
+          countryId: isoCountry.id,
+          partnerCode: 'd17_iso',
+          displayName: 'D17 iso source',
+          adapter: 'manual_upload',
+          scheduleKind: 'manual',
+        },
+      }),
+    );
+    const isoTarget = await rawTx(otherTenantId, (tx) =>
+      tx.leadPartnerTarget.create({
+        data: {
+          tenantId: otherTenantId,
+          leadId: isoLead.id,
+          partnerSourceId: isoSource.id,
+          createdById: isoActor.id,
+        },
+      }),
+    );
+    await assert.rejects(
+      () =>
+        inTenant(() =>
+          svc.update(
+            leadId,
+            isoTarget.id,
+            { status: 'contacted' },
+            { userId: actorUserId, tenantId, roleId: 'role-x' },
+          ),
+        ),
+      (err: unknown) => {
+        const e = err as { response?: { code?: string } };
+        return e.response?.code === 'lead.partner_target.not_found';
+      },
+    );
+  });
 });
