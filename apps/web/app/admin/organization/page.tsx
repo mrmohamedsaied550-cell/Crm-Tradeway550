@@ -26,7 +26,15 @@ import { PageHeader } from '@/components/ui/page-header';
 import { ApiError, companiesApi, countriesApi, rolesApi, teamsApi, usersApi } from '@/lib/api';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
-import type { AdminUser, Company, Country, RoleSummary, Team } from '@/lib/api-types';
+import type {
+  AdminUser,
+  Company,
+  Country,
+  RoleSummary,
+  Team,
+  UserScopeAssignmentsForUser,
+  UserScopeCount,
+} from '@/lib/api-types';
 
 /**
  * Sprint 6 — Organization / Headcount unified control center.
@@ -109,6 +117,12 @@ interface DataState {
   teams: readonly Team[];
   users: readonly AdminUser[];
   roles: readonly RoleSummary[];
+  /** Sprint 8 (D8) — bulk scope counts indexed by userId. */
+  scopeCounts: ReadonlyMap<string, UserScopeCount>;
+  /** Sprint 8 (D8) — bulk scope assignments indexed by userId. */
+  scopeAssignments: ReadonlyMap<string, UserScopeAssignmentsForUser>;
+  /** True when scope data couldn't be loaded (e.g. capability denied). */
+  scopeUnavailable: boolean;
 }
 
 const EMPTY_DATA: DataState = {
@@ -117,22 +131,22 @@ const EMPTY_DATA: DataState = {
   teams: [],
   users: [],
   roles: [],
+  scopeCounts: new Map(),
+  scopeAssignments: new Map(),
+  scopeUnavailable: false,
 };
 
 /**
- * Heuristic for "is this user a team leader?". Until the schema
- * carries an explicit TL flag, we mark anyone whose role code
- * contains `tl_` (the existing convention from
- * `role-templates.registry.ts` — `tl_sales`, `tl_activation`,
- * `tl_driving`) OR has a level >= 70 (template suggested level
- * for TL templates). Inclusive enough to catch custom TL roles
- * without false-positives on agent roles (suggested level 30).
+ * Sprint 8 — TL detection now reads the persisted
+ * `Role.isTeamLeader` flag. The flag was backfilled in
+ * 0046_d8_role_is_team_leader using the same heuristic the UI
+ * carried in Sprints 6 + 7 (`code LIKE 'tl_%' OR level >= 70`),
+ * so behaviour at cutover is identical. Any future admin edit of
+ * the flag goes through the existing role write surface with D5
+ * risk preview.
  */
 function isTeamLeaderRole(role: RoleSummary | undefined): boolean {
-  if (!role) return false;
-  if (role.code.toLowerCase().includes('tl_')) return true;
-  if (role.level >= 70) return true;
-  return false;
+  return Boolean(role?.isTeamLeader);
 }
 
 export default function OrganizationPage(): JSX.Element {
@@ -172,7 +186,19 @@ export default function OrganizationPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
+      // Sprint 8 — scope endpoints are tagged so we can distinguish
+      // "endpoint failed" from "no rows" and surface the right gap
+      // state without faking numbers.
+      const SCOPE_FAIL = Symbol('scope-fail');
       const safeFetch = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+      const safeScope = async <T,>(p: Promise<T>): Promise<T | typeof SCOPE_FAIL> => {
+        try {
+          return await p;
+        } catch {
+          return SCOPE_FAIL;
+        }
+      };
+
       const [companies, countries, teams, userPage, roles] = await Promise.all([
         safeFetch(companiesApi.list(), [] as Company[]),
         safeFetch(countriesApi.list(), [] as Country[]),
@@ -185,7 +211,40 @@ export default function OrganizationPage(): JSX.Element {
         }),
         safeFetch(rolesApi.list(), [] as RoleSummary[]),
       ]);
-      setData({ companies, countries, teams, users: userPage.items, roles });
+
+      // Sprint 8 — bulk scope fetches happen AFTER the user list
+      // resolves so we can scope the assignments call to visible
+      // ids only. scope-counts is unfiltered (whole tenant view);
+      // scope-assignments needs ids, capped at 200 per request.
+      const visibleUserIds = userPage.items.map((u) => u.id);
+      const [scopeCountsResp, scopeAssignmentsResp] = await Promise.all([
+        safeScope(usersApi.listScopeCounts({})),
+        visibleUserIds.length > 0
+          ? safeScope(usersApi.listScopeAssignmentsBulk({ ids: visibleUserIds }))
+          : Promise.resolve({ items: [] }),
+      ]);
+
+      const scopeUnavailable =
+        scopeCountsResp === SCOPE_FAIL || scopeAssignmentsResp === SCOPE_FAIL;
+      const scopeCounts = new Map<string, UserScopeCount>();
+      if (scopeCountsResp !== SCOPE_FAIL) {
+        for (const row of scopeCountsResp.items) scopeCounts.set(row.userId, row);
+      }
+      const scopeAssignments = new Map<string, UserScopeAssignmentsForUser>();
+      if (scopeAssignmentsResp !== SCOPE_FAIL) {
+        for (const row of scopeAssignmentsResp.items) scopeAssignments.set(row.userId, row);
+      }
+
+      setData({
+        companies,
+        countries,
+        teams,
+        users: userPage.items,
+        roles,
+        scopeCounts,
+        scopeAssignments,
+        scopeUnavailable,
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -255,6 +314,15 @@ export default function OrganizationPage(): JSX.Element {
     const companiesWithoutCountries = data.companies.filter(
       (c) => (countriesByCompany.get(c.id) ?? []).length === 0,
     ).length;
+    // Sprint 8 — real "users without scope" derived from the bulk
+    // scope-counts endpoint. `null` means the endpoint failed (we
+    // surface that as a no-access notice on the KPI instead of a
+    // zero).
+    const usersWithoutScope: number | null = data.scopeUnavailable
+      ? null
+      : data.scopeCounts.size === 0
+        ? 0
+        : Array.from(data.scopeCounts.values()).filter((c) => !c.hasAnyScope).length;
     return {
       companies: data.companies.length,
       countries: data.countries.length,
@@ -263,12 +331,7 @@ export default function OrganizationPage(): JSX.Element {
       activeUsers,
       usersWithoutTeam,
       usersWithoutRole,
-      // "Users without scope" needs per-user scope-assignments
-      // calls (one per user). Not done in this Sprint 6 commit —
-      // a follow-up can batch-fetch via the existing
-      // `usersApi.listScopeAssignments(id)` for users in admin's
-      // scope. Surfaced as a gap chip on the KPI grid.
-      usersWithoutScope: null as number | null,
+      usersWithoutScope,
       teamsWithoutTl,
       teamsWithoutUsers,
       countriesWithoutTeams,
@@ -409,8 +472,14 @@ export default function OrganizationPage(): JSX.Element {
             label={t('kpis.usersWithoutScope')}
             count={counts.usersWithoutScope}
             icon={AlertTriangle}
-            tone="neutral"
-            hint={t('scopeGap')}
+            tone={
+              counts.usersWithoutScope === null
+                ? 'neutral'
+                : counts.usersWithoutScope > 0
+                  ? 'warning'
+                  : 'healthy'
+            }
+            hint={counts.usersWithoutScope === null ? t('scopeUnavailable') : undefined}
             loading={loading}
           />
         </ul>
@@ -543,6 +612,8 @@ export default function OrganizationPage(): JSX.Element {
           rolesById={rolesById}
           filter={peopleFilter}
           canEdit={canWriteUsers}
+          scopeAssignments={data.scopeAssignments}
+          scopeUnavailable={data.scopeUnavailable}
           t={t}
         />
       </section>
@@ -951,6 +1022,8 @@ function PeopleTable({
   rolesById,
   filter,
   canEdit,
+  scopeAssignments,
+  scopeUnavailable,
   t,
 }: {
   users: readonly AdminUser[];
@@ -958,6 +1031,8 @@ function PeopleTable({
   rolesById: Map<string, RoleSummary>;
   filter: 'all' | 'noTeam' | 'noRole';
   canEdit: boolean;
+  scopeAssignments: ReadonlyMap<string, UserScopeAssignmentsForUser>;
+  scopeUnavailable: boolean;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
   if (!hasCapability('users.read')) {
@@ -1000,6 +1075,7 @@ function PeopleTable({
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.user')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.role')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.team')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.scope')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.status')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.issues')}</th>
               <th className="px-4 py-3 text-end font-semibold">{t('people.columns.actions')}</th>
@@ -1051,6 +1127,13 @@ function PeopleTable({
                       <span className="text-status-warning">{t('people.issueChips.noTeam')}</span>
                     )}
                   </td>
+                  <td className="px-4 py-3 align-top text-xs">
+                    <ScopeChip
+                      assignments={scopeAssignments.get(u.id)}
+                      unavailable={scopeUnavailable}
+                      t={t}
+                    />
+                  </td>
                   <td className="px-4 py-3 align-top">
                     <Badge
                       tone={
@@ -1097,6 +1180,36 @@ function PeopleTable({
         </table>
       </div>
     </section>
+  );
+}
+
+function ScopeChip({
+  assignments,
+  unavailable,
+  t,
+}: {
+  assignments: UserScopeAssignmentsForUser | undefined;
+  unavailable: boolean;
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (unavailable) {
+    return <span className="text-ink-tertiary">{t('people.scopeUnavailable')}</span>;
+  }
+  if (!assignments) {
+    return <span className="text-status-warning">{t('people.scopeNone')}</span>;
+  }
+  const companyCount = assignments.companies.length;
+  const countryCount = assignments.countries.length;
+  if (companyCount === 0 && countryCount === 0) {
+    return <Badge tone="warning">{t('people.scopeNone')}</Badge>;
+  }
+  const parts: string[] = [];
+  if (companyCount > 0) parts.push(t('people.scopeCompanyCount', { n: companyCount }));
+  if (countryCount > 0) parts.push(t('people.scopeCountryCount', { n: countryCount }));
+  return (
+    <Badge tone="info" aria-label={parts.join(', ')}>
+      {parts.join(' · ')}
+    </Badge>
   );
 }
 

@@ -387,3 +387,283 @@ describe('user scope assignments — read + replace + audit (C9)', () => {
     assert.equal(rows, 0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// Sprint 8 (D8) — bulk scope read endpoints
+//
+// Coverage:
+//   - listScopeCounts returns every visible user when ids omitted,
+//     including users with zero assignments (hasAnyScope=false).
+//   - listScopeCounts ids filter shrinks the response to the
+//     requested subset.
+//   - listAssignmentsBulk returns the assignment rows grouped per
+//     user; foreign ids are silently dropped.
+//   - listAssignmentsBulk enforces the 200-id cap with a typed
+//     BadRequestException.
+//   - Cross-tenant safety: listScopeCounts never returns users
+//     from the other tenant even when their ids are explicitly
+//     requested.
+// ─────────────────────────────────────────────────────────────────
+
+describe('user scope assignments — bulk reads (Sprint 8 / D8)', () => {
+  const BULK_TEST_TENANT_CODE = '__d8_user_scope_bulk__';
+  const BULK_OTHER_TENANT_CODE = '__d8_user_scope_bulk_other__';
+  let bulkPrisma: PrismaClient;
+  let bulkPrismaSvc: PrismaService;
+  let bulkCompanies: CompaniesService;
+  let bulkCountries: CountriesService;
+  let bulkAudit: AuditService;
+  let bulkSvc: UserScopeAssignmentsService;
+
+  let bulkTenantId: string;
+  let bulkOtherTenantId: string;
+  let userWithBothScopesId: string; // 1 company + 1 country
+  let userWithOneScopeId: string; // 1 company only
+  let userWithNoScopeId: string; // 0
+  let foreignUserId: string; // belongs to the other tenant
+  let bulkCompanyId: string;
+  let bulkCountryId: string;
+
+  function inBulkTenant<T>(fn: () => Promise<T>): Promise<T> {
+    return tenantContext.run(
+      { tenantId: bulkTenantId, tenantCode: BULK_TEST_TENANT_CODE, source: 'header' },
+      fn,
+    );
+  }
+
+  async function rawInTenant<T>(tid: string, fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return bulkPrisma.$transaction(async (tx: any) => {
+      await tx.$executeRawUnsafe(`SET LOCAL app.tenant_id = '${tid}'`);
+      return fn(tx);
+    });
+  }
+
+  before(async () => {
+    bulkPrisma = new PrismaClient();
+    await bulkPrisma.$connect();
+    bulkPrismaSvc = new PrismaService();
+    bulkCompanies = new CompaniesService(bulkPrismaSvc);
+    bulkCountries = new CountriesService(bulkPrismaSvc, bulkCompanies);
+    bulkAudit = new AuditService(bulkPrismaSvc);
+    bulkSvc = new UserScopeAssignmentsService(bulkPrismaSvc, bulkAudit);
+
+    const t = await bulkPrisma.tenant.upsert({
+      where: { code: BULK_TEST_TENANT_CODE },
+      update: { isActive: true },
+      create: { code: BULK_TEST_TENANT_CODE, name: 'D8 bulk test' },
+    });
+    bulkTenantId = t.id;
+    const o = await bulkPrisma.tenant.upsert({
+      where: { code: BULK_OTHER_TENANT_CODE },
+      update: { isActive: true },
+      create: { code: BULK_OTHER_TENANT_CODE, name: 'D8 bulk other' },
+    });
+    bulkOtherTenantId = o.id;
+
+    const role = await rawInTenant(bulkTenantId, (tx) =>
+      tx.role.upsert({
+        where: { tenantId_code: { tenantId: bulkTenantId, code: 'sales_agent' } },
+        update: {},
+        create: {
+          tenantId: bulkTenantId,
+          code: 'sales_agent',
+          nameAr: 'وكيل',
+          nameEn: 'Sales Agent',
+          level: 30,
+        },
+      }),
+    );
+    const otherRole = await rawInTenant(bulkOtherTenantId, (tx) =>
+      tx.role.upsert({
+        where: { tenantId_code: { tenantId: bulkOtherTenantId, code: 'sales_agent' } },
+        update: {},
+        create: {
+          tenantId: bulkOtherTenantId,
+          code: 'sales_agent',
+          nameAr: 'وكيل',
+          nameEn: 'Sales Agent',
+          level: 30,
+        },
+      }),
+    );
+
+    const both = await rawInTenant(bulkTenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: bulkTenantId,
+          email: 'd8-both@example.com',
+          name: 'D8 both',
+          passwordHash: 'x',
+          roleId: role.id,
+          status: 'active',
+          language: 'en',
+        },
+      }),
+    );
+    userWithBothScopesId = both.id;
+    const one = await rawInTenant(bulkTenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: bulkTenantId,
+          email: 'd8-one@example.com',
+          name: 'D8 one',
+          passwordHash: 'x',
+          roleId: role.id,
+          status: 'active',
+          language: 'en',
+        },
+      }),
+    );
+    userWithOneScopeId = one.id;
+    const none = await rawInTenant(bulkTenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: bulkTenantId,
+          email: 'd8-none@example.com',
+          name: 'D8 none',
+          passwordHash: 'x',
+          roleId: role.id,
+          status: 'active',
+          language: 'en',
+        },
+      }),
+    );
+    userWithNoScopeId = none.id;
+    const foreign = await rawInTenant(bulkOtherTenantId, (tx) =>
+      tx.user.create({
+        data: {
+          tenantId: bulkOtherTenantId,
+          email: 'd8-foreign@example.com',
+          name: 'D8 foreign',
+          passwordHash: 'x',
+          roleId: otherRole.id,
+          status: 'active',
+          language: 'en',
+        },
+      }),
+    );
+    foreignUserId = foreign.id;
+
+    const co = await inBulkTenant(() => bulkCompanies.create({ code: 'uber', name: 'Uber' }));
+    bulkCompanyId = co.id;
+    const cy = await inBulkTenant(() =>
+      bulkCountries.create({ companyId: bulkCompanyId, code: 'EG', name: 'Egypt' }),
+    );
+    bulkCountryId = cy.id;
+
+    // Wire up assignments: both → 1 company + 1 country, one → 1 company, none → 0.
+    await inBulkTenant(() =>
+      bulkSvc.replaceForUser(
+        userWithBothScopesId,
+        { companyIds: [bulkCompanyId], countryIds: [bulkCountryId] },
+        userWithBothScopesId,
+      ),
+    );
+    await inBulkTenant(() =>
+      bulkSvc.replaceForUser(
+        userWithOneScopeId,
+        { companyIds: [bulkCompanyId], countryIds: [] },
+        userWithOneScopeId,
+      ),
+    );
+  });
+
+  after(async () => {
+    await bulkPrisma.tenant.delete({ where: { code: BULK_TEST_TENANT_CODE } }).catch(() => {});
+    await bulkPrisma.tenant.delete({ where: { code: BULK_OTHER_TENANT_CODE } }).catch(() => {});
+    await bulkPrisma.$disconnect();
+  });
+
+  it('listScopeCounts returns every visible user (including zero-scope users)', async () => {
+    const result = await inBulkTenant(() => bulkSvc.listScopeCounts({}));
+    const byId = new Map(result.items.map((i) => [i.userId, i]));
+    const both = byId.get(userWithBothScopesId);
+    const one = byId.get(userWithOneScopeId);
+    const none = byId.get(userWithNoScopeId);
+    assert.ok(both, 'user with both scopes must appear');
+    assert.equal(both.companyCount, 1);
+    assert.equal(both.countryCount, 1);
+    assert.equal(both.hasAnyScope, true);
+    assert.ok(one, 'user with one company scope must appear');
+    assert.equal(one.companyCount, 1);
+    assert.equal(one.countryCount, 0);
+    assert.equal(one.hasAnyScope, true);
+    assert.ok(none, 'user with zero scopes must appear (this is the whole point)');
+    assert.equal(none.companyCount, 0);
+    assert.equal(none.countryCount, 0);
+    assert.equal(none.hasAnyScope, false);
+  });
+
+  it('listScopeCounts ids filter shrinks the response to the requested subset', async () => {
+    const result = await inBulkTenant(() =>
+      bulkSvc.listScopeCounts({ ids: [userWithBothScopesId] }),
+    );
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.userId, userWithBothScopesId);
+  });
+
+  it('listScopeCounts never returns users from another tenant, even when explicitly requested', async () => {
+    const result = await inBulkTenant(() =>
+      bulkSvc.listScopeCounts({ ids: [userWithBothScopesId, foreignUserId] }),
+    );
+    const ids = result.items.map((i) => i.userId);
+    assert.ok(ids.includes(userWithBothScopesId));
+    assert.equal(
+      ids.includes(foreignUserId),
+      false,
+      'foreign tenant user must be filtered by RLS / tenant guard',
+    );
+  });
+
+  it('listAssignmentsBulk returns assignment rows grouped per user (foreign ids dropped)', async () => {
+    const result = await inBulkTenant(() =>
+      bulkSvc.listAssignmentsBulk({
+        ids: [userWithBothScopesId, userWithOneScopeId, foreignUserId],
+      }),
+    );
+    const ids = result.items.map((i) => i.userId);
+    assert.ok(ids.includes(userWithBothScopesId));
+    assert.ok(ids.includes(userWithOneScopeId));
+    assert.equal(
+      ids.includes(foreignUserId),
+      false,
+      'foreign tenant user must not leak into the response',
+    );
+    const both = result.items.find((i) => i.userId === userWithBothScopesId);
+    assert.equal(both?.companies.length, 1);
+    assert.equal(both?.countries.length, 1);
+    assert.equal(both?.companies[0]?.code, 'uber');
+    assert.equal(both?.countries[0]?.code, 'EG');
+  });
+
+  it('listAssignmentsBulk rejects > 200 ids with a typed BadRequestException', async () => {
+    // 201 distinct UUIDs so the service's `uniq()` doesn't collapse them.
+    const tooMany = Array.from(
+      { length: 201 },
+      (_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+    );
+    await assert.rejects(
+      () => inBulkTenant(() => bulkSvc.listAssignmentsBulk({ ids: tooMany })),
+      (err: unknown) => {
+        const e = err as { status?: number; response?: { code?: string } };
+        return e.status === 400 && e.response?.code === 'scope.bulk.too_many_ids';
+      },
+    );
+  });
+
+  it('listScopeCounts rejects > 200 ids with a typed BadRequestException', async () => {
+    // 201 distinct UUIDs so the service's `uniq()` doesn't collapse them.
+    const tooMany = Array.from(
+      { length: 201 },
+      (_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+    );
+    await assert.rejects(
+      () => inBulkTenant(() => bulkSvc.listScopeCounts({ ids: tooMany })),
+      (err: unknown) => {
+        const e = err as { status?: number; response?: { code?: string } };
+        return e.status === 400 && e.response?.code === 'scope.bulk.too_many_ids';
+      },
+    );
+  });
+});

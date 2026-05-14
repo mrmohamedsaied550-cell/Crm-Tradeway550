@@ -34,6 +34,8 @@ import {
   ListCountriesQuerySchema,
   ListTeamsQuerySchema,
   ListUsersQuerySchema,
+  ListUserScopeAssignmentsBulkQuerySchema,
+  ListUserScopeCountsQuerySchema,
   PutUserScopeAssignmentsSchema,
   SetUserRoleSchema,
   SetUserStatusSchema,
@@ -60,6 +62,10 @@ class SetUserRoleDto extends createZodDto(SetUserRoleSchema) {}
 class SetUserTeamDto extends createZodDto(SetUserTeamSchema) {}
 class SetUserStatusDto extends createZodDto(SetUserStatusSchema) {}
 class PutUserScopeAssignmentsDto extends createZodDto(PutUserScopeAssignmentsSchema) {}
+class ListUserScopeCountsQueryDto extends createZodDto(ListUserScopeCountsQuerySchema) {}
+class ListUserScopeAssignmentsBulkQueryDto extends createZodDto(
+  ListUserScopeAssignmentsBulkQuerySchema,
+) {}
 
 /**
  * /api/v1 — org-structure admin surface (C12).
@@ -276,6 +282,39 @@ export class OrgController {
   }
 
   // ───────── User scope assignments (C9) ─────────
+
+  /**
+   * Sprint 8 (D8) — bulk scope counts for the Organization KPI
+   * ("Users without scope") and the People-table scope chip. The
+   * literal `users/scope-counts` path must be declared BEFORE the
+   * parametric `users/:id/...` routes so Nest matches it first
+   * rather than treating "scope-counts" as a user id.
+   */
+  @Get('users/scope-counts')
+  @RequireCapability('users.read')
+  @ApiOperation({
+    summary:
+      'Bulk per-user scope counts. Optional `ids` query filters; users with zero assignments still appear with hasAnyScope=false. Cap: 200 ids per request.',
+  })
+  listUserScopeCounts(@Query() query: ListUserScopeCountsQueryDto) {
+    return this.userScopes.listScopeCounts({ ids: query.ids });
+  }
+
+  /**
+   * Sprint 8 (D8) — bulk scope assignments for the visible user
+   * subset on the Organization People table. The `ids` query
+   * parameter is required (no unbounded fetch). Same path-ordering
+   * rule applies — literal path before parametric.
+   */
+  @Get('users/scope-assignments')
+  @RequireCapability('users.read')
+  @ApiOperation({
+    summary:
+      'Bulk scope assignments for a given user id list. `ids` required. Cap: 200 ids per request.',
+  })
+  listUserScopeAssignmentsBulk(@Query() query: ListUserScopeAssignmentsBulkQueryDto) {
+    return this.userScopes.listAssignmentsBulk({ ids: query.ids });
+  }
 
   @Get('users/:id/scope-assignments')
   @RequireCapability('users.read')

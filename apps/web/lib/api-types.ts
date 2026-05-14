@@ -69,8 +69,17 @@ export interface RoleSummary {
   level: number;
   /** Phase C — C2: TRUE for the 11 seeded role templates. Immutable in the UI. */
   isSystem: boolean;
+  /** Sprint 8 (D8) — authoritative TL flag. Replaces the level/code heuristic. */
+  isTeamLeader: boolean;
   description: string | null;
   capabilitiesCount: number;
+  /** Sprint 8 (D8) — real user count from `_count.users`. */
+  memberCount: number;
+  /** Sprint 8 (D8) — per-resource data scope rows. */
+  scopes: readonly RoleScopeRow[];
+  /** Sprint 8 (D8) — ISO timestamps. */
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Phase C — C8: full role payload returned by GET /rbac/roles/:id. */
@@ -94,10 +103,17 @@ export interface RoleDetail {
   level: number;
   isActive: boolean;
   isSystem: boolean;
+  /** Sprint 8 (D8) — authoritative TL flag. */
+  isTeamLeader: boolean;
   description: string | null;
   capabilities: readonly string[];
   scopes: readonly RoleScopeRow[];
   fieldPermissions: readonly RoleFieldPermissionRow[];
+  /** Sprint 8 (D8) — real user count. */
+  memberCount: number;
+  /** Sprint 8 (D8) — ISO timestamps. */
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -450,6 +466,26 @@ export interface UserScopeCountryRef {
 export interface UserScopeAssignments {
   companies: readonly UserScopeCompanyRef[];
   countries: readonly UserScopeCountryRef[];
+}
+
+/** Sprint 8 (D8) — bulk scope-count response shapes. */
+export interface UserScopeCount {
+  userId: string;
+  companyCount: number;
+  countryCount: number;
+  hasAnyScope: boolean;
+}
+export interface UserScopeCountsResponse {
+  items: readonly UserScopeCount[];
+}
+
+export interface UserScopeAssignmentsForUser {
+  userId: string;
+  companies: readonly UserScopeCompanyRef[];
+  countries: readonly UserScopeCountryRef[];
+}
+export interface UserScopeAssignmentsBulkResponse {
+  items: readonly UserScopeAssignmentsForUser[];
 }
 
 export interface PipelineStage {

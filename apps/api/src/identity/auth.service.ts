@@ -609,6 +609,7 @@ export class AuthService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       }),
     );
@@ -622,6 +623,7 @@ export class AuthService {
       level: r.level,
       isActive: r.isActive,
       isSystem: r.isSystem,
+      isTeamLeader: r.isTeamLeader,
       description: r.description,
       capabilities: r.capabilities.map((rc) => rc.capability.code as string),
       scopes: r.scopes.map((s) => ({
@@ -634,6 +636,9 @@ export class AuthService {
         canRead: p.canRead,
         canWrite: p.canWrite,
       })),
+      memberCount: r._count.users,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     } as RoleWithCapabilities;
   }
 

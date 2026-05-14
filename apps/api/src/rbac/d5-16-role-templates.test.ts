@@ -76,10 +76,14 @@ function makeRole(opts: {
     level: 60,
     isActive: true,
     isSystem: false,
+    isTeamLeader: false,
     description: null,
     capabilities: opts.capabilities ?? [],
     scopes: [],
     fieldPermissions: [],
+    memberCount: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -125,10 +129,14 @@ class FakeRbacService {
       level: d.level,
       isActive: true,
       isSystem: false,
+      isTeamLeader: false,
       description: d.description ?? null,
       capabilities: [...d.capabilities],
       scopes: d.scopes as RoleWithCapabilities['scopes'],
       fieldPermissions: d.fieldPermissions as RoleWithCapabilities['fieldPermissions'],
+      memberCount: 0,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     };
   }
 }
