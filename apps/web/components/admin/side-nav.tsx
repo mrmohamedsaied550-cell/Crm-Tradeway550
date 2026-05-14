@@ -12,7 +12,6 @@ import {
   UserCog,
   ScrollText,
   Contact,
-  Columns,
   Layers,
   Trophy,
   Award,
@@ -46,7 +45,6 @@ interface NavItem {
     | 'teams'
     | 'users'
     | 'leads'
-    | 'pipeline'
     | 'pipelineBuilder'
     | 'captains'
     | 'bonuses'
@@ -70,13 +68,20 @@ interface NavItem {
     | 'partnerMilestones';
   icon: LucideIcon;
   /** P2-01 — capability required to see this link. Dashboard / Leads /
-   *  Captains / Pipeline are visible to anyone authenticated. */
+   *  Captains are visible to anyone authenticated. */
   cap?: string;
   /** When true, the link is rendered but disabled — destination doesn't exist. */
   pending?: boolean;
 }
 
-const ITEMS: readonly NavItem[] = [
+/**
+ * Sprint 0 — primary operational navigation. Legacy Pipeline
+ * (`/admin/pipeline`) has been removed from the primary surface;
+ * stage/status workflow lives in the Leads workspace + lead detail
+ * pages. Pipeline Builder moved to the Advanced group below so the
+ * primary list stays focused on day-to-day operational pages.
+ */
+const PRIMARY_ITEMS: readonly NavItem[] = [
   { href: '/admin', labelKey: 'dashboard', icon: LayoutDashboard },
   { href: '/admin/companies', labelKey: 'companies', icon: Building2, cap: 'org.company.read' },
   { href: '/admin/countries', labelKey: 'countries', icon: Globe, cap: 'org.country.read' },
@@ -87,13 +92,6 @@ const ITEMS: readonly NavItem[] = [
   // by default). System roles render read-only with a Duplicate action.
   { href: '/admin/roles', labelKey: 'roles', icon: ShieldCheck, cap: 'roles.read' },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
-  { href: '/admin/pipeline', labelKey: 'pipeline', icon: Columns, cap: 'pipeline.read' },
-  {
-    href: '/admin/pipeline-builder',
-    labelKey: 'pipelineBuilder',
-    icon: Layers,
-    cap: 'pipeline.read',
-  },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy, cap: 'captain.read' },
   { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award, cap: 'bonus.read' },
   { href: '/admin/competitions', labelKey: 'competitions', icon: Flag, cap: 'competition.read' },
@@ -203,6 +201,24 @@ const ITEMS: readonly NavItem[] = [
     icon: XCircle,
     cap: 'tenant.settings.read',
   },
+];
+
+/**
+ * Sprint 0 — Advanced / admin-only tools. These pages are kept
+ * reachable for power users (super_admin / ops) but pushed below a
+ * section header so they don't compete with the primary day-to-day
+ * navigation. Add new "infrequent but important" pages here.
+ */
+const ADVANCED_ITEMS: readonly NavItem[] = [
+  // Pipeline Builder moved from primary nav (Sprint 0). Stage/status
+  // configuration is an infrequent admin task; agents and TLs don't
+  // need it in their daily flow.
+  {
+    href: '/admin/pipeline-builder',
+    labelKey: 'pipelineBuilder',
+    icon: Layers,
+    cap: 'pipeline.read',
+  },
   // PL-4 — backup page (P3-07) was reachable only via direct URL.
   // Capability is `tenant.export` (super_admin / ops_manager /
   // account_manager only) so agents never see it.
@@ -255,68 +271,94 @@ export function AdminSideNav() {
     };
   }, []);
 
-  const visible = ITEMS.filter((item) => {
-    if (!item.cap) return true;
-    if (caps === null) return true;
-    return caps.includes(item.cap);
-  });
+  function visible(items: readonly NavItem[]): readonly NavItem[] {
+    return items.filter((item) => {
+      if (!item.cap) return true;
+      if (caps === null) return true;
+      return caps.includes(item.cap);
+    });
+  }
+
+  const primary = visible(PRIMARY_ITEMS);
+  const advanced = visible(ADVANCED_ITEMS);
+
+  function renderItem(item: NavItem) {
+    const Icon = item.icon;
+    const isActive =
+      item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+
+    // Sprint 0 — dark sidebar palette. Inactive links sit at slate-300
+    // on the navy bg; hover lifts to slate-700 with white text; active
+    // route also uses the hover bg with white text plus a subtle
+    // emerald accent border on the inline-start edge so the current
+    // page reads at a glance.
+    const className = cn(
+      'group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+      item.pending
+        ? 'cursor-not-allowed text-sidebar-textMuted/70'
+        : isActive
+          ? 'bg-sidebar-hover font-medium text-sidebar-textActive'
+          : 'text-sidebar-text hover:bg-sidebar-hover hover:text-sidebar-textActive',
+    );
+
+    const showReviewBadge = item.labelKey === 'whatsappReviews' && reviewCount > 0;
+    const content = (
+      <>
+        {isActive ? (
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-1 start-0 w-0.5 rounded-full bg-brand-500"
+          />
+        ) : null}
+        <Icon className="h-4 w-4" aria-hidden="true" />
+        <span className="flex-1">{t(item.labelKey)}</span>
+        {showReviewBadge ? (
+          <span
+            className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-status-warning/20 px-1.5 text-[11px] font-semibold text-status-warning"
+            aria-label={t('whatsappReviewsBadge', { n: reviewCount })}
+          >
+            {reviewCount > 99 ? '99+' : reviewCount}
+          </span>
+        ) : null}
+        {item.pending ? (
+          <span className="text-[11px] font-medium uppercase text-sidebar-textMuted/70">
+            {tCommon('comingSoon')}
+          </span>
+        ) : null}
+      </>
+    );
+
+    return (
+      <li key={item.href}>
+        {item.pending ? (
+          <span className={className} aria-disabled="true">
+            {content}
+          </span>
+        ) : (
+          <Link href={item.href} className={className}>
+            {content}
+          </Link>
+        )}
+      </li>
+    );
+  }
 
   return (
     <nav
       aria-label="Admin"
-      className="hidden w-60 shrink-0 border-e border-surface-border bg-surface-card md:block"
+      className="hidden w-60 shrink-0 self-stretch border-e border-sidebar-border bg-sidebar-bg md:block"
     >
-      <ul className="flex flex-col gap-0.5 p-3">
-        {visible.map((item) => {
-          const Icon = item.icon;
-          const isActive =
-            item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
-
-          const className = cn(
-            'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-            item.pending
-              ? 'cursor-not-allowed text-ink-tertiary'
-              : isActive
-                ? 'bg-brand-50 font-medium text-brand-700'
-                : 'text-ink-secondary hover:bg-brand-50 hover:text-brand-700',
-          );
-
-          const showReviewBadge = item.labelKey === 'whatsappReviews' && reviewCount > 0;
-          const content = (
-            <>
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              <span className="flex-1">{t(item.labelKey)}</span>
-              {showReviewBadge ? (
-                <span
-                  className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-status-warning/15 px-1.5 text-[11px] font-semibold text-status-warning"
-                  aria-label={t('whatsappReviewsBadge', { n: reviewCount })}
-                >
-                  {reviewCount > 99 ? '99+' : reviewCount}
-                </span>
-              ) : null}
-              {item.pending ? (
-                <span className="text-[11px] font-medium uppercase text-ink-tertiary">
-                  {tCommon('comingSoon')}
-                </span>
-              ) : null}
-            </>
-          );
-
-          return (
-            <li key={item.href}>
-              {item.pending ? (
-                <span className={className} aria-disabled="true">
-                  {content}
-                </span>
-              ) : (
-                <Link href={item.href} className={className}>
-                  {content}
-                </Link>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex h-full flex-col gap-1 p-3">
+        <ul className="flex flex-col gap-0.5">{primary.map(renderItem)}</ul>
+        {advanced.length > 0 ? (
+          <>
+            <div className="mt-4 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-textMuted">
+              {t('advanced')}
+            </div>
+            <ul className="flex flex-col gap-0.5">{advanced.map(renderItem)}</ul>
+          </>
+        ) : null}
+      </div>
     </nav>
   );
 }
