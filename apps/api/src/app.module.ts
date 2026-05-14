@@ -21,6 +21,7 @@ import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PresenceModule } from './presence/presence.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { BackupModule } from './backup/backup.module';
@@ -68,6 +69,7 @@ import { buildLoggerConfig } from './common/logger';
     ReportsModule,
     AuditModule,
     NotificationsModule,
+    PresenceModule,
     IngestionModule,
     RealtimeModule,
     BackupModule,
