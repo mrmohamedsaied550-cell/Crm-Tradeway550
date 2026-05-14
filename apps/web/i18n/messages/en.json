@@ -408,6 +408,38 @@
             "dft": "DFT"
           }
         },
+        "partnerPresence": {
+          "summaryHeading": "Partner presence",
+          "summaryEmpty": "No partner data matched yet.",
+          "summaryMatched": "Matched in {n}",
+          "summaryMismatch": "Mismatch in {n}",
+          "summaryOverflow": "+{n} more",
+          "summaryChipListLabel": "Partner status chips",
+          "loading": "Loading partner presence…",
+          "noAccess": {
+            "title": "No access to partner data",
+            "description": "Your role doesn't include `partner.verification.read`. Ask an admin to grant it if you need to review partner journeys."
+          },
+          "tableEmptyTitle": "No partner data matched yet",
+          "tableEmptyBody": "Once a partner source syncs and matches this contact, the per-partner journey row will appear here.",
+          "lastSyncNever": "Never",
+          "columns": {
+            "partner": "Partner",
+            "partnerStatus": "Partner status",
+            "verification": "Verification",
+            "lastSync": "Last sync",
+            "warnings": "Warnings"
+          },
+          "addTarget": {
+            "title": "Add Partner Target",
+            "action": "+ Add target",
+            "gapDescription": "Backend gap: no POST endpoint creates a partner-target journey row on the same contact yet. Today the Partner Data Hub creates partner records via sync from Uber/inDrive/DiDi/Careem/Yango sheets. A follow-up sprint adds an admin-side endpoint + capability so an agent can mark a contact as a target for an additional partner without duplicating the person. Logos / company assets are pending Branding & Asset Settings — initials shown as a fallback for now."
+          },
+          "sharedPhone": {
+            "title": "One contact, multiple partner journeys",
+            "body": "This phone appears across {n} partner sources. Each row above is a separate partner journey for the same person — they are not duplicated as separate captains."
+          }
+        },
         "pendingTransition": {
           "heading": "Stage transition",
           "state": {
