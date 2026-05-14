@@ -2630,6 +2630,20 @@
           "changeHistory": "Change history",
           "changeHistoryHint": "Audit log filtered to this role.",
           "followUp": "Raw capability list and dependency resolver come in Sprint 7.F."
+        },
+        "accessLevel": {
+          "none": "No access",
+          "readOnly": "Read-only",
+          "limited": "Limited",
+          "full": "Full"
+        },
+        "moduleRisk": {
+          "hasSensitive": "Has sensitive caps",
+          "activeSensitive": "Sensitive cap active",
+          "sensitiveTag": "Sensitive"
+        },
+        "moduleCounts": {
+          "summary": "{on} / {total} caps"
         }
       }
     },

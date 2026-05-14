@@ -699,7 +699,7 @@ function CapabilitiesTab({
     });
   }
 
-  function toggleModule(modCaps: CapabilityCatalogueEntry[], on: boolean): void {
+  function toggleModule(modCaps: readonly CapabilityCatalogueEntry[], on: boolean): void {
     if (!editable) return;
     setSelected((prev) => {
       const next = new Set(prev);
@@ -800,58 +800,20 @@ function CapabilitiesTab({
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('capabilitiesIntro')}</p>
-      {grouped.map(([moduleKey, modCaps]) => {
-        const allOn = modCaps.every((c) => selected.has(c.code));
-        return (
-          <section
+      <ul className="flex flex-col gap-2">
+        {grouped.map(([moduleKey, modCaps]) => (
+          <ModuleAccessCard
             key={moduleKey}
-            className="rounded-md border border-surface-border bg-surface px-3 py-2"
-          >
-            <header className="mb-2 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-                {moduleKey}
-              </h3>
-              {editable ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => toggleModule(modCaps, !allOn)}
-                  disabled={submitting}
-                >
-                  {allOn ? t('deselectAll') : t('selectAll')}
-                </Button>
-              ) : null}
-            </header>
-            <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {modCaps.map((c) => {
-                const checked = selected.has(c.code);
-                return (
-                  <li key={c.code}>
-                    <label
-                      className={cn(
-                        'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-brand-50/40',
-                        editable ? '' : 'cursor-not-allowed opacity-80',
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggle(c.code)}
-                        disabled={!editable || submitting}
-                        className="mt-0.5"
-                      />
-                      <span className="flex flex-col leading-tight">
-                        <code className="font-mono text-xs text-ink-primary">{c.code}</code>
-                        <span className="text-xs text-ink-tertiary">{c.description}</span>
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        );
-      })}
+            moduleKey={moduleKey}
+            modCaps={modCaps}
+            selected={selected}
+            editable={editable}
+            submitting={submitting}
+            onToggle={toggle}
+            onToggleModule={toggleModule}
+          />
+        ))}
+      </ul>
       <DependencyWarningsPanel analysis={analysis} />
       {editable ? (
         <div className="flex items-center justify-end">
@@ -1156,5 +1118,172 @@ function FieldPermissionsTab({
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.C — Module Access card. Wraps the existing capability
+// list with an access-level chip + risk flag + collapsible details.
+// The inner checkbox toggle logic is unchanged: every change still
+// re-runs the D5.14 dependency check via the parent's debounced
+// effect. The card is a visual reorganisation, not a behavioural one.
+// ────────────────────────────────────────────────────────────────────
+
+const RISK_KEYWORDS: readonly string[] = [
+  'export',
+  'delete',
+  'merge',
+  'reset',
+  'disable',
+  'override',
+  'audit',
+];
+
+function isRiskyCap(code: string): boolean {
+  const lower = code.toLowerCase();
+  return RISK_KEYWORDS.some((k) => lower.includes(k));
+}
+
+function isReadCap(code: string): boolean {
+  return code.toLowerCase().endsWith('.read');
+}
+
+type AccessLevel = 'none' | 'readOnly' | 'limited' | 'full';
+
+function accessLevelOf(
+  modCaps: readonly CapabilityCatalogueEntry[],
+  selected: ReadonlySet<string>,
+): AccessLevel {
+  const on = modCaps.filter((c) => selected.has(c.code));
+  if (on.length === 0) return 'none';
+  if (on.length === modCaps.length) return 'full';
+  if (on.every((c) => isReadCap(c.code))) return 'readOnly';
+  return 'limited';
+}
+
+function ModuleAccessCard({
+  moduleKey,
+  modCaps,
+  selected,
+  editable,
+  submitting,
+  onToggle,
+  onToggleModule,
+}: {
+  moduleKey: string;
+  modCaps: readonly CapabilityCatalogueEntry[];
+  selected: ReadonlySet<string>;
+  editable: boolean;
+  submitting: boolean;
+  onToggle: (code: string) => void;
+  onToggleModule: (modCaps: readonly CapabilityCatalogueEntry[], on: boolean) => void;
+}): JSX.Element {
+  const t = useTranslations('admin.roles');
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  const initiallyExpanded = useMemo(
+    () => modCaps.some((c) => selected.has(c.code)),
+    [modCaps, selected],
+  );
+  const [expanded, setExpanded] = useState<boolean>(initiallyExpanded);
+
+  const level = accessLevelOf(modCaps, selected);
+  const hasRiskyCap = modCaps.some((c) => isRiskyCap(c.code));
+  const hasActiveRisky = modCaps.some((c) => isRiskyCap(c.code) && selected.has(c.code));
+  const onCount = modCaps.filter((c) => selected.has(c.code)).length;
+
+  const levelTone: Record<AccessLevel, 'inactive' | 'info' | 'warning' | 'healthy'> = {
+    none: 'inactive',
+    readOnly: 'info',
+    limited: 'warning',
+    full: 'healthy',
+  };
+
+  return (
+    <li className="overflow-hidden rounded-md border border-surface-border bg-surface">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex w-full flex-wrap items-center gap-3 px-3 py-2 text-start transition-colors hover:bg-brand-50/40"
+      >
+        <Layers className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-ink-primary">{moduleKey}</h3>
+        <Badge tone={levelTone[level]}>
+          {tHybrid(`accessLevel.${level}` as 'accessLevel.none')}
+        </Badge>
+        {hasActiveRisky ? (
+          <Badge tone="breach">{tHybrid('moduleRisk.activeSensitive')}</Badge>
+        ) : hasRiskyCap ? (
+          <Badge tone="warning">{tHybrid('moduleRisk.hasSensitive')}</Badge>
+        ) : null}
+        <span className="ms-auto text-xs text-ink-tertiary">
+          {tHybrid('moduleCounts.summary', { on: onCount, total: modCaps.length })}
+        </span>
+        <ArrowRight
+          className={cn(
+            'h-3.5 w-3.5 text-ink-tertiary transition-transform',
+            expanded ? 'rotate-90' : '',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {expanded ? (
+        <div className="border-t border-surface-border bg-surface-card px-3 py-2">
+          {editable ? (
+            <div className="mb-2 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onToggleModule(modCaps, level !== 'full')}
+                disabled={submitting}
+              >
+                {level === 'full' ? t('deselectAll') : t('selectAll')}
+              </Button>
+            </div>
+          ) : null}
+          <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {modCaps.map((c) => {
+              const checked = selected.has(c.code);
+              const risky = isRiskyCap(c.code);
+              return (
+                <li key={c.code}>
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-brand-50/40',
+                      editable ? '' : 'cursor-not-allowed opacity-80',
+                      risky && checked
+                        ? 'border border-status-breach/20 bg-status-breach/5'
+                        : risky
+                          ? 'border border-status-warning/20'
+                          : '',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggle(c.code)}
+                      disabled={!editable || submitting}
+                      className="mt-0.5"
+                    />
+                    <span className="flex min-w-0 flex-col leading-tight">
+                      <span className="flex items-center gap-1">
+                        <code className="font-mono text-xs text-ink-primary">{c.code}</code>
+                        {risky ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
+                            {tHybrid('moduleRisk.sensitiveTag')}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-ink-tertiary">{c.description}</span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </li>
   );
 }

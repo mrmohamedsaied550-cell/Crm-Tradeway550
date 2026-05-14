@@ -2630,6 +2630,20 @@
           "changeHistory": "سجل التغييرات",
           "changeHistoryHint": "سجل التدقيق مُرشَّح بهذا الدور.",
           "followUp": "العرض الخام للقدرات وأداة الاعتماديات تصل في Sprint 7.F."
+        },
+        "accessLevel": {
+          "none": "بدون وصول",
+          "readOnly": "قراءة فقط",
+          "limited": "محدود",
+          "full": "كامل"
+        },
+        "moduleRisk": {
+          "hasSensitive": "يحتوي صلاحيات حسّاسة",
+          "activeSensitive": "صلاحية حسّاسة مفعّلة",
+          "sensitiveTag": "حسّاسة"
+        },
+        "moduleCounts": {
+          "summary": "{on} / {total} صلاحية"
         }
       }
     },
