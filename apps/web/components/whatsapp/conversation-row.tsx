@@ -10,6 +10,8 @@ import {
   AssignmentSourceBadge,
   CaptainBadge,
   HasOpenLeadBadge,
+  LinkedLeadBadge,
+  NeedsReviewBadge,
   OwnerBadge,
   StatusBadge,
 } from './badges';
@@ -95,6 +97,11 @@ export function ConversationRow({
           {showOwner ? <OwnerBadge conversation={conversation} showUnassigned={false} /> : null}
           <CaptainBadge visible={isCaptain} />
           <HasOpenLeadBadge visible={hasOpenLead && !isCaptain} />
+          {/* D14 — triage pills: surface unresolved review + linked-to-lead
+              state directly on the row so operators don't need to open
+              the side panel to triage. */}
+          <NeedsReviewBadge review={conversation.review ?? null} />
+          <LinkedLeadBadge conversation={conversation} />
           {/* Window state hint for screen readers */}
           <span className="sr-only">{state}</span>
         </div>

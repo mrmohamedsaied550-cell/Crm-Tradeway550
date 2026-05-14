@@ -1,7 +1,15 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { ArrowRightLeft, Bot, History, Link2, ShieldCheck, User } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  Bot,
+  History,
+  Link2,
+  MessageSquareWarning,
+  ShieldCheck,
+  User,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import type { AssignmentSource, WhatsAppConversation } from '@/lib/api-types';
@@ -127,4 +135,46 @@ export function HasOpenLeadBadge({ visible }: { visible: boolean }): JSX.Element
 export function StatusBadge({ status }: { status: 'open' | 'closed' }): JSX.Element {
   const t = useTranslations('admin.whatsapp.status');
   return <Badge tone={status === 'open' ? 'healthy' : 'inactive'}>{t(status)}</Badge>;
+}
+
+/**
+ * Sprint 14 (D14) — "Needs review" pill for the triage row. Shown
+ * only when an unresolved `WhatsAppConversationReview` row is joined
+ * onto the conversation (resolvedAt === null). Renders nothing when
+ * the conversation has no review or its review is already resolved.
+ */
+export function NeedsReviewBadge({
+  review,
+}: {
+  review: { resolvedAt: string | null } | null | undefined;
+}): JSX.Element | null {
+  const t = useTranslations('admin.whatsapp.queue');
+  if (!review || review.resolvedAt !== null) return null;
+  return (
+    <Badge tone="warning">
+      <MessageSquareWarning className="me-1 inline h-3 w-3" aria-hidden="true" />
+      {t('needsReview')}
+    </Badge>
+  );
+}
+
+/**
+ * Sprint 14 (D14) — generic "Linked to lead" pill. Distinct from
+ * `HasOpenLeadBadge` (which reads from the contact aggregate) — this
+ * is driven by `conversation.leadId` and tells the operator at a
+ * glance which conversations already have a lead attached.
+ */
+export function LinkedLeadBadge({
+  conversation,
+}: {
+  conversation: WhatsAppConversation;
+}): JSX.Element | null {
+  const t = useTranslations('admin.whatsapp.queue');
+  if (!conversation.leadId) return null;
+  return (
+    <Badge tone="healthy">
+      <Link2 className="me-1 inline h-3 w-3" aria-hidden="true" />
+      {t('linked')}
+    </Badge>
+  );
 }

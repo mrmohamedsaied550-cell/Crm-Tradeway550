@@ -25,6 +25,7 @@ import { SendMediaMessageSchema, SendTemplateMessageSchema } from './whatsapp-te
 import { WhatsAppService } from './whatsapp.service';
 import {
   AssignConversationSchema,
+  ConversationSummaryQuerySchema,
   HandoverConversationSchema,
   LinkConversationLeadSchema,
   ListConversationMessagesQuerySchema,
@@ -34,6 +35,7 @@ import {
 
 class ListConversationsQueryDto extends createZodDto(ListConversationsQuerySchema) {}
 class ListConversationMessagesQueryDto extends createZodDto(ListConversationMessagesQuerySchema) {}
+class ConversationSummaryQueryDto extends createZodDto(ConversationSummaryQuerySchema) {}
 class SendConversationMessageDto extends createZodDto(SendConversationMessageSchema) {}
 class SendTemplateMessageDto extends createZodDto(SendTemplateMessageSchema) {}
 class SendMediaMessageDto extends createZodDto(SendMediaMessageSchema) {}
@@ -68,6 +70,19 @@ export class ConversationsController {
   })
   list(@Query() query: ListConversationsQueryDto, @CurrentUser() user: AccessTokenClaims) {
     return this.whatsapp.listConversations(user.tid, query, claimsToScope(user));
+  }
+
+  /**
+   * Sprint 14 (D14) — inbox summary counts for the triage KPI cards.
+   * Scope-aware: the same `resolveConversationScopeWhere` that gates the
+   * list endpoint gates every count returned here, so a sales agent
+   * never sees the global open count.
+   */
+  @Get('summary')
+  @RequireCapability('whatsapp.conversation.read')
+  @ApiOperation({ summary: 'Counts per inbox triage queue (scope-aware)' })
+  summary(@Query() query: ConversationSummaryQueryDto, @CurrentUser() user: AccessTokenClaims) {
+    return this.whatsapp.getInboxSummary(user.tid, query, claimsToScope(user));
   }
 
   @Get(':id')

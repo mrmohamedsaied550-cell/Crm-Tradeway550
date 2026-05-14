@@ -26,9 +26,15 @@ import {
 } from '@/components/whatsapp/confirm-conversation-action-modal';
 import { ConversationSidePanel } from '@/components/whatsapp/conversation-side-panel';
 import { HandoverConversationModal } from '@/components/whatsapp/handover-conversation-modal';
+import { InboxTriageHeader } from '@/components/whatsapp/inbox-triage-header';
 import { LinkLeadModal } from '@/components/whatsapp/link-lead-modal';
 import { SendComposer } from '@/components/whatsapp/send-composer';
-import { ApiError, conversationsApi } from '@/lib/api';
+import {
+  ApiError,
+  conversationsApi,
+  type ConversationInboxSummary,
+  type ConversationQueue,
+} from '@/lib/api';
 import { getCachedMe, hasCapability } from '@/lib/auth';
 import type { ConversationStatus, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
 import { useRealtime } from '@/lib/realtime';
@@ -76,7 +82,6 @@ export default function WhatsAppInboxPage(): JSX.Element {
   const queryParamSelected = searchParams?.get('selected') ?? null;
 
   const me = getCachedMe();
-  const myUserId = me?.userId ?? null;
   const roleCode = me?.roleCode ?? null;
   const canSendText = hasCapability('whatsapp.message.send');
   const canSendMedia = hasCapability('whatsapp.media.send');
@@ -84,6 +89,14 @@ export default function WhatsAppInboxPage(): JSX.Element {
 
   const [filter, setFilter] = useState<InboxFilter>(() => readPreferredFilter(roleCode));
   const [statusFilter, setStatusFilter] = useState<ConversationStatus | ''>('open');
+  // Sprint 14 (D14) — triage queue filter, AND'd into the backend
+  // scope rule. `null` means "no queue" (parent filters still apply).
+  // The Mine / All toggle above stays as a personal-preference shortcut;
+  // selecting `queue='mine'` here also forces the local filter to
+  // 'mine' so the chip count and the count badge agree.
+  const [queue, setQueue] = useState<ConversationQueue | null>(null);
+  const [summary, setSummary] = useState<ConversationInboxSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
   const [rows, setRows] = useState<WhatsAppConversation[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,29 +144,48 @@ export default function WhatsAppInboxPage(): JSX.Element {
     setLoading(true);
     setError(null);
     try {
+      // Sprint 14 (D14) — when a backend queue is selected, use it
+      // directly; the server is the source of truth. The local
+      // "Mine" preference toggle still works as a shortcut: if the
+      // user has picked 'mine' but no chip queue, we fall back to
+      // a client-side narrow on assignedToId so the existing
+      // persisted preference keeps behaving the same.
+      const effectiveQueue = queue ?? (filter === 'mine' ? 'mine' : undefined);
       const page = await conversationsApi.list({
         ...(statusFilter && { status: statusFilter }),
+        ...(effectiveQueue && { queue: effectiveQueue }),
         limit: 100,
       });
-      // The "Mine" filter is a client-side narrow on top of the
-      // backend's scope-filtered list. The list endpoint doesn't
-      // accept `assignedToId` today; adding it would be a backend
-      // change beyond locked D1 scope.
-      const filtered =
-        filter === 'mine' && myUserId
-          ? page.items.filter((c) => c.assignedToId === myUserId)
-          : page.items;
-      setRows(filtered);
+      setRows(page.items);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [filter, myUserId, statusFilter]);
+  }, [filter, queue, statusFilter]);
+
+  // Sprint 14 (D14) — summary counts for the triage KPI strip. Reloads
+  // on every list reload so the cards stay consistent with the rows.
+  const reloadSummary = useCallback(async (): Promise<void> => {
+    setSummaryLoading(true);
+    try {
+      const next = await conversationsApi.summary();
+      setSummary(next);
+    } catch {
+      // Silent — the card strip falls back to "—" when summary is null.
+      setSummary(null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    void reloadSummary();
+  }, [reloadSummary, statusFilter, queue]);
 
   // Refetch the selected conversation detail (with included lead +
   // contact + assignedTo) and its messages when the selection
@@ -412,6 +444,16 @@ export default function WhatsAppInboxPage(): JSX.Element {
       />
 
       {error ? <Notice tone="error">{error}</Notice> : null}
+
+      {/* Sprint 14 (D14) — triage KPI cards + queue chip strip. Clicking
+          a card sets the backend `queue` filter; the same filter drives
+          the row list below so the count and the rows always agree. */}
+      <InboxTriageHeader
+        summary={summary}
+        selectedQueue={queue}
+        onQueueChange={setQueue}
+        loading={summaryLoading}
+      />
 
       {/* Layout — desktop three-pane / tablet two-pane + drawer / mobile single-pane stack
           D1.6 — bind the grid height to the viewport on md+ so the

@@ -11,12 +11,41 @@ import { z } from 'zod';
 const conversationStatus = z.enum(['open', 'closed']);
 export type ConversationStatus = z.infer<typeof conversationStatus>;
 
+/**
+ * Sprint 14 (D14) — triage queue filter for the WhatsApp inbox.
+ *
+ *   - unassigned    → open + no assignee yet
+ *   - mine          → assignedToId = current user (any status)
+ *   - waiting_reply → open + last message was INBOUND
+ *                     (lastInboundAt = lastMessageAt)
+ *   - needs_review  → has an unresolved WhatsAppConversationReview row
+ *   - linked        → leadId IS NOT NULL
+ *   - unlinked      → open + leadId IS NULL
+ *   - today         → lastMessageAt >= start-of-today (server UTC)
+ *
+ * The existing scope rules (own/team/company/country) still AND in,
+ * so a queue is always a strict refinement of what the caller could
+ * already see.
+ */
+export const ConversationQueueSchema = z.enum([
+  'unassigned',
+  'mine',
+  'waiting_reply',
+  'needs_review',
+  'linked',
+  'unlinked',
+  'today',
+]);
+export type ConversationQueue = z.infer<typeof ConversationQueueSchema>;
+
 export const ListConversationsQuerySchema = z
   .object({
     accountId: z.string().uuid().optional(),
     status: conversationStatus.optional(),
     /** Free-text match against the other party's phone number. */
     phone: z.string().trim().min(1).max(32).optional(),
+    /** D14 — triage queue filter; AND'd with the scope rule. */
+    queue: ConversationQueueSchema.optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),
   })
@@ -29,6 +58,18 @@ export const ListConversationMessagesQuerySchema = z
   })
   .strict();
 export type ListConversationMessagesQueryDto = z.infer<typeof ListConversationMessagesQuerySchema>;
+
+/**
+ * Sprint 14 (D14) — inbox summary query. The KPI cards are scoped to a
+ * single optional account so multi-account tenants can switch context
+ * without losing the right-hand numbers.
+ */
+export const ConversationSummaryQuerySchema = z
+  .object({
+    accountId: z.string().uuid().optional(),
+  })
+  .strict();
+export type ConversationSummaryQueryDto = z.infer<typeof ConversationSummaryQuerySchema>;
 
 export const SendConversationMessageSchema = z
   .object({

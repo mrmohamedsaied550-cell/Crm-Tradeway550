@@ -2117,6 +2117,22 @@
         "all": "All in scope",
         "statusLabel": "Status"
       },
+      "triage": {
+        "label": "Inbox triage",
+        "gapPill": "Backend gap"
+      },
+      "queue": {
+        "all": "Open",
+        "unassigned": "Unassigned",
+        "mine": "My conversations",
+        "waitingReply": "Waiting reply",
+        "needsReview": "Needs review",
+        "linked": "Linked to lead",
+        "unlinked": "Not linked",
+        "today": "Today",
+        "failed": "Failed",
+        "failedGap": "Conversation-level failed state is not projected yet. Message-level status='failed' exists; surface as a queue once aggregated."
+      },
       "status": {
         "open": "Open",
         "closed": "Closed"
@@ -2199,6 +2215,11 @@
       },
       "sidePanel": {
         "title": "Conversation details",
+        "reviewCta": {
+          "title": "Conversation needs review",
+          "body": "This thread is in the WhatsApp review queue. Resolve it to choose how it connects to a lead or captain.",
+          "action": "Open in Reviews →"
+        },
         "contact": {
           "title": "Contact",
           "language": "Language: {language}",

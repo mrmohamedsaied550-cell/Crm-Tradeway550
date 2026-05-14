@@ -905,6 +905,12 @@ export interface WhatsAppConversation {
   contact?: ConversationContactSummary | null;
   /** Lead embedded by `findConversationById`; minimal subset for the side panel. */
   lead?: ConversationLeadSummary | null;
+  /**
+   * Sprint 14 (D14) — minimal review join for the inbox triage row.
+   * `resolvedAt === null` ⇒ the conversation is in the active
+   * review queue; the inbox row surfaces a small "Needs review" pill.
+   */
+  review?: { id: string; resolvedAt: string | null } | null;
   createdAt: string;
   updatedAt: string;
   /**
