@@ -1182,17 +1182,43 @@ export const captainTripsApi = {
 // WhatsApp — conversations + messages (C22 / C23)
 // ───────────────────────────────────────────────────────────────────────
 
+/** Sprint 14 (D14) — triage queue filter. AND'd into the existing scope rule. */
+export type ConversationQueue =
+  | 'unassigned'
+  | 'mine'
+  | 'waiting_reply'
+  | 'needs_review'
+  | 'linked'
+  | 'unlinked'
+  | 'today';
+
+/** Sprint 14 (D14) — scope-aware counts behind the inbox KPI cards. */
+export interface ConversationInboxSummary {
+  open: number;
+  unassigned: number;
+  mine: number;
+  waitingReply: number;
+  needsReview: number;
+  linked: number;
+  unlinked: number;
+  today: number;
+}
+
 export const conversationsApi = {
   list: (
     query: {
       accountId?: string;
       status?: ConversationStatus;
       phone?: string;
+      queue?: ConversationQueue;
       limit?: number;
       offset?: number;
     } = {},
   ): Promise<PaginatedResult<WhatsAppConversation>> =>
     apiFetch<PaginatedResult<WhatsAppConversation>>('/conversations', { query }),
+  /** Sprint 14 (D14) — KPI counts for the inbox triage header. */
+  summary: (query: { accountId?: string } = {}): Promise<ConversationInboxSummary> =>
+    apiFetch<ConversationInboxSummary>('/conversations/summary', { query }),
   linkLead: (id: string, leadId: string): Promise<{ id: string; leadId: string | null }> =>
     apiFetch<{ id: string; leadId: string | null }>(`/conversations/${id}/link-lead`, {
       method: 'POST',
