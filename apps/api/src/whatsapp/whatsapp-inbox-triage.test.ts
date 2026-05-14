@@ -440,4 +440,106 @@ describe('whatsapp — inbox triage queues + summary (Sprint 14 / D14)', () => {
     assert.ok(!aList.items.some((c) => c.phone === '+966500009999'));
     assert.equal(aSummary.open, aList.items.filter((c) => c.status === 'open').length);
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Sprint 18 (D18) — search coverage
+  // ─────────────────────────────────────────────────────────────────
+
+  it('search matches conversations by phone substring', async () => {
+    const planted = await withTenantRaw(tenantAId, (tx) =>
+      tx.whatsAppConversation.create({
+        data: {
+          tenantId: tenantAId,
+          accountId: accountAId,
+          phone: '+201001000700',
+          status: 'open',
+        },
+      }),
+    );
+    const res = await svc.listConversations(tenantAId, { search: '1001000700', limit: 200 });
+    assert.ok(res.items.some((c) => c.id === planted.id));
+    // A different phone fragment must not match.
+    const other = await svc.listConversations(tenantAId, { search: '99999999999', limit: 200 });
+    assert.ok(!other.items.some((c) => c.id === planted.id));
+  });
+
+  it('search matches conversations by contact displayName (case-insensitive)', async () => {
+    const contact = await withTenantRaw(tenantAId, (tx) =>
+      tx.contact.create({
+        data: {
+          tenantId: tenantAId,
+          phone: '+201001000800',
+          originalPhone: '+201001000800',
+          displayName: 'Ahmed Al-Sayed',
+        },
+      }),
+    );
+    const conv = await withTenantRaw(tenantAId, (tx) =>
+      tx.whatsAppConversation.create({
+        data: {
+          tenantId: tenantAId,
+          accountId: accountAId,
+          phone: '+201001000800',
+          status: 'open',
+          contactId: contact.id,
+        },
+      }),
+    );
+    const res = await svc.listConversations(tenantAId, { search: 'ahmed', limit: 200 });
+    assert.ok(res.items.some((c) => c.id === conv.id));
+    const cap = await svc.listConversations(tenantAId, { search: 'AHMED', limit: 200 });
+    assert.ok(
+      cap.items.some((c) => c.id === conv.id),
+      'case-insensitive',
+    );
+  });
+
+  it('search matches conversations by linked lead name', async () => {
+    // Use the same fixture's tenant-A stage from the queue=linked test.
+    const stage = await withTenantRaw(tenantAId, (tx) =>
+      tx.pipelineStage.findFirst({ where: { tenantId: tenantAId } }),
+    );
+    if (!stage) return;
+    const lead = await withTenantRaw(tenantAId, (tx) =>
+      tx.lead.create({
+        data: {
+          tenantId: tenantAId,
+          stageId: stage.id,
+          name: 'D18 Searchable Captain',
+          phone: '+201001000900',
+        },
+      }),
+    );
+    const conv = await withTenantRaw(tenantAId, (tx) =>
+      tx.whatsAppConversation.create({
+        data: {
+          tenantId: tenantAId,
+          accountId: accountAId,
+          phone: '+201001000900',
+          status: 'open',
+          leadId: lead.id,
+        },
+      }),
+    );
+    const res = await svc.listConversations(tenantAId, { search: 'searchable', limit: 200 });
+    assert.ok(
+      res.items.some((c) => c.id === conv.id),
+      'lead name match via relation join',
+    );
+  });
+
+  it('search respects tenant isolation (tenant B match is invisible to tenant A)', async () => {
+    await withTenantRaw(tenantBId, (tx) =>
+      tx.whatsAppConversation.create({
+        data: {
+          tenantId: tenantBId,
+          accountId: accountBId,
+          phone: '+966500001234',
+          status: 'open',
+        },
+      }),
+    );
+    const aRes = await svc.listConversations(tenantAId, { search: '0001234', limit: 200 });
+    assert.ok(!aRes.items.some((c) => c.phone === '+966500001234'));
+  });
 });

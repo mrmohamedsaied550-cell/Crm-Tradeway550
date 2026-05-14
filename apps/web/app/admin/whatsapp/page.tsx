@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Filter, MessagesSquare, RefreshCw, X } from 'lucide-react';
+import { Filter, MessagesSquare, RefreshCw, Search, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Select } from '@/components/ui/input';
+import { Field, Input, Select } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
@@ -32,11 +32,17 @@ import { SendComposer } from '@/components/whatsapp/send-composer';
 import {
   ApiError,
   conversationsApi,
+  whatsappAccountsApi,
   type ConversationInboxSummary,
   type ConversationQueue,
 } from '@/lib/api';
 import { getCachedMe, hasCapability } from '@/lib/auth';
-import type { ConversationStatus, WhatsAppConversation, WhatsAppMessage } from '@/lib/api-types';
+import type {
+  ConversationStatus,
+  WhatsAppAccount as WhatsAppAccountRow,
+  WhatsAppConversation,
+  WhatsAppMessage,
+} from '@/lib/api-types';
 import { useRealtime } from '@/lib/realtime';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
@@ -95,6 +101,17 @@ export default function WhatsAppInboxPage(): JSX.Element {
   // selecting `queue='mine'` here also forces the local filter to
   // 'mine' so the chip count and the count badge agree.
   const [queue, setQueue] = useState<ConversationQueue | null>(null);
+  // Sprint 18 (D18) — operator-driven inbox refinement:
+  //   * `accountFilter` narrows the list (and the summary counts) to
+  //     a single WhatsApp Business account. Empty string = all
+  //     accounts the operator can already see.
+  //   * `searchInput` is the raw text the operator types; `search`
+  //     is the debounced value that actually hits the backend so we
+  //     don't fire a fetch on every keystroke.
+  const [accountFilter, setAccountFilter] = useState<string>('');
+  const [accounts, setAccounts] = useState<readonly WhatsAppAccountRow[]>([]);
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [search, setSearch] = useState<string>('');
   const [summary, setSummary] = useState<ConversationInboxSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
   const [rows, setRows] = useState<WhatsAppConversation[]>([]);
@@ -151,9 +168,15 @@ export default function WhatsAppInboxPage(): JSX.Element {
       // a client-side narrow on assignedToId so the existing
       // persisted preference keeps behaving the same.
       const effectiveQueue = queue ?? (filter === 'mine' ? 'mine' : undefined);
+      // Sprint 18 (D18) — `accountFilter` and `search` ride in with
+      // the queue / status filters. Both default-empty values stay
+      // off the wire so the request shape doesn't change for
+      // tenants that don't use them.
       const page = await conversationsApi.list({
         ...(statusFilter && { status: statusFilter }),
         ...(effectiveQueue && { queue: effectiveQueue }),
+        ...(accountFilter && { accountId: accountFilter }),
+        ...(search && { search }),
         limit: 100,
       });
       setRows(page.items);
@@ -162,14 +185,18 @@ export default function WhatsAppInboxPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [filter, queue, statusFilter]);
+  }, [filter, queue, statusFilter, accountFilter, search]);
 
   // Sprint 14 (D14) — summary counts for the triage KPI strip. Reloads
   // on every list reload so the cards stay consistent with the rows.
+  // Sprint 18 (D18) — when the operator narrows to a single account,
+  // pass it through so the KPI cards reflect the visible slice.
   const reloadSummary = useCallback(async (): Promise<void> => {
     setSummaryLoading(true);
     try {
-      const next = await conversationsApi.summary();
+      const next = await conversationsApi.summary(
+        accountFilter ? { accountId: accountFilter } : {},
+      );
       setSummary(next);
     } catch {
       // Silent — the card strip falls back to "—" when summary is null.
@@ -177,7 +204,34 @@ export default function WhatsAppInboxPage(): JSX.Element {
     } finally {
       setSummaryLoading(false);
     }
+  }, [accountFilter]);
+
+  // Sprint 18 (D18) — load the WhatsApp accounts list once on mount
+  // so the account dropdown can render. Silent on failure (e.g. the
+  // operator lacks whatsapp.account.read); the dropdown stays hidden
+  // when fewer than two accounts are visible.
+  useEffect(() => {
+    let cancelled = false;
+    whatsappAccountsApi
+      .list()
+      .then((items) => {
+        if (!cancelled) setAccounts(items);
+      })
+      .catch(() => {
+        /* swallow — dropdown stays hidden */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Sprint 18 (D18) — debounce the search input so typing doesn't
+  // spam the backend. 250 ms is short enough to feel live but long
+  // enough to coalesce a typical word.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), 250);
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
   useEffect(() => {
     void reload();
@@ -402,6 +456,57 @@ export default function WhatsAppInboxPage(): JSX.Element {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {/* Sprint 18 (D18) — operator search across phone +
+                contact name + linked lead name. The input is
+                debounced inside the page (250ms) so typing doesn't
+                hammer the backend; the clear button (X) wipes the
+                input and the debounced value in one click. */}
+            <div className="relative w-56">
+              <Search
+                className="pointer-events-none absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-tertiary"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder={t('search.placeholder')}
+                aria-label={t('search.ariaLabel')}
+                className="ps-7 pe-7"
+              />
+              {searchInput ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchInput('')}
+                  aria-label={t('search.clearAriaLabel')}
+                  className="absolute end-1 top-1/2 -translate-y-1/2 rounded p-1 text-ink-tertiary hover:bg-surface-muted hover:text-ink-secondary"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            {/* Sprint 18 (D18) — account filter. Only renders when
+                the operator can see at least two WhatsApp accounts;
+                the typical single-account tenant doesn't need the
+                extra chrome. */}
+            {accounts.length >= 2 ? (
+              <div className="w-44">
+                <Field label={t('filter.accountLabel')}>
+                  <Select
+                    value={accountFilter}
+                    onChange={(e) => setAccountFilter(e.target.value)}
+                    aria-label={t('filter.accountAriaLabel')}
+                  >
+                    <option value="">{t('filter.accountAll')}</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.displayName}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            ) : null}
             <div className="w-32">
               <Field label={t('filter.statusLabel')}>
                 <Select

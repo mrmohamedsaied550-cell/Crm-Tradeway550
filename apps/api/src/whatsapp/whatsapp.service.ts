@@ -895,6 +895,12 @@ export class WhatsAppService {
       accountId?: string;
       status?: 'open' | 'closed';
       phone?: string;
+      /**
+       * Sprint 18 (D18) — case-insensitive substring search across
+       * phone + contact displayName + linked-lead name. Independent
+       * of `phone`; both can be set at once for an intersection.
+       */
+      search?: string;
       queue?:
         | 'unassigned'
         | 'mine'
@@ -927,9 +933,28 @@ export class WhatsAppService {
         ...(opts.status && { status: opts.status }),
         ...(opts.phone && { phone: { contains: opts.phone } }),
       };
+      // Sprint 18 (D18) — broader operator search. When `search` is
+      // set we OR across the conversation's phone column, the joined
+      // contact's `displayName`, and the joined lead's `name`. All
+      // matches are case-insensitive substring. The join filter goes
+      // through Prisma's relation predicates so RLS still applies.
+      const searchWhere: Prisma.WhatsAppConversationWhereInput | null = opts.search
+        ? {
+            OR: [
+              { phone: { contains: opts.search, mode: 'insensitive' } },
+              { contact: { is: { displayName: { contains: opts.search, mode: 'insensitive' } } } },
+              { lead: { is: { name: { contains: opts.search, mode: 'insensitive' } } } },
+            ],
+          }
+        : null;
       const queueWhere = opts.queue ? buildQueueWhere(opts.queue, userClaims?.userId) : null;
       const where: Prisma.WhatsAppConversationWhereInput = {
-        AND: [baseWhere, ...(scopeWhere ? [scopeWhere] : []), ...(queueWhere ? [queueWhere] : [])],
+        AND: [
+          baseWhere,
+          ...(scopeWhere ? [scopeWhere] : []),
+          ...(queueWhere ? [queueWhere] : []),
+          ...(searchWhere ? [searchWhere] : []),
+        ],
       };
       const [rawItems, total] = await Promise.all([
         tx.whatsAppConversation.findMany({
