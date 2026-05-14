@@ -44,6 +44,16 @@ export const ListConversationsQuerySchema = z
     status: conversationStatus.optional(),
     /** Free-text match against the other party's phone number. */
     phone: z.string().trim().min(1).max(32).optional(),
+    /**
+     * Sprint 18 (D18) — broader free-text triage search. Matches a
+     * case-insensitive substring against the conversation's phone,
+     * the linked contact's `displayName`, and the linked lead's
+     * `name`. Independent of `phone`; operators can use both at
+     * once (intersection). The full-text index lives outside this
+     * sprint — the substring scan is fine for inbox-sized result
+     * sets (<= a few thousand rows) under the scope filter.
+     */
+    search: z.string().trim().min(1).max(120).optional(),
     /** D14 — triage queue filter; AND'd with the scope rule. */
     queue: ConversationQueueSchema.optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
