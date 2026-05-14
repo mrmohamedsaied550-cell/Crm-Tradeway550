@@ -100,6 +100,8 @@ model Tenant {
   roleVersions                RoleVersion[]
   /// Sprint 10 (D10) — per-user live presence rows.
   userPresences               UserPresence[]
+  /// Sprint 12 (D12) — per-lead document rows.
+  leadDocuments               LeadDocument[]
 
   @@map("tenants")
 }
@@ -487,6 +489,9 @@ model User {
   /// P2-09 — captain-document review trail.
   reviewedDocuments           CaptainDocument[]      @relation("CaptainDocumentReviewer")
   uploadedDocuments           CaptainDocument[]      @relation("CaptainDocumentUploader")
+  /// Sprint 12 (D12) — lead-document trail (parallel to captain).
+  reviewedLeadDocuments       LeadDocument[]         @relation("LeadDocumentReviewer")
+  uploadedLeadDocuments       LeadDocument[]         @relation("LeadDocumentUploader")
   /// Phase 1A — distribution engine back-relations.
   agentCapacity               AgentCapacity?
   routedLeads                 LeadRoutingLog[]       @relation("LeadRoutingLogChosen")
@@ -925,6 +930,10 @@ model Lead {
   activities            LeadActivity[]
   whatsappConversations WhatsAppConversation[] @relation("ConversationLead")
   followUps             LeadFollowUp[]
+  /// Sprint 12 (D12) — per-lead document records (signup paperwork).
+  /// Tracked metadata-only today; storage backend lands in a
+  /// follow-up sprint. Status drives the Lead Detail panel chips.
+  documents             LeadDocument[]
   /// Phase 1A — append-only routing decisions for this lead.
   routingLogs           LeadRoutingLog[]
   /// Phase D2 — D2.1: every duplicate-decision audit row that
@@ -1411,6 +1420,82 @@ model CaptainDocument {
   @@index([tenantId, captainId, status])
   @@index([tenantId, status, expiresAt])
   @@map("captain_documents")
+}
+
+/// Sprint 12 (D12) — Lead-level document tracking.
+///
+/// Parallel to CaptainDocument but attached to a Lead row so the
+/// signup-stage workflow can track required paperwork (National
+/// ID, driving licence, vehicle licence, profile photo, partner-
+/// required) before the lead converts to a captain.
+///
+/// Sprint 12 ships metadata-only — `fileUrl` / `storageRef` is
+/// nullable because the binary storage backend (S3 / local
+/// bucket) is a separate sprint. Operators can still mark a
+/// document "uploaded" with a file-name reference, "accepted",
+/// "rejected" with a reason, or "needs_resubmission". The
+/// status chain drives the Documents panel chips + a future
+/// lifecycle rule (`requireAllAccepted`) that gates convert-to-
+/// captain.
+///
+/// Status values (allow-listed at the DB layer):
+///   * `missing`              — placeholder; no metadata captured yet.
+///   * `uploaded`             — operator captured the metadata; pending review.
+///   * `accepted`             — reviewer accepted; sets reviewedBy/At.
+///   * `rejected`             — reviewer rejected; requires `rejectionReason`.
+///   * `needs_resubmission`   — reviewer asked for a re-upload;
+///                              requires `rejectionReason`.
+///
+/// Tenant isolation via `tenant_id`; Lead cascade deletes the
+/// rows. Reviewer / uploader are SetNull-ed when a user is hard-
+/// deleted so audit history doesn't dangle.
+model LeadDocument {
+  id        String @id @default(uuid()) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId    String @map("lead_id") @db.Uuid
+  lead      Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  /// Stable type code (national_id, driving_license, …). Free-text
+  /// at the schema layer; the UI normalises against a small registry
+  /// + falls back to "other" for tenant-specific kinds.
+  type  String
+  /// Optional human-friendly label. When null the UI looks up the
+  /// type code in i18n.
+  label String?
+
+  status String @default("missing")
+
+  /// Metadata-only file fields — nullable until a storage backend
+  /// ships. The operator can still type a file name to record that
+  /// a document was received via WhatsApp / email / in-person.
+  fileName  String? @map("file_name")
+  fileUrl   String? @map("file_url")
+  mimeType  String? @map("mime_type")
+  sizeBytes Int?    @map("size_bytes")
+
+  uploadedById String? @map("uploaded_by_id") @db.Uuid
+  uploadedBy   User?   @relation("LeadDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  reviewedById String?   @map("reviewed_by_id") @db.Uuid
+  reviewedBy   User?     @relation("LeadDocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz(6)
+
+  /// Required when status is `rejected` or `needs_resubmission`.
+  /// The service enforces this at the write boundary; the DB
+  /// CHECK constraint enforces the same to keep state consistent
+  /// even if a future write path forgets.
+  rejectionReason String? @map("rejection_reason")
+  note            String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, leadId, status])
+  @@index([tenantId, status])
+  @@index([tenantId, type])
+  @@map("lead_documents")
 }
 
 /// CaptainTrip (P2-09) — append-only ledger of a captain's trips.

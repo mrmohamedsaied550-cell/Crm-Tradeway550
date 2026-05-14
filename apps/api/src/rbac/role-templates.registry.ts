@@ -94,6 +94,11 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   'whatsapp.conversation.close',
   'whatsapp.contact.write',
   'captain.document.write',
+  // Sprint 12 (D12) — sales agents can record + replace lead
+  // document metadata as part of the signup workflow. They cannot
+  // accept/reject; that's reviewer territory (TL/Ops).
+  'lead.document.read',
+  'lead.document.write',
 ];
 
 // TL bundle WITHOUT partner.merge.write — that verb is high-risk
@@ -118,6 +123,12 @@ const TEAM_LEAD_SAFE_EXTRAS: readonly CapabilityCode[] = [
   'partner.verification.read',
   'partner.evidence.write',
   'partner.reconciliation.read',
+  // Sprint 12 (D12) — TLs are the document reviewers for signup-
+  // stage paperwork (national ID / driving licence / vehicle
+  // licence / profile photo). Agents own the write side; TLs
+  // own the accept/reject decision.
+  'lead.document.accept',
+  'lead.document.reject',
 ];
 
 // Field-permission denies that mirror migration 0040 (D5.7) +
@@ -409,7 +420,15 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'وصول للقراءة فقط على نطاق الـ CRM مع رؤية سجل التدقيق ومراجعة وثائق الكباتن. لا يحمل صلاحيات تصدير أو واجهات إدارية.',
     category: 'qa',
     suggestedLevel: 50,
-    capabilities: [...READ_ORG, ...READ_CRM, 'audit.read', 'captain.document.review', 'roles.read'],
+    capabilities: [
+      ...READ_ORG,
+      ...READ_CRM,
+      'audit.read',
+      'captain.document.review',
+      // Sprint 12 (D12) — QA reviews lead-side documents too.
+      'lead.document.read',
+      'roles.read',
+    ],
     scopes: [
       { resource: 'lead', scope: 'global' },
       { resource: 'captain', scope: 'global' },
@@ -543,6 +562,12 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'distribution.write',
       'captain.document.write',
       'captain.document.review',
+      // Sprint 12 (D12) — operational/account roles also review
+      // lead-side signup documents.
+      'lead.document.read',
+      'lead.document.write',
+      'lead.document.accept',
+      'lead.document.reject',
       'captain.trip.write',
       'partner.source.read',
       'partner.sync.run',
@@ -625,6 +650,12 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'distribution.write',
       'captain.document.write',
       'captain.document.review',
+      // Sprint 12 (D12) — operational/account roles also review
+      // lead-side signup documents.
+      'lead.document.read',
+      'lead.document.write',
+      'lead.document.accept',
+      'lead.document.reject',
       'captain.trip.write',
       'partner.source.read',
       'partner.source.write',

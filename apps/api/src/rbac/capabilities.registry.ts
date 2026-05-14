@@ -111,6 +111,17 @@ export const CAPABILITY_DEFINITIONS = [
   { code: 'captain.document.review', description: 'Approve / reject captain documents' },
   { code: 'captain.trip.write', description: 'Ingest captain trip telemetry' },
 
+  // CRM — lead documents (Sprint 12 / D12). Lead-side parallel to
+  // the captain.document.* surface. Sprint 12 ships metadata-only;
+  // the storage backend lands in a follow-up sprint.
+  { code: 'lead.document.read', description: 'View lead document records' },
+  { code: 'lead.document.write', description: 'Create / update lead document metadata' },
+  { code: 'lead.document.accept', description: 'Accept a lead document (reviewer action)' },
+  {
+    code: 'lead.document.reject',
+    description: 'Reject a lead document or mark it as needs_resubmission (reviewer action)',
+  },
+
   // Follow-ups (P2-01)
   { code: 'followup.read', description: 'View follow-ups (all + mine)' },
   { code: 'followup.write', description: 'Create / delete follow-ups' },
