@@ -100,6 +100,39 @@ const DefaultDueTimeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
  *                                   "partner_verified"]) the Sprint 2/3
  *                                  engines validate before applying.
  */
+/**
+ * Sprint 3 (D7.1) — approver kinds.
+ *   - current_team_leader → TL of the requester's team.
+ *   - target_team_leader  → TL of the lead's target team.
+ *   - admin               → super_admin / ops_manager.
+ *   - role:<code>         → specific role code (e.g.
+ *                            "role:registration_tl"). Colon prefix
+ *                            lets us extend without inflating the
+ *                            enum.
+ */
+const ApproverKindBaseEnum = z.enum(['current_team_leader', 'target_team_leader', 'admin']);
+const ApproverKindRolePrefix = /^role:[a-z][a-z0-9_]*$/;
+const ApproverKindSchema = z.union([
+  ApproverKindBaseEnum,
+  z.string().regex(ApproverKindRolePrefix),
+]);
+
+/**
+ * Sprint 3 (D7.1) — handoff rules applied AFTER approval.
+ *   - target_team_queue   → lead lands in target team's queue
+ *                            with no specific owner (TL distributes).
+ *   - target_team_leader  → lead transferred to target team's TL.
+ *   - auto_rotation       → invoke existing distribution rules.
+ *   - specific_owner      → lead transferred to explicit user
+ *                            named by `handoffOwnerUserId`.
+ */
+const HandoffRuleSchema = z.enum([
+  'target_team_queue',
+  'target_team_leader',
+  'auto_rotation',
+  'specific_owner',
+]);
+
 export const SmartStatusRuleSchema = z
   .object({
     requiresFollowUp: z.boolean().optional(),
@@ -128,12 +161,32 @@ export const SmartStatusRuleSchema = z
     nextStatusCode: z.string().trim().min(1).max(64).optional(),
     convertToCaptain: z.boolean().optional(),
     requiresApproval: z.boolean().optional(),
+    /**
+     * Sprint 3 (D7.1) — WHO can approve a request created by this
+     * rule. Only consulted when `requiresApproval` is true. The
+     * service snapshots the resolved value onto the
+     * LeadTransitionRequest row so a later admin edit doesn't
+     * shift an in-flight request.
+     */
+    approver: ApproverKindSchema.optional(),
+    /**
+     * Sprint 3 (D7.1) — handoff rule applied AFTER approval. NULL
+     * = no handoff (lead keeps its current owner).
+     */
+    handoffRule: HandoffRuleSchema.optional(),
+    /**
+     * Sprint 3 (D7.1) — concrete user id for the `specific_owner`
+     * handoff variant. Ignored for the other variants.
+     */
+    handoffOwnerUserId: z.string().uuid().optional(),
     /** Free-form check identifiers the Sprint 2/3 engines resolve.
      *  Capped at 16 to prevent accidental admin blow-ups. */
     requiredChecks: z.array(z.string().trim().min(1).max(64)).max(16).optional(),
   })
   .strict();
 export type SmartStatusRule = z.infer<typeof SmartStatusRuleSchema>;
+export type ApproverKind = z.infer<typeof ApproverKindSchema>;
+export type HandoffRule = z.infer<typeof HandoffRuleSchema>;
 
 export const AllowedStatusEntrySchema = SmartStatusRuleSchema.extend({
   /** Stable code; lower-snake-case is conventional. */

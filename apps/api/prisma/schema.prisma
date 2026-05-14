@@ -86,6 +86,8 @@ model Tenant {
   leadRotationLogs            LeadRotationLog[]
   /// Phase D3 — D3.6: TL Review Queue rows.
   leadReviews                 LeadReview[]
+  /// Sprint 3 (D7.1) — stage-transition approval requests.
+  leadTransitionRequests      LeadTransitionRequest[]
   /// Phase D4 — D4.1: Partner Data Hub back-relations.
   partnerSources              PartnerSource[]
   partnerFieldMappings        PartnerFieldMapping[]
@@ -433,6 +435,13 @@ model User {
   /// Phase D3 — D3.6: TL Review Queue back-relations.
   assignedLeadReviews         LeadReview[]           @relation("LeadReviewAssignedTl")
   resolvedLeadReviews         LeadReview[]           @relation("LeadReviewResolver")
+  /// Sprint 3 (D7.1) — back-relations for the transition-request
+  /// workflow. `requested` are rows this user raised; `decided` are
+  /// rows this user approved or rejected; `handoffTargets` are rows
+  /// whose post-approval handoff named this user as the new owner.
+  requestedTransitions        LeadTransitionRequest[] @relation("LtrRequester")
+  decidedTransitions          LeadTransitionRequest[] @relation("LtrDecider")
+  handoffTargetTransitions    LeadTransitionRequest[] @relation("LtrHandoffTargetUser")
   /// Phase D4 — D4.1: Partner Data Hub back-relations. Empty until
   /// later D4.x chunks wire the sync engine, evidence flow, etc.
   triggeredPartnerSnapshots   PartnerSnapshot[]      @relation("PartnerSnapshotTrigger")
@@ -603,6 +612,10 @@ model PipelineStage {
   /// Phase D3 — D3.3: every status row recorded against this stage.
   /// Empty until D3.3 wires the agent picker.
   stageStatuses LeadStageStatus[]
+  /// Sprint 3 — back-relations from transition requests that
+  /// reference this stage as the FROM or TO side.
+  transitionRequestsFrom LeadTransitionRequest[] @relation("LtrFromStage")
+  transitionRequestsTo   LeadTransitionRequest[] @relation("LtrToStage")
 
   @@unique([pipelineId, code])
   @@unique([pipelineId, order])
@@ -714,6 +727,14 @@ model Lead {
   /// Most leads have zero. SLA breach repeats / rotation failures /
   /// manual TL flags create rows here for ops/TL action.
   reviews              LeadReview[]
+
+  /// Sprint 3 (D7.1) — stage-transition approval requests raised
+  /// for this lead. The Add Action → Lifecycle drawer creates one
+  /// of these instead of calling moveStage directly whenever the
+  /// selected status' Smart Status Rule has `requiresApproval`.
+  /// Most leads have zero; the open request (if any) is enforced
+  /// unique by the partial `ltr_one_pending_per_lead` index.
+  transitionRequests   LeadTransitionRequest[]
 
   /// Discipline tracking (C37).
   /// `lastActivityAt` is the timestamp of the most recent activity row
@@ -1085,6 +1106,111 @@ model LeadReview {
   @@map("lead_reviews")
 }
 
+/// Sprint 3 (D7.1) — stage-transition approval requests.
+///
+/// One row per "agent asked to move a lead, but the picked status'
+/// Smart Status Rule says approval is required". The Add Action →
+/// Lifecycle drawer creates one of these instead of calling
+/// `LeadsService.moveStage` directly. Approver decisions
+/// (approve / reject) drive the actual state change; the lead
+/// stays put while the request is pending.
+///
+/// State machine:
+///   pending → approved | rejected | cancelled
+///
+/// `approverKind` / `approverRoleCode` / `handoffRule` / handoff
+/// targets are SNAPSHOTTED from the smart rule at request time, so
+/// a later admin edit to `allowed_statuses` doesn't retroactively
+/// change who approves an in-flight row.
+///
+/// Capability surface (seeded by the matching migration):
+///   - lead.transition.request — submit a request
+///   - lead.transition.approve — approve / reject
+///
+/// Capability + RLS gate every read & write at the service layer;
+/// the table itself runs `FORCE ROW LEVEL SECURITY` so direct
+/// inserts via raw psql can't cross tenants.
+model LeadTransitionRequest {
+  id        String @id @default(uuid()) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId    String @map("lead_id") @db.Uuid
+  lead      Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  fromStageId String        @map("from_stage_id") @db.Uuid
+  fromStage   PipelineStage @relation("LtrFromStage", fields: [fromStageId], references: [id], onDelete: Restrict)
+  toStageId   String        @map("to_stage_id") @db.Uuid
+  toStage     PipelineStage @relation("LtrToStage", fields: [toStageId], references: [id], onDelete: Restrict)
+
+  /// Stable status code from the target stage's `allowed_statuses`
+  /// catalogue. NULL = move-only request (no status change after
+  /// the move).
+  requestedStatusCode String? @map("requested_status_code")
+  /// Verbatim snapshot of the picked allowedStatus entry —
+  /// including its full Smart Status Rule — so the approver sees
+  /// the same rule the requester saw.
+  ruleSnapshot        Json?   @map("rule_snapshot")
+
+  /// Communication method picked in the drawer; logged for the
+  /// timeline.
+  communicationMethod String? @map("communication_method")
+  /// Free-text notes the requester supplied.
+  notes               String?
+
+  /// Reason capture (Sprint 3.D). Either `reasonCode` (when a
+  /// catalogue covers the rule's reasonGroup — typically a
+  /// LostReason.id), or `reasonText` (free-string fallback), or
+  /// both. NULL when the rule didn't ask for a reason.
+  reasonCode          String? @map("reason_code")
+  reasonText          String? @map("reason_text")
+
+  requestedById String @map("requested_by_id") @db.Uuid
+  requestedBy   User   @relation("LtrRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  /// Approver snapshot. Values:
+  ///   'current_team_leader' — TL of the requester's team.
+  ///   'target_team_leader'  — TL of the target stage's owning
+  ///                           team (resolved via handoffRule).
+  ///   'admin'               — anyone with `lead.transition.approve`
+  ///                           who is super_admin / ops_manager.
+  ///   'role:<code>'         — specific role code (e.g. role:registration_tl).
+  approverKind     String  @map("approver_kind")
+  approverRoleCode String? @map("approver_role_code")
+
+  /// Snapshot of the handoff rule + resolved targets at request
+  /// time. NULL when the request is "approval only, no handoff".
+  handoffRule           String? @map("handoff_rule")
+  handoffTargetUserId   String? @map("handoff_target_user_id") @db.Uuid
+  handoffTargetUser     User?   @relation("LtrHandoffTargetUser", fields: [handoffTargetUserId], references: [id], onDelete: SetNull)
+  handoffTargetTeamId   String? @map("handoff_target_team_id") @db.Uuid
+  handoffTargetTeam     Team?   @relation("LtrHandoffTargetTeam", fields: [handoffTargetTeamId], references: [id], onDelete: SetNull)
+
+  state          String    @default("pending")
+  decidedAt      DateTime? @map("decided_at") @db.Timestamptz(6)
+  decidedById    String?   @map("decided_by_id") @db.Uuid
+  decidedBy      User?     @relation("LtrDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  /// Approver's rationale. REQUIRED on rejection (service-side);
+  /// optional on approval.
+  decisionReason String?   @map("decision_reason")
+
+  /// Sprint 3.E — corrective LeadFollowUp created when the request
+  /// is rejected. The original owner sees this as their next
+  /// action; addressing it unblocks a new request.
+  correctiveFollowupId String?       @map("corrective_followup_id") @db.Uuid
+  correctiveFollowup   LeadFollowUp? @relation("LtrCorrectiveFollowup", fields: [correctiveFollowupId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// At most one PENDING request per (tenant, lead). Enforced by
+  /// the partial unique index `ltr_one_pending_per_lead`.
+  /// Approving / rejecting / cancelling moves a row out of
+  /// `pending`, after which a new one becomes acceptable.
+  @@index([tenantId, leadId, createdAt(sort: Desc)], map: "ltr_lead_history")
+  @@index([tenantId, state, approverKind, handoffTargetTeamId], map: "ltr_approver_queue")
+  @@map("lead_transition_requests")
+}
+
 /// Captain — a Lead converted to an active driver.
 /// One-to-one with Lead via the unique `leadId`. Onboarding flags track
 /// which documents have landed; an MVP scope (the full document
@@ -1374,6 +1500,9 @@ model Team {
   /// Phase C — C10B-1: WhatsApp conversations currently owned by an
   /// agent in this team (denormalised for scope resolution).
   whatsappConversations WhatsAppConversation[]
+  /// Sprint 3 (D7.1) — transition requests whose handoff rule
+  /// named this team as the target queue.
+  handoffTargetTransitions LeadTransitionRequest[]  @relation("LtrHandoffTargetTeam")
 
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
@@ -2057,6 +2186,10 @@ model LeadFollowUp {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Sprint 3 — back-relation for transition-request rejections
+  /// that named THIS follow-up as the corrective next action.
+  asCorrectiveFollowupFor LeadTransitionRequest[] @relation("LtrCorrectiveFollowup")
 
   @@index([tenantId, leadId, dueAt])
   // Hot path: "my open follow-ups, soonest first" + the overdue scan.

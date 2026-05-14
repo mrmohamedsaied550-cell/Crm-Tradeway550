@@ -408,6 +408,45 @@
             "dft": "أول رحلة"
           }
         },
+        "pendingTransition": {
+          "heading": "نقل المرحلة",
+          "state": {
+            "pending": "في انتظار الاعتماد",
+            "rejected": "رفض النقل"
+          },
+          "requestedBy": "بطلب من",
+          "submitted": "تاريخ الإرسال",
+          "approver": "المعتمِد",
+          "handoff": "التحويل",
+          "notes": "ملاحظات",
+          "rejectionReason": "سبب الرفض",
+          "rejectedBy": "رفض بواسطة",
+          "approve": "اعتماد",
+          "reject": "رفض",
+          "readOnlyHint": "ليس لديك صلاحية اعتماد أو رفض هذا الطلب.",
+          "approverKind": {
+            "current_team_leader": "قائد الفريق الحالي",
+            "target_team_leader": "قائد فريق المرحلة الهدف",
+            "admin": "مشرف",
+            "role": "دور: {role}"
+          },
+          "handoffRule": {
+            "target_team_queue": "قائمة الفريق الهدف",
+            "target_team_leader": "قائد الفريق الهدف",
+            "auto_rotation": "تدوير تلقائي",
+            "specific_owner": "مالك محدد"
+          },
+          "rejectModal": {
+            "title": "رفض طلب نقل المرحلة",
+            "helper": "يظل الليد في مرحلته وفريقه ومالكه الحالي. تُنشأ متابعة تصحيحية ليرى مقدّم الطلب الإجراء التالي.",
+            "reasonLabel": "السبب (مطلوب)",
+            "reasonPlaceholder": "مثال: نوع المركبة غير محدد",
+            "correctiveActionLabel": "الإجراء التصحيحي (اختياري)",
+            "correctiveActionPlaceholder": "مثال: تأكيد نوع المركبة قبل طلب التسجيل مرة أخرى",
+            "correctiveActionHint": "إن لم يُحدد، تُنشأ متابعة عامة \"حل قبل إعادة الطلب\" مستحقة بعد 24 ساعة.",
+            "confirm": "رفض + إنشاء متابعة"
+          }
+        },
         "tabs": {
           "ariaLabel": "أقسام تفاصيل الليد",
           "overview": "نظرة عامة",
@@ -474,6 +513,16 @@
               "notesPlaceholder": "سياق اختياري — ماذا حدث، ماذا قال الكابتن، ماذا نتابع.",
               "submit": "حفظ تحديث الحالة",
               "submitMoveOnly": "نقل المرحلة",
+              "submitRequestApproval": "طلب اعتماد",
+              "reason": {
+                "required": "السبب مطلوب لهذه الحالة",
+                "dropdownLabel": "السبب",
+                "dropdownPlaceholder": "اختر السبب…",
+                "textLabel": "السبب",
+                "textPlaceholder": "اكتب سبب تغيير الحالة",
+                "textPlaceholderWithGroup": "اكتب السبب ({group})",
+                "hint": "يُحفظ السبب على طلب الانتقال / حدث الحالة ليراه المعتمدون والسجلّ."
+              },
               "communication": {
                 "call": "اتصال",
                 "whatsapp": "واتساب",

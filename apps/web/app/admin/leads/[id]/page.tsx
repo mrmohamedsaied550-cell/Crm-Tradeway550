@@ -46,6 +46,7 @@ import { NextActionCard } from '@/components/admin/lead-detail/next-action-card'
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
 import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
 import { AddActionDrawer } from '@/components/admin/lead-detail/add-action-drawer';
+import { PendingTransitionRequestCard } from '@/components/admin/lead-detail/pending-transition-request-card';
 import {
   AttributionCard,
   LastActivityCard,
@@ -205,7 +206,19 @@ export default function LeadDetailPage(): JSX.Element {
   // Sprint 2.B — Add Action drawer state. Single entry point that
   // routes to lifecycle / profile / documents / partner-data / note
   // panels (each surfacing its own write path).
+  //
+  // Sprint 3.1 — extra fields let the QuickActionsBar Move Stage
+  // shortcut open the drawer directly on the Lifecycle panel with
+  // the picked stage pre-selected — so it CANNOT bypass approval
+  // rules (the drawer's normal save flow handles requiresApproval
+  // for us).
   const [addActionOpen, setAddActionOpen] = useState<boolean>(false);
+  const [addActionInitialArea, setAddActionInitialArea] = useState<
+    'lifecycle' | 'profile' | 'documents' | 'partnerData' | 'note' | undefined
+  >(undefined);
+  const [addActionInitialStageId, setAddActionInitialStageId] = useState<string | undefined>(
+    undefined,
+  );
 
   // Tick once a minute so relative-time labels stay fresh in the
   // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
@@ -421,13 +434,23 @@ export default function LeadDetailPage(): JSX.Element {
   }
 
   /**
-   * Quick-action variant: move the lead to `code` directly from the
-   * top quick-actions dropdown.
+   * Sprint 3.1 — QuickActionsBar's Move Stage shortcut now opens
+   * the Add Action drawer prefilled on the Lifecycle panel with
+   * the target stage pre-picked, instead of calling moveStage
+   * directly. This eliminates the approval-bypass risk: the
+   * standard save flow inside the panel handles requiresApproval
+   * uniformly. The agent can still change the stage / pick a
+   * status / type notes in the drawer, but cannot bypass any
+   * configured smart-rule approval.
    */
-  async function quickMoveToStage(code: LeadStageCode): Promise<void> {
+  function quickMoveToStage(code: LeadStageCode): void {
     if (!lead || code === lead.stage.code) return;
     setStageMenuOpen(false);
-    await performMoveStage(code);
+    const target = stages.find((s) => s.code === code);
+    if (!target) return;
+    setAddActionInitialArea('lifecycle');
+    setAddActionInitialStageId(target.id);
+    setAddActionOpen(true);
   }
 
   /**
@@ -787,11 +810,15 @@ export default function LeadDetailPage(): JSX.Element {
         setStageMenuOpen={setStageMenuOpen}
         disabled={isConverted}
         actionPending={actionPending}
-        onAddAction={() => setAddActionOpen(true)}
+        onAddAction={() => {
+          setAddActionInitialArea(undefined);
+          setAddActionInitialStageId(undefined);
+          setAddActionOpen(true);
+        }}
         onCall={() => focusComposer('call')}
         onAddNote={() => focusComposer('note')}
         onAddFollowUp={() => setFollowUpModalOpen(true)}
-        onPickStage={(c) => void quickMoveToStage(c)}
+        onPickStage={(c) => quickMoveToStage(c)}
         labels={{
           addAction: tDetail('quickActions.addAction'),
           call: tDetail('quickActions.call'),
@@ -834,6 +861,16 @@ export default function LeadDetailPage(): JSX.Element {
           onChanged={() => void reload()}
         />
       </div>
+
+      {/* ───── Sprint 3 — Pending Transition Request card ─────
+          Renders null when no pending or recently-rejected request
+          exists. Lives above the tabs so the agent / approver
+          never has to switch tabs to see what's waiting. */}
+      <PendingTransitionRequestCard
+        leadId={lead.id}
+        refreshKey={lead.updatedAt}
+        onChanged={() => void reload()}
+      />
 
       {/* ───── Sprint 2.A — Smart Tabs ───── */}
       <Tabs<LeadDetailTab>
@@ -1246,9 +1283,15 @@ export default function LeadDetailPage(): JSX.Element {
           Note) before showing the focused panel. */}
       <AddActionDrawer
         open={addActionOpen}
-        onClose={() => setAddActionOpen(false)}
+        onClose={() => {
+          setAddActionOpen(false);
+          setAddActionInitialArea(undefined);
+          setAddActionInitialStageId(undefined);
+        }}
         lead={lead}
         onApplied={() => void reload()}
+        initialArea={addActionInitialArea}
+        initialNextStageId={addActionInitialStageId}
       />
 
       {/* Phase A — A6: lost-reason modal. Opens when the agent

@@ -1232,6 +1232,45 @@ export interface LostReason {
 export type LeadLifecycleState = 'open' | 'won' | 'lost' | 'archived';
 
 /**
+ * Sprint 3 (D7.1) — Stage-transition approval request. Mirror of
+ * the `lead_transition_requests` row + the joins the controller
+ * list endpoint includes.
+ */
+export type LeadTransitionRequestState = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface LeadTransitionRequestRow {
+  id: string;
+  leadId: string;
+  fromStage: { id: string; code: string; name: string };
+  toStage: {
+    id: string;
+    code: string;
+    name: string;
+    isTerminal: boolean;
+    terminalKind: 'won' | 'lost' | null;
+  };
+  requestedStatusCode: string | null;
+  ruleSnapshot: SmartStatusRule | null;
+  communicationMethod: string | null;
+  notes: string | null;
+  reasonCode: string | null;
+  reasonText: string | null;
+  requestedBy: { id: string; name: string; email: string };
+  approverKind: string;
+  approverRoleCode: string | null;
+  handoffRule: string | null;
+  handoffTargetUser: { id: string; name: string; email: string } | null;
+  handoffTargetTeam: { id: string; name: string } | null;
+  state: LeadTransitionRequestState;
+  decidedAt: string | null;
+  decidedBy: { id: string; name: string; email: string } | null;
+  decisionReason: string | null;
+  correctiveFollowupId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Sprint 1 (D6.1) — Captain Masr lifecycle classifier on a pipeline
  * stage. The four canonical journey steps. NULL means the stage
  * does not participate in the Journey Bar.

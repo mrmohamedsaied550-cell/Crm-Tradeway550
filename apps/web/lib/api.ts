@@ -128,6 +128,7 @@ import type {
   UserStatus,
   WhatsAppConversation,
   WhatsAppMessage,
+  LeadTransitionRequestRow,
 } from './api-types';
 
 export class ApiError extends Error {
@@ -1236,6 +1237,47 @@ export const conversationsApi = {
   /** D1.1 — reopen a closed conversation; rejected on partial-unique conflict. */
   reopen: (id: string): Promise<{ id: string; status: string }> =>
     apiFetch<{ id: string; status: string }>(`/conversations/${id}/reopen`, { method: 'POST' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Sprint 3 (D7.1) — Lead stage-transition approval requests
+// (consumes /leads/:leadId/transition-requests +
+//  /lead-transition-requests/:id/{approve|reject|cancel})
+// ───────────────────────────────────────────────────────────────────────
+
+export const transitionRequestsApi = {
+  list: (leadId: string): Promise<LeadTransitionRequestRow[]> =>
+    apiFetch<LeadTransitionRequestRow[]>(`/leads/${leadId}/transition-requests`),
+  request: (
+    leadId: string,
+    body: {
+      toStageId: string;
+      requestedStatusCode?: string;
+      communicationMethod?: string;
+      notes?: string;
+      reasonCode?: string;
+      reasonText?: string;
+    },
+  ): Promise<{ id: string }> =>
+    apiFetch<{ id: string }>(`/leads/${leadId}/transition-requests`, {
+      method: 'POST',
+      body,
+    }),
+  approve: (id: string, body: { notes?: string } = {}): Promise<{ ok: true }> =>
+    apiFetch<{ ok: true }>(`/lead-transition-requests/${id}/approve`, {
+      method: 'POST',
+      body,
+    }),
+  reject: (
+    id: string,
+    body: { reason: string; correctiveActionTitle?: string; correctiveDueAt?: string },
+  ): Promise<{ ok: true }> =>
+    apiFetch<{ ok: true }>(`/lead-transition-requests/${id}/reject`, {
+      method: 'POST',
+      body,
+    }),
+  cancel: (id: string): Promise<{ ok: true }> =>
+    apiFetch<{ ok: true }>(`/lead-transition-requests/${id}/cancel`, { method: 'POST' }),
 };
 
 // ───────────────────────────────────────────────────────────────────────

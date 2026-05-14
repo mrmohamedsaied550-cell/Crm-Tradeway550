@@ -408,6 +408,45 @@
             "dft": "DFT"
           }
         },
+        "pendingTransition": {
+          "heading": "Stage transition",
+          "state": {
+            "pending": "Awaiting approval",
+            "rejected": "Rejected handoff"
+          },
+          "requestedBy": "Requested by",
+          "submitted": "Submitted",
+          "approver": "Approver",
+          "handoff": "Handoff",
+          "notes": "Notes",
+          "rejectionReason": "Rejection reason",
+          "rejectedBy": "Rejected by",
+          "approve": "Approve",
+          "reject": "Reject",
+          "readOnlyHint": "You don't have permission to approve / reject this request.",
+          "approverKind": {
+            "current_team_leader": "Current team leader",
+            "target_team_leader": "Target stage team leader",
+            "admin": "Admin",
+            "role": "Role: {role}"
+          },
+          "handoffRule": {
+            "target_team_queue": "Target team queue",
+            "target_team_leader": "Target team leader",
+            "auto_rotation": "Auto-rotation",
+            "specific_owner": "Specific owner"
+          },
+          "rejectModal": {
+            "title": "Reject transition request",
+            "helper": "The lead stays in its current stage, team, and owner. A corrective follow-up is created so the original requester sees a concrete next action.",
+            "reasonLabel": "Reason (required)",
+            "reasonPlaceholder": "e.g. Vehicle type missing",
+            "correctiveActionLabel": "Corrective action (optional)",
+            "correctiveActionPlaceholder": "e.g. Confirm vehicle type before requesting Signup again",
+            "correctiveActionHint": "If omitted, a generic \"Resolve before re-requesting\" follow-up is created due in 24 hours.",
+            "confirm": "Reject + create follow-up"
+          }
+        },
         "tabs": {
           "ariaLabel": "Lead detail sections",
           "overview": "Overview",
@@ -474,6 +513,16 @@
               "notesPlaceholder": "Optional context — what happened, what the captain said, what to follow up on.",
               "submit": "Save status update",
               "submitMoveOnly": "Move stage",
+              "submitRequestApproval": "Request approval",
+              "reason": {
+                "required": "Reason is required for this status",
+                "dropdownLabel": "Reason",
+                "dropdownPlaceholder": "Pick a reason…",
+                "textLabel": "Reason",
+                "textPlaceholder": "Type the reason for this status change",
+                "textPlaceholderWithGroup": "Type the reason ({group})",
+                "hint": "The reason is saved on the transition request / status event so reviewers and audit can see it."
+              },
               "communication": {
                 "call": "Call",
                 "whatsapp": "WhatsApp",
