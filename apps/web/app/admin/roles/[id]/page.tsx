@@ -370,8 +370,12 @@ function OverviewTab({
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryTile
           label={tHybrid('summary.members')}
-          value="—"
-          hint={tHybrid('summary.membersHint')}
+          value={role.memberCount}
+          hint={
+            role.memberCount === 0
+              ? tHybrid('summary.membersEmpty')
+              : tHybrid('summary.membersReal')
+          }
         />
         <SummaryTile
           label={tHybrid('summary.scopes')}
@@ -409,8 +413,8 @@ function OverviewTab({
         />
         <SummaryTile
           label={tHybrid('summary.lastUpdated')}
-          value="—"
-          hint={tHybrid('summary.lastUpdatedGap')}
+          value={formatShortDate(role.updatedAt)}
+          hint={tHybrid('summary.lastUpdatedHint')}
         />
       </section>
 
@@ -473,6 +477,16 @@ function SummaryTile({
       {hint ? <span className="text-[11px] leading-snug text-ink-tertiary">{hint}</span> : null}
     </div>
   );
+}
+
+/** Sprint 8 — short "yyyy-mm-dd" formatter for the Last-updated tile. */
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 // ────────────────────────────────────────────────────────────────────

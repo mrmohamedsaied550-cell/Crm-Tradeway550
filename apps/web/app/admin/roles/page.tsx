@@ -29,8 +29,8 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { RoleTemplatePicker } from '@/components/admin/roles/role-template-picker';
-import { ApiError, rolesApi, usersApi } from '@/lib/api';
-import type { AdminUser, CapabilityCatalogueEntry, RoleSummary } from '@/lib/api-types';
+import { ApiError, rolesApi } from '@/lib/api';
+import type { CapabilityCatalogueEntry, RoleScopeRow, RoleSummary } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -101,22 +101,25 @@ const EMPTY_DUPLICATE: DuplicateFormState = {
 type RoleFilter = 'all' | 'system' | 'custom' | 'admin' | 'sales' | 'tl' | 'highRisk' | 'noMembers';
 
 interface AugmentedRole extends RoleSummary {
-  memberCount: number;
   riskLevel: 'low' | 'medium' | 'high';
   family: 'admin' | 'sales' | 'tl' | 'ops' | 'other';
 }
 
 const ADMIN_CODE_HINTS = ['super_admin', 'admin', 'tenant_owner'] as const;
 const SALES_CODE_HINTS = ['sales', 'agent'] as const;
-const TL_CODE_HINTS = ['tl_', 'team_leader', 'team-leader'] as const;
 
-function familyOf(code: string, level: number): AugmentedRole['family'] {
-  const lower = code.toLowerCase();
+/**
+ * Sprint 8 — TL membership now reads `role.isTeamLeader` from the
+ * API. The legacy code-substring / level heuristic stays only as a
+ * fallback for the admin / sales / ops categories where there's no
+ * persisted flag yet.
+ */
+function familyOf(role: RoleSummary): AugmentedRole['family'] {
+  if (role.isTeamLeader) return 'tl';
+  const lower = role.code.toLowerCase();
   if (ADMIN_CODE_HINTS.some((h) => lower.includes(h))) return 'admin';
-  if (TL_CODE_HINTS.some((h) => lower.startsWith(h) || lower.includes(h))) return 'tl';
   if (SALES_CODE_HINTS.some((h) => lower.includes(h))) return 'sales';
-  if (level >= 80) return 'admin';
-  if (level >= 60) return 'tl';
+  if (role.level >= 80) return 'admin';
   return 'ops';
 }
 
@@ -124,6 +127,45 @@ function riskOf(capCount: number, level: number, isSystem: boolean): AugmentedRo
   if (capCount >= 40 || level >= 80) return 'high';
   if (capCount >= 15 || level >= 60 || isSystem) return 'medium';
   return 'low';
+}
+
+/**
+ * Sprint 8 — short scope summary chip. We surface the broadest
+ * (=most-risky) scope value across the role's resources so the
+ * card stays one line. The editor's Scope tab is the source of
+ * truth for the per-resource picture.
+ *
+ * Scope ranking (least → most risky):
+ *   own < team < company < country < global
+ */
+const SCOPE_RANK: Record<RoleScopeRow['scope'], number> = {
+  own: 0,
+  team: 1,
+  company: 2,
+  country: 3,
+  global: 4,
+};
+
+function summariseScopes(
+  scopes: readonly RoleScopeRow[],
+  tHybrid: ReturnType<typeof useTranslations>,
+): string {
+  if (scopes.length === 0) return tHybrid('card.scopeNone');
+  let widest: RoleScopeRow['scope'] = 'own';
+  for (const s of scopes) {
+    if (SCOPE_RANK[s.scope] > SCOPE_RANK[widest]) widest = s.scope;
+  }
+  return tHybrid(`card.scopeValue.${widest}` as 'card.scopeValue.own');
+}
+
+/** Sprint 8 — small "yyyy-mm-dd" formatter for the Last-updated chip. */
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function RolesAdminPage(): JSX.Element {
@@ -135,11 +177,8 @@ export default function RolesAdminPage(): JSX.Element {
   const { toast } = useToast();
 
   const canWrite = hasCapability('roles.write');
-  const canReadUsers = hasCapability('users.read');
 
   const [roles, setRoles] = useState<RoleSummary[]>([]);
-  const [users, setUsers] = useState<readonly AdminUser[]>([]);
-  const [usersTotal, setUsersTotal] = useState<number>(0);
   const [catalogue, setCatalogue] = useState<readonly CapabilityCatalogueEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -167,19 +206,14 @@ export default function RolesAdminPage(): JSX.Element {
     setError(null);
     try {
       const safe = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
-      const [list, userPage, caps] = await Promise.all([
+      // Sprint 8 — `rolesApi.list()` now returns memberCount + scopes
+      // + isTeamLeader inline, so the previous `usersApi.list({ limit:
+      // 200 })` fan-out (and its truncation gap notice) is gone.
+      const [list, caps] = await Promise.all([
         rolesApi.list(),
-        safe(usersApi.list({ limit: 200 }), {
-          items: [] as AdminUser[],
-          total: 0,
-          limit: 200,
-          offset: 0,
-        }),
         safe(rolesApi.listCapabilities(), [] as CapabilityCatalogueEntry[]),
       ]);
       setRoles(list);
-      setUsers(userPage.items);
-      setUsersTotal(userPage.total);
       setCatalogue(caps);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -192,23 +226,13 @@ export default function RolesAdminPage(): JSX.Element {
     void reload();
   }, [reload]);
 
-  const membersByRole = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const u of users) {
-      if (!u.roleId) continue;
-      m.set(u.roleId, (m.get(u.roleId) ?? 0) + 1);
-    }
-    return m;
-  }, [users]);
-
   const augmented = useMemo<readonly AugmentedRole[]>(() => {
     return roles.map((r) => ({
       ...r,
-      memberCount: membersByRole.get(r.id) ?? 0,
       riskLevel: riskOf(r.capabilitiesCount, r.level, r.isSystem),
-      family: familyOf(r.code, r.level),
+      family: familyOf(r),
     }));
-  }, [roles, membersByRole]);
+  }, [roles]);
 
   const filtered = useMemo<readonly AugmentedRole[]>(() => {
     const q = query.trim().toLowerCase();
@@ -239,8 +263,6 @@ export default function RolesAdminPage(): JSX.Element {
       }
     });
   }, [augmented, query, filter]);
-
-  const usersTruncated = usersTotal > users.length;
 
   function openCreate(): void {
     setCreateForm(EMPTY_CREATE);
@@ -417,12 +439,6 @@ export default function RolesAdminPage(): JSX.Element {
           ))}
         </div>
       </section>
-
-      {!canReadUsers ? (
-        <Notice tone="info">{tHybrid('membersGap.noUsersRead')}</Notice>
-      ) : usersTruncated ? (
-        <Notice tone="info">{tHybrid('membersGap.truncated', { n: users.length })}</Notice>
-      ) : null}
 
       {loading ? (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -733,8 +749,19 @@ function RoleCard({
           icon={ShieldCheck}
         />
         <Metric label={tHybrid('card.level')} value={role.level} />
-        <Metric label={tHybrid('card.scope')} value="—" hint={tHybrid('card.scopeGap')} />
+        <Metric
+          label={tHybrid('card.scope')}
+          value={summariseScopes(role.scopes, tHybrid)}
+          hint={
+            role.scopes.length === 0
+              ? tHybrid('card.scopeGlobalFallback')
+              : tHybrid('card.scopeOpenEditor')
+          }
+        />
       </dl>
+      <p className="text-[11px] text-ink-tertiary">
+        {tHybrid('card.lastUpdated', { date: formatShortDate(role.updatedAt) })}
+      </p>
 
       {role.memberCount === 0 ? (
         <p className="inline-flex items-center gap-1 text-[11px] text-status-warning">
