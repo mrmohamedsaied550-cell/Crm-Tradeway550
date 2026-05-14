@@ -296,14 +296,16 @@
           "dueToday": "Due today",
           "upcoming": "Upcoming",
           "pending": "Awaiting approval",
-          "rejected": "Returned"
+          "rejected": "Returned",
+          "noAnswer": "No answer"
         },
         "heading": {
           "dueToday": "Follow-ups due today",
           "followUpMine": "All pending follow-ups",
           "returnedToMe": "Transitions returned to me",
           "waitingApproval": "My pending transition requests",
-          "approverQueue": "Approval queue"
+          "approverQueue": "Approval queue",
+          "noAnswer": "No-answer leads"
         },
         "empty": {
           "dueToday": {
@@ -325,6 +327,10 @@
           "approverQueue": {
             "title": "Approval queue is empty",
             "body": "There are no transition requests awaiting your approval right now."
+          },
+          "noAnswer": {
+            "title": "No no-answer leads",
+            "body": "None of your leads is parked on a `no_answer_*` status right now. Once an agent records that status during a call attempt, the lead lands here."
           }
         },
         "noAccess": {
@@ -332,10 +338,6 @@
           "approverQueue": "The approver queue requires the `lead.transition.approve` capability. Ask an admin to grant it if you're meant to see pending approvals."
         },
         "pending": {
-          "noAnswer": {
-            "title": "No Answer queue coming next",
-            "body": "Needs a status-aware list endpoint that filters leads by `currentStageStatus.status` (e.g. no_answer_1 / no_answer_2). Today the smart-rule status code only lives on the per-lead detail; a list-side filter ships in a follow-up sprint."
-          },
           "teamLeads": {
             "title": "Team leads view coming next",
             "body": "Needs a per-team rollup endpoint that aggregates totals by team. Ships when the TL scope filter lands."

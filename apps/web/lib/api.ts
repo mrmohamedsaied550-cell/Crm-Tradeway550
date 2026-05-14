@@ -761,6 +761,14 @@ export const leadsApi = {
       hasOverdueFollowup?: boolean;
       /** D2.6 — narrow to multi-attempt rows (attemptIndex >= 2). */
       returningOnly?: boolean;
+      /**
+       * Sprint 5.2 — narrow to leads whose current stage status
+       * starts with the prefix (case-insensitive). Powers the
+       * "No Answer" queue with `no_answer`; any future
+       * status-category queue can reuse the same filter with
+       * its own prefix.
+       */
+      currentStatusCodePrefix?: string;
       limit?: number;
       offset?: number;
     } = {},

@@ -258,6 +258,27 @@ export const ListLeadsQuerySchema = z
      * filter doesn't change scope or owner visibility.
      */
     returningOnly: z.coerce.boolean().optional(),
+    /**
+     * Sprint 5.2 — current-stage-status prefix filter. Matches leads
+     * whose denormalised `currentStageStatus.status` starts with
+     * the given string. Powers the "No Answer" queue
+     * (`currentStatusCodePrefix=no_answer`) without a dedicated
+     * status-category enum on the schema — any future categorised
+     * queue (e.g. `signup_started` family) can reuse the same
+     * filter with its own prefix.
+     *
+     * Why prefix instead of exact-match: status codes follow a
+     * stable convention (`no_answer_1`, `no_answer_2`, …) so the
+     * prefix is the natural "category" signal today. When tenants
+     * need stricter categorisation we'll add an explicit
+     * `statusCategory` column on `lead_stage_statuses`; until then
+     * the prefix covers the spec without a migration.
+     *
+     * Lower-cased & length-capped at the schema; the service-side
+     * Prisma query uses a case-insensitive `startsWith` on the
+     * joined relation.
+     */
+    currentStatusCodePrefix: z.string().trim().toLowerCase().min(1).max(64).optional(),
     /** Pagination — basic offset/limit; cursor pagination arrives later. */
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),

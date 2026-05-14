@@ -1041,6 +1041,19 @@ export class LeadsService {
       // attempt rows. Available on the table view only — Kanban
       // (listByStage) wouldn't fit a "returning leads" lane cleanly.
       ...(query.returningOnly && { attemptIndex: { gte: 2 } }),
+      // Sprint 5.2 — `currentStatusCodePrefix` narrows the list to
+      // leads whose denormalised `currentStageStatus.status` starts
+      // with the given prefix. Used by the "No Answer" queue
+      // (prefix=`no_answer`) so the same status-category signal
+      // drives both the Lead Detail and the workspace queue
+      // without a new endpoint. Case-insensitive — the DTO
+      // already lower-cases the input so the comparison is
+      // safe both ways.
+      ...(query.currentStatusCodePrefix && {
+        currentStageStatus: {
+          status: { startsWith: query.currentStatusCodePrefix, mode: 'insensitive' as const },
+        },
+      }),
       ...(createdAt && { createdAt }),
       ...(query.q && {
         OR: [

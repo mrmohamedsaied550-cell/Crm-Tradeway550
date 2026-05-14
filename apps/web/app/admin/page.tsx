@@ -27,6 +27,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { followUpsApi, leadsApi, transitionRequestsApi } from '@/lib/api';
 import { getCachedMe, hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
+import { NO_ANSWER_STATUS_PREFIX } from '@/components/admin/leads-workspace/queue-list-view';
 import type { Lead, LeadFollowUp, LeadTransitionRequestRow } from '@/lib/api-types';
 
 /**
@@ -83,6 +84,7 @@ interface QueueCounts {
   followUpMine: number;
   waitingApproval: number;
   signupCount: number;
+  noAnswer: number;
   // TL extras
   approverQueue: number | null;
 }
@@ -103,6 +105,7 @@ const EMPTY_COUNTS: QueueCounts = {
   followUpMine: 0,
   waitingApproval: 0,
   signupCount: 0,
+  noAnswer: 0,
   approverQueue: null,
 };
 
@@ -151,6 +154,7 @@ export default function AdminDashboardPage(): JSX.Element {
         myPending,
         followups,
         signupLeads,
+        noAnswerLeads,
         approverQueue,
       ] = await Promise.all([
         safeFetch(leadsApi.overdue({}), [] as Lead[]),
@@ -173,6 +177,19 @@ export default function AdminDashboardPage(): JSX.Element {
         safeFetch(
           me
             ? leadsApi.list({ stageCode: 'interested', assignedToId: me.userId, limit: 1 })
+            : Promise.resolve({ items: [], total: 0, limit: 1, offset: 0 }),
+          { items: [] as Lead[], total: 0, limit: 1, offset: 0 },
+        ),
+        // Sprint 5.2 — No Answer count. Filters by the same
+        // `currentStatusCodePrefix=no_answer` the queue view uses,
+        // so the tile count and the list always match.
+        safeFetch(
+          me
+            ? leadsApi.list({
+                currentStatusCodePrefix: NO_ANSWER_STATUS_PREFIX,
+                assignedToId: me.userId,
+                limit: 1,
+              })
             : Promise.resolve({ items: [], total: 0, limit: 1, offset: 0 }),
           { items: [] as Lead[], total: 0, limit: 1, offset: 0 },
         ),
@@ -199,6 +216,7 @@ export default function AdminDashboardPage(): JSX.Element {
         followUpMine: myFollowups.length,
         waitingApproval: myPending.length,
         signupCount: signupLeads.total ?? signupLeads.items.length,
+        noAnswer: noAnswerLeads.total ?? noAnswerLeads.items.length,
         approverQueue: approverQueue === null ? null : approverQueue.length,
       });
       setFirstLeads({
@@ -336,11 +354,10 @@ export default function AdminDashboardPage(): JSX.Element {
           <QueueTile
             href={queueHref('noAnswer')}
             label={t('queues.noAnswer')}
-            count={null}
+            count={counts.noAnswer}
             icon={PhoneOff}
-            tone="neutral"
+            tone="warning"
             loading={loading}
-            hint={t('noAnswerGap')}
           />
         </ul>
       </section>

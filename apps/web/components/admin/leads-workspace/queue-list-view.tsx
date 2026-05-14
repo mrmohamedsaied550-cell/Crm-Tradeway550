@@ -17,10 +17,19 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, followUpsApi, transitionRequestsApi } from '@/lib/api';
+import { ApiError, followUpsApi, leadsApi, transitionRequestsApi } from '@/lib/api';
 import { getCachedMe } from '@/lib/auth';
 import { cn } from '@/lib/utils';
-import type { LeadFollowUp, LeadTransitionRequestRow } from '@/lib/api-types';
+import type { Lead, LeadFollowUp, LeadTransitionRequestRow } from '@/lib/api-types';
+
+/**
+ * Sprint 5.2 — status-prefix that drives the "No Answer" queue.
+ * Every status code starting with this prefix counts as
+ * "no answer" (e.g. `no_answer_1`, `no_answer_2`, future
+ * `no_answer_n`). Centralised here so the dashboard tile count
+ * + the queue list call the same filter and stay in sync.
+ */
+export const NO_ANSWER_STATUS_PREFIX = 'no_answer';
 
 /**
  * Sprint 5.1 — Queue-specific list views.
@@ -82,7 +91,8 @@ export function isWiredQueue(q: string | null | undefined): q is SpecializedQueu
     q === 'followUpMine' ||
     q === 'returnedToMe' ||
     q === 'waitingApproval' ||
-    q === 'approverQueue'
+    q === 'approverQueue' ||
+    q === 'noAnswer'
   );
 }
 
@@ -92,6 +102,9 @@ export function QueueListView({ queue }: QueueListViewProps): JSX.Element {
   }
   if (queue === 'returnedToMe' || queue === 'waitingApproval' || queue === 'approverQueue') {
     return <TransitionRequestQueue queue={queue} />;
+  }
+  if (queue === 'noAnswer') {
+    return <NoAnswerQueue />;
   }
   // Honest gap state for the queues that still need backend work.
   return <PendingQueue queue={queue} />;
@@ -399,26 +412,144 @@ function TransitionRow({
 }
 
 // ─────────────────────────────────────────────────────────────────
+//  No Answer queue (Sprint 5.2 — LIVE)
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Sprint 5.2 — leads whose `currentStageStatus.status` starts with
+ * `no_answer` (no_answer_1, no_answer_2, future no_answer_n).
+ *
+ * Uses the existing `leadsApi.list` with the new
+ * `currentStatusCodePrefix` filter (Sprint 5.2 backend) so the
+ * count + the list always match. Scoped to the caller by default
+ * (the existing list endpoint already applies the role's scope
+ * `where` clause); the agent sees only their own no-answer
+ * leads, the TL+ sees the team's set.
+ */
+function NoAnswerQueue(): JSX.Element {
+  const t = useTranslations('admin.leads.queueViews');
+  const tDetail = useTranslations('admin.leads.detail');
+  const locale = useLocale();
+
+  const [items, setItems] = useState<readonly Lead[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const me = getCachedMe();
+      const page = await leadsApi.list({
+        currentStatusCodePrefix: NO_ANSWER_STATUS_PREFIX,
+        ...(me ? { assignedToId: me.userId } : {}),
+        limit: 100,
+      });
+      setItems(page.items);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  if (loading) {
+    return (
+      <QueueCard>
+        <p className="text-sm text-ink-tertiary">{t('loading')}</p>
+      </QueueCard>
+    );
+  }
+  if (error) {
+    return <Notice tone="error">{error}</Notice>;
+  }
+  if (items.length === 0) {
+    return (
+      <QueueEmpty
+        icon={<PhoneOff className="h-8 w-8" aria-hidden="true" />}
+        title={t('empty.noAnswer.title')}
+        body={t('empty.noAnswer.body')}
+      />
+    );
+  }
+  return (
+    <QueueCard>
+      <QueueHeader count={items.length} label={t('heading.noAnswer')} />
+      <ul className="flex flex-col divide-y divide-surface-border">
+        {items.map((lead) => (
+          <NoAnswerRow key={lead.id} lead={lead} locale={locale} t={t} tDetail={tDetail} />
+        ))}
+      </ul>
+    </QueueCard>
+  );
+}
+
+function NoAnswerRow({
+  lead,
+  locale,
+  t,
+  tDetail,
+}: {
+  lead: Lead;
+  locale: string;
+  t: ReturnType<typeof useTranslations>;
+  tDetail: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  // The list response carries `currentStageStatus` when the
+  // server populated it; defensive fallback to the lead's
+  // stage code so the row still reads cleanly if a slim
+  // response slips through.
+  const statusCode = lead.currentStageStatus?.status ?? null;
+  const lastResponse = lead.lastResponseAt
+    ? new Date(lead.lastResponseAt).toLocaleString(locale === 'ar' ? 'ar' : 'en')
+    : null;
+  return (
+    <li>
+      <Link
+        href={`/admin/leads/${lead.id}`}
+        className="flex items-start gap-3 p-3 transition-colors hover:bg-brand-50"
+      >
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-status-warning/10 text-status-warning">
+          <PhoneOff className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-ink-primary">{lead.name}</span>
+            <Badge tone="warning">{statusCode ?? t('chip.noAnswer')}</Badge>
+            {lead.stage?.name ? <Badge tone="neutral">{lead.stage.name}</Badge> : null}
+          </div>
+          <p className="text-xs text-ink-secondary">{lead.phone}</p>
+          {lastResponse ? (
+            <p className="text-[11px] text-ink-tertiary">
+              {tDetail('lastActivity.label')}: {lastResponse}
+            </p>
+          ) : null}
+        </div>
+        <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-ink-tertiary" aria-hidden="true" />
+      </Link>
+    </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
 //  Pending queues (honest gap state)
 // ─────────────────────────────────────────────────────────────────
 
 function PendingQueue({
   queue,
 }: {
-  queue: 'noAnswer' | 'teamLeads' | 'agentBreakdown' | 'returnedHandoffs';
+  queue: 'teamLeads' | 'agentBreakdown' | 'returnedHandoffs';
 }): JSX.Element {
   const t = useTranslations('admin.leads.queueViews');
-  const icon =
-    queue === 'noAnswer' ? (
-      <PhoneOff className="h-8 w-8" aria-hidden="true" />
-    ) : (
-      <Users2 className="h-8 w-8" aria-hidden="true" />
-    );
   return (
     <QueueEmpty
-      icon={icon}
-      title={t(`pending.${queue}.title` as 'pending.noAnswer.title')}
-      body={t(`pending.${queue}.body` as 'pending.noAnswer.body')}
+      icon={<Users2 className="h-8 w-8" aria-hidden="true" />}
+      title={t(`pending.${queue}.title` as 'pending.teamLeads.title')}
+      body={t(`pending.${queue}.body` as 'pending.teamLeads.body')}
     />
   );
 }
