@@ -18,6 +18,7 @@ import {
   Users2,
 } from 'lucide-react';
 
+import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select, Textarea } from '@/components/ui/input';
@@ -640,16 +641,8 @@ function MembersTab({ roleId }: { roleId: string }): JSX.Element {
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span
-                          aria-hidden="true"
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700"
-                        >
-                          {u.name
-                            .split(/\s+/u)
-                            .map((p) => p.charAt(0).toUpperCase())
-                            .slice(0, 2)
-                            .join('')}
-                        </span>
+                        {/* Sprint 15 (D15) — Avatar with image fallback to initials. */}
+                        <Avatar name={u.name} src={u.avatarUrl ?? null} size="md" />
                         <div className="flex min-w-0 flex-col">
                           <span className="truncate font-medium text-ink-primary">{u.name}</span>
                           <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>

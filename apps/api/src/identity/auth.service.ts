@@ -99,6 +99,8 @@ export interface AuthResult extends AuthTokens {
     name: string;
     language: string;
     roleId: string;
+    /** Sprint 15 (D15) — optional profile image URL. */
+    avatarUrl?: string | null;
     role: { id: string; code: string; nameAr: string; nameEn: string; level: number };
     capabilities: readonly string[];
     /**
@@ -245,6 +247,7 @@ export class AuthService {
           lockedUntil: true,
           createdAt: true,
           updatedAt: true,
+          avatarUrl: true,
         },
       }),
     );
@@ -477,6 +480,7 @@ export class AuthService {
           lastLoginAt: true,
           createdAt: true,
           updatedAt: true,
+          avatarUrl: true,
         },
       }),
     );
@@ -581,6 +585,10 @@ export class AuthService {
           lastLoginAt: true,
           createdAt: true,
           updatedAt: true,
+          // Sprint 15 (D15) — surface the avatar URL through /auth/me
+          // so the admin shell renders the user's photo in the auth
+          // bar / user menu without a second round-trip.
+          avatarUrl: true,
         },
       }),
     );
@@ -649,6 +657,7 @@ export class AuthService {
       name: string;
       language: string;
       roleId: string;
+      avatarUrl?: string | null;
     },
     role: RoleWithCapabilities,
   ): AuthResult['user'] {
@@ -659,6 +668,7 @@ export class AuthService {
       name: u.name,
       language: u.language,
       roleId: u.roleId,
+      ...(u.avatarUrl !== undefined && { avatarUrl: u.avatarUrl }),
       role: {
         id: role.id,
         code: role.code,

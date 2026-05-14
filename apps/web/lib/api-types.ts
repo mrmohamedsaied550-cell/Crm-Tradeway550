@@ -777,6 +777,8 @@ export interface MeUser {
   name: string;
   language: string;
   roleId: string;
+  /** Sprint 15 (D15) — optional profile image URL. */
+  avatarUrl?: string | null;
   role: {
     id: string;
     code: string;
