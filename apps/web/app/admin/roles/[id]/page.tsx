@@ -28,8 +28,9 @@ import { ReviewChangesModal } from '@/components/admin/roles/review-changes-moda
 import { RoleHistoryTab } from '@/components/admin/roles/role-history-tab';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
-import { ApiError, rolesApi } from '@/lib/api';
+import { ApiError, rolesApi, teamsApi, usersApi } from '@/lib/api';
 import type {
+  AdminUser,
   CapabilityCatalogueEntry,
   FieldCatalogueEntry,
   RoleChangePreviewResult,
@@ -37,6 +38,7 @@ import type {
   RoleDetail,
   RoleFieldPermissionRow,
   RoleScopeRow,
+  Team,
 } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -292,7 +294,7 @@ export default function RoleEditorPage(): JSX.Element {
       {activeTab === 'scope' ? (
         <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
       ) : null}
-      {activeTab === 'members' ? <MembersTabPlaceholder /> : null}
+      {activeTab === 'members' ? <MembersTab roleId={role.id} /> : null}
       {activeTab === 'riskPreview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
       {activeTab === 'audit' ? (
         <RoleHistoryTab roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
@@ -468,16 +470,184 @@ function SummaryTile({
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Sprint 7.B — Members tab (placeholder until Sprint 7.E wires it).
+// Sprint 7.E — Members tab (real fetch via usersApi.list({ roleId })).
 // ────────────────────────────────────────────────────────────────────
 
-function MembersTabPlaceholder(): JSX.Element {
+function MembersTab({ roleId }: { roleId: string }): JSX.Element {
   const tHybrid = useTranslations('admin.roles.editorHybrid');
+  const canReadUsers = hasCapability('users.read');
+  const canWriteUsers = hasCapability('users.write');
+
+  const [items, setItems] = useState<readonly AdminUser[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [teams, setTeams] = useState<readonly Team[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canReadUsers) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const safe = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+        const [page, teamList] = await Promise.all([
+          usersApi.list({ roleId, limit: 200 }),
+          safe(teamsApi.list(), [] as Team[]),
+        ]);
+        if (cancelled) return;
+        setItems(page.items);
+        setTotal(page.total);
+        setTeams(teamList);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roleId, canReadUsers]);
+
+  if (!canReadUsers) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('members.noAccess.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.noAccess.body')}</p>
+      </Notice>
+    );
+  }
+  if (loading) {
+    return (
+      <p className="rounded-lg border border-surface-border bg-surface-card px-4 py-10 text-center text-sm text-ink-secondary shadow-card">
+        {tHybrid('members.loading')}
+      </p>
+    );
+  }
+  if (error) {
+    return <Notice tone="error">{error}</Notice>;
+  }
+  if (items.length === 0) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('members.empty.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.empty.body')}</p>
+      </Notice>
+    );
+  }
+
+  const teamsById = new Map<string, Team>(teams.map((t) => [t.id, t]));
+  const truncated = total > items.length;
+
   return (
-    <Notice tone="info">
-      <p className="text-sm font-medium">{tHybrid('members.placeholderTitle')}</p>
-      <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.placeholderBody')}</p>
-    </Notice>
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-secondary">
+        <span>{tHybrid('members.count', { n: items.length, total })}</span>
+        <Link
+          href="/admin/organization"
+          className="inline-flex items-center gap-1 rounded-md border border-surface-border bg-surface-card px-2 py-1 font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+        >
+          <Users2 className="h-3.5 w-3.5" aria-hidden="true" />
+          {tHybrid('members.openOrganization')}
+        </Link>
+      </div>
+      {truncated ? (
+        <Notice tone="info">{tHybrid('members.truncated', { n: items.length, total })}</Notice>
+      ) : null}
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-surface-card shadow-card">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="border-b border-surface-border bg-surface text-xs uppercase tracking-wide text-ink-tertiary">
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.user')}
+                </th>
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.team')}
+                </th>
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.status')}
+                </th>
+                <th className="px-4 py-3 text-end font-semibold">
+                  {tHybrid('members.columns.actions')}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((u) => {
+                const team = u.teamId ? teamsById.get(u.teamId) : null;
+                return (
+                  <tr
+                    key={u.id}
+                    className="border-b border-surface-border last:border-b-0 hover:bg-surface"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span
+                          aria-hidden="true"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700"
+                        >
+                          {u.name
+                            .split(/\s+/u)
+                            .map((p) => p.charAt(0).toUpperCase())
+                            .slice(0, 2)
+                            .join('')}
+                        </span>
+                        <div className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium text-ink-primary">{u.name}</span>
+                          <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top text-ink-secondary">
+                      {team ? (
+                        team.name
+                      ) : (
+                        <span className="text-status-warning">{tHybrid('members.noTeam')}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <Badge
+                        tone={
+                          u.status === 'active'
+                            ? 'healthy'
+                            : u.status === 'disabled'
+                              ? 'breach'
+                              : 'neutral'
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 align-top text-end">
+                      {canWriteUsers ? (
+                        <Link
+                          href={`/admin/users`}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                        >
+                          {tHybrid('members.edit')}
+                          <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                        </Link>
+                      ) : (
+                        <span className="text-[11px] text-ink-tertiary">
+                          {tHybrid('members.viewOnly')}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -859,6 +1029,7 @@ function CapabilitiesTab({
 function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
   const t = useTranslations('admin.roles');
   const tCommon = useTranslations('admin.common');
+  const tHybridScope = useTranslations('admin.roles.scopeHybrid');
   const [scopes, setScopes] = useState<Map<string, RoleScopeRow['scope']>>(
     () => new Map(role.scopes.map((s) => [s.resource, s.scope])),
   );
@@ -892,10 +1063,25 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
     }
   }
 
+  // Sprint 7.E — surface scope semantics as a chip so the operator
+  // sees the impact of each value alongside the dropdown. The chip
+  // is a presentation aid; the dropdown remains the only writer.
+  const scopeTone: Record<
+    RoleScopeRow['scope'],
+    'healthy' | 'info' | 'warning' | 'breach' | 'neutral'
+  > = {
+    own: 'healthy',
+    team: 'info',
+    company: 'warning',
+    country: 'warning',
+    global: 'breach',
+  };
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('scopesIntro')}</p>
+      <p className="text-xs text-ink-tertiary">{tHybridScope('whereApplies')}</p>
       <ul className="flex flex-col gap-2">
         {SCOPE_RESOURCES.map((resource) => {
           const value = scopes.get(resource) ?? 'global';
@@ -904,9 +1090,17 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
               key={resource}
               className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-surface-border bg-surface px-3 py-2"
             >
-              <span className="text-sm font-medium text-ink-primary">
-                {t(`scopes.resources.${resource}` as 'scopes.resources.lead')}
-              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-ink-primary">
+                  {t(`scopes.resources.${resource}` as 'scopes.resources.lead')}
+                </span>
+                <span className="text-[11px] text-ink-tertiary">
+                  {tHybridScope(`description.${value}` as 'description.global')}
+                </span>
+              </div>
+              <Badge tone={scopeTone[value]}>
+                {t(`scopes.values.${value}` as 'scopes.values.global')}
+              </Badge>
               <Select
                 value={value}
                 onChange={(e) => setScope(resource, e.target.value as RoleScopeRow['scope'])}
@@ -923,6 +1117,15 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
           );
         })}
       </ul>
+      <div className="flex items-center justify-end">
+        <Link
+          href="/admin/organization"
+          className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+        >
+          {tHybridScope('openOrganization')}
+          <ArrowRight className="h-3 w-3" aria-hidden="true" />
+        </Link>
+      </div>
       {editable ? (
         <div className="flex items-center justify-end">
           <Button onClick={() => void onSubmit()} loading={submitting}>

@@ -2620,7 +2620,28 @@
         },
         "members": {
           "placeholderTitle": "Members tab — Sprint 7.E wires the real list.",
-          "placeholderBody": "Today the Members link from /admin/roles opens the editor; the assignment view ships next. The People table on /admin/organization can already filter by role indirectly via users.read."
+          "placeholderBody": "Today the Members link from /admin/roles opens the editor; the assignment view ships next. The People table on /admin/organization can already filter by role indirectly via users.read.",
+          "loading": "Loading members…",
+          "count": "{n} of {total} members",
+          "openOrganization": "Open Organization",
+          "truncated": "Showing the first {n} of {total} users. Pagination ships when usersApi.list gets a roleId page-cursor; until then narrow the role pool or filter on /admin/users.",
+          "noAccess": {
+            "title": "Members list hidden",
+            "body": "You don't have users.read. Ask an admin to grant it if you need to audit who holds this role."
+          },
+          "empty": {
+            "title": "No users hold this role yet.",
+            "body": "Assign someone from the Users admin page or via the Organization people table."
+          },
+          "noTeam": "No team",
+          "viewOnly": "View only",
+          "edit": "Edit",
+          "columns": {
+            "user": "User",
+            "team": "Team",
+            "status": "Status",
+            "actions": "Actions"
+          }
         },
         "advanced": {
           "title": "Advanced controls",
@@ -2660,6 +2681,17 @@
         "emptyFiltered": {
           "title": "No field rows match the current filter.",
           "body": "Try clearing the search or switching back to All."
+        }
+      },
+      "scopeHybrid": {
+        "whereApplies": "Where does this role apply? Pick one scope per resource — broader scopes carry more risk.",
+        "openOrganization": "Open Organization & Headcount",
+        "description": {
+          "own": "Only rows owned by the user.",
+          "team": "Rows owned by anyone on the same team.",
+          "company": "Rows under the user's assigned company scope.",
+          "country": "Rows under the user's assigned country scope.",
+          "global": "Every row in the tenant. Use sparingly."
         }
       }
     },
