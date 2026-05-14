@@ -3415,7 +3415,12 @@
       "markRead": "Mark read",
       "markAllRead": "Mark all read",
       "loading": "Loading…",
-      "empty": "No notifications."
+      "empty": "No notifications.",
+      "toast": {
+        "requestSubmitted": "Approval request submitted.",
+        "approved": "Transition approved.",
+        "rejected": "Transition rejected. The requester has been notified."
+      }
     }
   },
   "agent": {
