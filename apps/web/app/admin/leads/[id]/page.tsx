@@ -13,6 +13,7 @@ import {
   Mail,
   Phone,
   PhoneCall,
+  Plus,
   Repeat2,
   StickyNote,
   Trophy,
@@ -27,6 +28,7 @@ import { Field, Select, Textarea } from '@/components/ui/input';
 import { LifecycleBadge } from '@/components/ui/lifecycle-badge';
 import { FieldGated } from '@/components/ui/field-gated';
 import { Notice } from '@/components/ui/notice';
+import { Tabs, TabPanel, type TabDescriptor } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { LostReasonModal, type LostReasonResult } from '@/components/admin/lost-reason-modal';
 import { FollowUpQuickModal } from '@/components/admin/follow-up-quick-modal';
@@ -43,6 +45,7 @@ import { ListNavigator } from '@/components/admin/lead-detail/list-navigator';
 import { NextActionCard } from '@/components/admin/lead-detail/next-action-card';
 import { StageStatusSlot } from '@/components/admin/lead-detail/stage-status-slot';
 import { JourneyBar } from '@/components/admin/lead-detail/journey-bar';
+import { AddActionDrawer } from '@/components/admin/lead-detail/add-action-drawer';
 import {
   AttributionCard,
   LastActivityCard,
@@ -187,6 +190,22 @@ export default function LeadDetailPage(): JSX.Element {
   const [rotateOpen, setRotateOpen] = useState<boolean>(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [rotateSubmitting, setRotateSubmitting] = useState<boolean>(false);
+
+  // Sprint 2.A — Smart Tabs. Default to Overview; deep-link via URL
+  // ?tab=… is a polish item for a later sprint.
+  type LeadDetailTab =
+    | 'overview'
+    | 'profile'
+    | 'partnerPresence'
+    | 'documents'
+    | 'operations'
+    | 'audit';
+  const [activeTab, setActiveTab] = useState<LeadDetailTab>('overview');
+
+  // Sprint 2.B — Add Action drawer state. Single entry point that
+  // routes to lifecycle / profile / documents / partner-data / note
+  // panels (each surfacing its own write path).
+  const [addActionOpen, setAddActionOpen] = useState<boolean>(false);
 
   // Tick once a minute so relative-time labels stay fresh in the
   // NextActionCard ("Due in 2 min" → "Due in 1 min" → "Overdue 1 min").
@@ -758,7 +777,8 @@ export default function LeadDetailPage(): JSX.Element {
         </div>
       </section>
 
-      {/* ───── Quick actions bar (B1: + Follow-up added) ───── */}
+      {/* ───── Quick actions bar (B1: + Follow-up added; Sprint 2.B:
+              + Add Action primary CTA) ───── */}
       <QuickActionsBar
         phone={lead.phone}
         currentStageCode={lead.stage.code}
@@ -767,11 +787,13 @@ export default function LeadDetailPage(): JSX.Element {
         setStageMenuOpen={setStageMenuOpen}
         disabled={isConverted}
         actionPending={actionPending}
+        onAddAction={() => setAddActionOpen(true)}
         onCall={() => focusComposer('call')}
         onAddNote={() => focusComposer('note')}
         onAddFollowUp={() => setFollowUpModalOpen(true)}
         onPickStage={(c) => void quickMoveToStage(c)}
         labels={{
+          addAction: tDetail('quickActions.addAction'),
           call: tDetail('quickActions.call'),
           addNote: tDetail('quickActions.addNote'),
           addFollowUp: tDetail('quickActions.addFollowUp'),
@@ -792,321 +814,442 @@ export default function LeadDetailPage(): JSX.Element {
       ) : null}
       {notice ? <Notice tone="success">{notice}</Notice> : null}
 
-      {/* ───── Two-column body: timeline left, action stack right ───── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        {/* Left: activity timeline + add-activity composer */}
-        <div className="flex flex-col gap-4">
-          {/* Add activity composer */}
-          <section
-            ref={composerSectionRef}
-            id="lead-activity-composer"
-            className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card"
-          >
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-primary">
-              <StickyNote className="h-4 w-4 text-brand-700" aria-hidden="true" />
-              {tDetail('logActivity')}
-            </h2>
-            <form onSubmit={onAddActivity} className="flex flex-col gap-3">
-              <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
-                <Field label={t('addActivityType')}>
-                  <Select
-                    value={activityType}
-                    onChange={(e) => setActivityType(e.target.value as 'note' | 'call')}
-                  >
-                    <option value="note">{t('addNote')}</option>
-                    <option value="call">{t('addCall')}</option>
-                  </Select>
-                </Field>
-                <Field label={t('addActivityBody')}>
-                  <Textarea
-                    ref={composerTextareaRef}
-                    value={activityBody}
-                    onChange={(e) => setActivityBody(e.target.value)}
-                    maxLength={4000}
-                    placeholder={
-                      activityType === 'call'
-                        ? tDetail('callPlaceholder')
-                        : tDetail('notePlaceholder')
-                    }
-                    rows={3}
-                  />
-                </Field>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <span className="text-xs text-ink-tertiary">{activityBody.length}/4000</span>
-                <Button
-                  type="submit"
-                  loading={actionPending === 'activity'}
-                  disabled={!activityBody.trim()}
-                >
-                  {tDetail('postActivity')}
-                </Button>
-              </div>
-            </form>
-          </section>
+      {/* ───── Sprint 2.A — Hero row: One Primary Next Action +
+              Stage Context Panel (status picker). These two surfaces
+              are always visible above the tabs so the agent never
+              has to switch tabs to see "what's the next thing"
+              and "what's the lead's current operational state". */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <NextActionCard
+          next={nextFollowUp}
+          now={tickNow}
+          busy={actionPending !== null}
+          onComplete={onCompleteFollowUp}
+          onSnooze={(f) => setSnoozeFor(f)}
+          onAdd={() => setFollowUpModalOpen(true)}
+        />
+        <StageStatusPicker
+          leadId={lead.id}
+          refreshKey={lead.updatedAt}
+          onChanged={() => void reload()}
+        />
+      </div>
 
-          {/* Activity timeline (B2) — chat-like, merges follow-up
+      {/* ───── Sprint 2.A — Smart Tabs ───── */}
+      <Tabs<LeadDetailTab>
+        value={activeTab}
+        onChange={setActiveTab}
+        ariaLabel={tDetail('tabs.ariaLabel')}
+        tabs={
+          [
+            { id: 'overview', label: tDetail('tabs.overview') },
+            { id: 'profile', label: tDetail('tabs.profile') },
+            { id: 'partnerPresence', label: tDetail('tabs.partnerPresence') },
+            { id: 'documents', label: tDetail('tabs.documents') },
+            { id: 'operations', label: tDetail('tabs.operations') },
+            { id: 'audit', label: tDetail('tabs.audit') },
+          ] as ReadonlyArray<TabDescriptor<LeadDetailTab>>
+        }
+      />
+
+      {/* ───── Overview tab: activity timeline + supporting context.
+              Existing 2-column layout preserved verbatim — only the
+              StageStatusPicker + NextActionCard were promoted up to
+              the hero row above; everything else stays in the
+              right-aside column. ───── */}
+      <TabPanel id="overview" active={activeTab === 'overview'}>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          {/* Left: activity timeline + add-activity composer */}
+          <div className="flex flex-col gap-4">
+            {/* Add activity composer */}
+            <section
+              ref={composerSectionRef}
+              id="lead-activity-composer"
+              className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card"
+            >
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink-primary">
+                <StickyNote className="h-4 w-4 text-brand-700" aria-hidden="true" />
+                {tDetail('logActivity')}
+              </h2>
+              <form onSubmit={onAddActivity} className="flex flex-col gap-3">
+                <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
+                  <Field label={t('addActivityType')}>
+                    <Select
+                      value={activityType}
+                      onChange={(e) => setActivityType(e.target.value as 'note' | 'call')}
+                    >
+                      <option value="note">{t('addNote')}</option>
+                      <option value="call">{t('addCall')}</option>
+                    </Select>
+                  </Field>
+                  <Field label={t('addActivityBody')}>
+                    <Textarea
+                      ref={composerTextareaRef}
+                      value={activityBody}
+                      onChange={(e) => setActivityBody(e.target.value)}
+                      maxLength={4000}
+                      placeholder={
+                        activityType === 'call'
+                          ? tDetail('callPlaceholder')
+                          : tDetail('notePlaceholder')
+                      }
+                      rows={3}
+                    />
+                  </Field>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs text-ink-tertiary">{activityBody.length}/4000</span>
+                  <Button
+                    type="submit"
+                    loading={actionPending === 'activity'}
+                    disabled={!activityBody.trim()}
+                  >
+                    {tDetail('postActivity')}
+                  </Button>
+                </div>
+              </form>
+            </section>
+
+            {/* Activity timeline (B2) — chat-like, merges follow-up
               events into the activity stream. Bucketed by day with
               "Today" / "Yesterday" / dated separators. */}
-          <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
-            <h2 className="mb-4 text-sm font-semibold text-ink-primary">
-              {t('activitiesTitle')}
-              <span className="ms-2 text-xs font-normal text-ink-tertiary">
-                ({activities.length + followUps.length})
-              </span>
-            </h2>
-            <ActivityTimeline
-              activities={activities}
-              followUps={followUps}
-              now={now}
-              locale={locale}
-              stageLabel={stageLabel}
-              userLabel={userLabel}
-              tDetail={tDetail}
-              formatRelative={(target) => formatRelative(target, now, locale)}
+            <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+              <h2 className="mb-4 text-sm font-semibold text-ink-primary">
+                {t('activitiesTitle')}
+                <span className="ms-2 text-xs font-normal text-ink-tertiary">
+                  ({activities.length + followUps.length})
+                </span>
+              </h2>
+              <ActivityTimeline
+                activities={activities}
+                followUps={followUps}
+                now={now}
+                locale={locale}
+                stageLabel={stageLabel}
+                userLabel={userLabel}
+                tDetail={tDetail}
+                formatRelative={(target) => formatRelative(target, now, locale)}
+              />
+            </section>
+          </div>
+
+          {/* Right: supporting context cards (NextActionCard +
+            StageStatusPicker moved up to the hero row in Sprint 2.A). */}
+          <aside className="flex flex-col gap-3">
+            <LastActivityCard
+              activity={lastActivity}
+              relativeTime={
+                lastActivity ? formatRelative(new Date(lastActivity.createdAt), now, locale) : null
+              }
+              authorLabel={
+                lastActivity
+                  ? `${tDetail('activityAuthorBy')} ${
+                      lastActivity.createdById !== null
+                        ? userLabel(lastActivity.createdById)
+                        : tDetail('systemAuthor')
+                    }`
+                  : ''
+              }
+              summary={
+                lastActivity
+                  ? formatActivitySummary(
+                      lastActivity,
+                      readPayload(lastActivity.payload),
+                      stageLabel,
+                      userLabel,
+                      tDetail,
+                    )
+                  : null
+              }
+              label={tDetail('lastActivity.label')}
+              emptyLabel={tDetail('lastActivity.empty')}
+              typeLabel={(type) => tDetail(`activity.type.${type}`)}
             />
-          </section>
-        </div>
 
-        {/* Right: action stack — Next Action is the visual hero;
-            everything else is supporting context. */}
-        <aside className="flex flex-col gap-3">
-          {/* Phase D3 — D3.3: stage-specific status picker. Renders
-              null when the user lacks `lead.stage.status.write`. The
-              `lead.id`-keyed `refreshKey` re-fetches when stage moves
-              clear `currentStageStatusId` server-side. */}
-          <StageStatusPicker
-            leadId={lead.id}
-            refreshKey={lead.updatedAt}
-            onChanged={() => void reload()}
-          />
-          <NextActionCard
-            next={nextFollowUp}
-            now={tickNow}
-            busy={actionPending !== null}
-            onComplete={onCompleteFollowUp}
-            onSnooze={(f) => setSnoozeFor(f)}
-            onAdd={() => setFollowUpModalOpen(true)}
-          />
+            <SlaCard
+              status={lead.slaStatus}
+              dueRelative={slaDueRelative}
+              label={tDetail('slaLabel')}
+              dueLabel={tDetail('slaDue')}
+            />
 
-          <LastActivityCard
-            activity={lastActivity}
-            relativeTime={
-              lastActivity ? formatRelative(new Date(lastActivity.createdAt), now, locale) : null
-            }
-            authorLabel={
-              lastActivity
-                ? `${tDetail('activityAuthorBy')} ${
-                    lastActivity.createdById !== null
-                      ? userLabel(lastActivity.createdById)
-                      : tDetail('systemAuthor')
-                  }`
-                : ''
-            }
-            summary={
-              lastActivity
-                ? formatActivitySummary(
-                    lastActivity,
-                    readPayload(lastActivity.payload),
-                    stageLabel,
-                    userLabel,
-                    tDetail,
-                  )
-                : null
-            }
-            label={tDetail('lastActivity.label')}
-            emptyLabel={tDetail('lastActivity.empty')}
-            typeLabel={(type) => tDetail(`activity.type.${type}`)}
-          />
+            <AttributionCard
+              attribution={lead.attribution ?? null}
+              fallbackSource={lead.source}
+              label={tDetail('attribution.label')}
+              emptyLabel={tDetail('attribution.empty')}
+            />
 
-          <SlaCard
-            status={lead.slaStatus}
-            dueRelative={slaDueRelative}
-            label={tDetail('slaLabel')}
-            dueLabel={tDetail('slaDue')}
-          />
-
-          <AttributionCard
-            attribution={lead.attribution ?? null}
-            fallbackSource={lead.source}
-            label={tDetail('attribution.label')}
-            emptyLabel={tDetail('attribution.empty')}
-          />
-
-          {/* Phase D2 — D2.5: returning-lead context. Renders nothing
+            {/* Phase D2 — D2.5: returning-lead context. Renders nothing
               for first-attempt rows; surfaces the attempt timeline +
               out-of-scope hint for multi-attempt cases. */}
-          <AttemptsHistoryCard leadId={lead.id} />
+            <AttemptsHistoryCard leadId={lead.id} />
 
-          {/* Phase D3 — D3.4: rotation history. Renders nothing when
+            {/* Phase D3 — D3.4: rotation history. Renders nothing when
               no rotations exist; a sales-agent-shaped role sees a
               single neutral chip ("Handled previously") instead of
               the full from/to chain. */}
-          <RotationHistoryCard leadId={lead.id} />
+            <RotationHistoryCard leadId={lead.id} />
 
-          {/* Phase D4 — D4.4: read-only Partner Data card. The
+            {/* Phase D4 — D4.4: read-only Partner Data card. The
               component returns `null` for callers without
               `partner.verification.read` (sales agents in D4.4),
               so the section is invisible to them. TLs / Ops /
               Account Manager / Super Admin see the projection. */}
-          <PartnerDataCard leadId={lead.id} />
+            <PartnerDataCard leadId={lead.id} />
 
-          {/* Phase D4 — D4.8: EvidenceCard. Read-only list of
+            {/* Phase D4 — D4.8: EvidenceCard. Read-only list of
               `LeadEvidence` rows attached to this lead — surfaces
               what merges / evidence-only attaches happened
               historically. Returns null for callers without
               `partner.verification.read`, so it is invisible to
               sales agents. */}
-          <EvidenceCard leadId={lead.id} />
+            <EvidenceCard leadId={lead.id} />
 
-          {/* Captain card — only when converted */}
-          {isConverted ? (
-            <section className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-4 shadow-card">
-              <header className="mb-2 flex items-center gap-2">
-                <Trophy className="h-4 w-4 text-status-healthy" aria-hidden="true" />
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-                  {tDetail('captainLabel')}
-                </h3>
-              </header>
-              <p className="text-sm font-medium text-status-healthy">
-                {lead.captain?.onboardingStatus
-                  ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
-                  : tDetail('captainBadge')}
-              </p>
-              <Link
-                href="/admin/captains"
-                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-              >
-                {tDetail('viewCaptain')}
-              </Link>
-            </section>
-          ) : null}
+            {/* Captain card — only when converted */}
+            {isConverted ? (
+              <section className="rounded-lg border border-status-healthy/30 bg-status-healthy/5 p-4 shadow-card">
+                <header className="mb-2 flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-status-healthy" aria-hidden="true" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                    {tDetail('captainLabel')}
+                  </h3>
+                </header>
+                <p className="text-sm font-medium text-status-healthy">
+                  {lead.captain?.onboardingStatus
+                    ? tDetail('captainOnboarding', { status: lead.captain.onboardingStatus })
+                    : tDetail('captainBadge')}
+                </p>
+                <Link
+                  href="/admin/captains"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                >
+                  {tDetail('viewCaptain')}
+                </Link>
+              </section>
+            ) : null}
 
-          {/* Lost reason card — only when lost */}
-          {lead.lifecycleState === 'lost' && lead.lostReasonId ? (
-            <section className="rounded-lg border border-status-breach/30 bg-status-breach/5 p-4 shadow-card">
-              <header className="mb-2 flex items-center gap-2">
-                <XCircle className="h-4 w-4 text-status-breach" aria-hidden="true" />
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-                  {tDetail('lostReasonLabel')}
-                </h3>
-              </header>
-              <p className="text-sm font-medium text-ink-primary">
-                {lostReasonsById.get(lead.lostReasonId)
-                  ? locale === 'ar'
-                    ? lostReasonsById.get(lead.lostReasonId)!.labelAr
-                    : lostReasonsById.get(lead.lostReasonId)!.labelEn
-                  : '—'}
-              </p>
-              {lead.lostNote ? (
-                <p className="mt-1 text-xs text-ink-secondary">{lead.lostNote}</p>
-              ) : null}
-            </section>
-          ) : null}
+            {/* Lost reason card — only when lost */}
+            {lead.lifecycleState === 'lost' && lead.lostReasonId ? (
+              <section className="rounded-lg border border-status-breach/30 bg-status-breach/5 p-4 shadow-card">
+                <header className="mb-2 flex items-center gap-2">
+                  <XCircle className="h-4 w-4 text-status-breach" aria-hidden="true" />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                    {tDetail('lostReasonLabel')}
+                  </h3>
+                </header>
+                <p className="text-sm font-medium text-ink-primary">
+                  {lostReasonsById.get(lead.lostReasonId)
+                    ? locale === 'ar'
+                      ? lostReasonsById.get(lead.lostReasonId)!.labelAr
+                      : lostReasonsById.get(lead.lostReasonId)!.labelEn
+                    : '—'}
+                </p>
+                {lead.lostNote ? (
+                  <p className="mt-1 text-xs text-ink-secondary">{lead.lostNote}</p>
+                ) : null}
+              </section>
+            ) : null}
 
-          {/* Admin actions — assign + convert. Move stage lives in the
+            {/* Admin actions — assign + convert. Move stage lives in the
               top quick-actions bar; we don't duplicate it here. */}
-          <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
-            <header className="mb-3 flex items-center gap-2">
-              <UserCog className="h-4 w-4 text-brand-700" aria-hidden="true" />
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-                {tDetail('adminActions.title')}
-              </h3>
-            </header>
+            <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+              <header className="mb-3 flex items-center gap-2">
+                <UserCog className="h-4 w-4 text-brand-700" aria-hidden="true" />
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                  {tDetail('adminActions.title')}
+                </h3>
+              </header>
 
-            <div className="flex flex-col gap-2">
-              <Field label={t('assignAction')}>
-                {/* Phase C — C6: edit-mode FieldGated. When the role
+              <div className="flex flex-col gap-2">
+                <Field label={t('assignAction')}>
+                  {/* Phase C — C6: edit-mode FieldGated. When the role
                     can't write `assignedToId`, the Select is rendered
                     disabled / readOnly so the agent sees the current
                     value but can't change it. The server (C5) silently
                     no-ops the write either way. */}
+                  <FieldGated resource="lead" field="assignedToId" mode="edit">
+                    <Select
+                      value={assigneeId}
+                      onChange={(e) => setAssigneeId(e.target.value)}
+                      disabled={isConverted}
+                    >
+                      <option value="">{tDetail('unassigned')}</option>
+                      {activeUsers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name} ({u.email})
+                        </option>
+                      ))}
+                    </Select>
+                  </FieldGated>
+                </Field>
                 <FieldGated resource="lead" field="assignedToId" mode="edit">
-                  <Select
-                    value={assigneeId}
-                    onChange={(e) => setAssigneeId(e.target.value)}
-                    disabled={isConverted}
+                  <Button
+                    onClick={() => void onAssign()}
+                    loading={actionPending === 'assign'}
+                    disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
+                    size="sm"
                   >
-                    <option value="">{tDetail('unassigned')}</option>
-                    {activeUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.email})
-                      </option>
-                    ))}
-                  </Select>
+                    {tDetail('saveAssignee')}
+                  </Button>
                 </FieldGated>
-              </Field>
-              <FieldGated resource="lead" field="assignedToId" mode="edit">
+              </div>
+
+              <hr className="my-3 border-surface-border" />
+
+              <div className="flex flex-col gap-2">
                 <Button
-                  onClick={() => void onAssign()}
-                  loading={actionPending === 'assign'}
-                  disabled={isConverted || (assigneeId || '') === (lead.assignedToId ?? '')}
+                  variant="primary"
+                  onClick={() => {
+                    setConvertError(null);
+                    setConvertModalOpen(true);
+                  }}
+                  loading={actionPending === 'convert'}
+                  disabled={isConverted || isLost}
                   size="sm"
                 >
-                  {tDetail('saveAssignee')}
+                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  {isConverted ? t('convertedAlready') : t('convertAction')}
                 </Button>
-              </FieldGated>
-            </div>
+                {isLost ? (
+                  <p className="text-xs text-ink-tertiary">{tDetail('cantConvertLost')}</p>
+                ) : null}
 
-            <hr className="my-3 border-surface-border" />
-
-            <div className="flex flex-col gap-2">
-              <Button
-                variant="primary"
-                onClick={() => {
-                  setConvertError(null);
-                  setConvertModalOpen(true);
-                }}
-                loading={actionPending === 'convert'}
-                disabled={isConverted || isLost}
-                size="sm"
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                {isConverted ? t('convertedAlready') : t('convertAction')}
-              </Button>
-              {isLost ? (
-                <p className="text-xs text-ink-tertiary">{tDetail('cantConvertLost')}</p>
-              ) : null}
-
-              {/* Phase D2 — D2.6: manual reactivation override. Only
+                {/* Phase D2 — D2.6: manual reactivation override. Only
                   surfaced when the user holds `lead.reactivate` AND
                   the lead is closed (won / lost / archived). The
                   checkbox-gated modal handles the confirmation. */}
-              {hasCapability('lead.reactivate') && lead.lifecycleState !== 'open' ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setReactivateError(null);
-                    setReactivateOpen(true);
-                  }}
-                  size="sm"
-                >
-                  <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  {tDetail('reactivate.action')}
-                </Button>
-              ) : null}
+                {hasCapability('lead.reactivate') && lead.lifecycleState !== 'open' ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setReactivateError(null);
+                      setReactivateOpen(true);
+                    }}
+                    size="sm"
+                  >
+                    <Repeat2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {tDetail('reactivate.action')}
+                  </Button>
+                ) : null}
 
-              {/* Phase D3 — D3.4: rotate CTA. Surfaced only when the
+                {/* Phase D3 — D3.4: rotate CTA. Surfaced only when the
                   user holds `lead.rotate` (TL+ / Ops). Hidden for
                   agents. The modal opens with current owner pre-shown
                   and three handover-mode radio cards. */}
-              {hasCapability('lead.rotate') ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setRotateError(null);
-                    setRotateOpen(true);
-                  }}
-                  size="sm"
-                >
-                  <ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                  {tDetail('rotate.action')}
-                </Button>
-              ) : null}
-            </div>
-          </section>
-        </aside>
-      </div>
+                {hasCapability('lead.rotate') ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setRotateError(null);
+                      setRotateOpen(true);
+                    }}
+                    size="sm"
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                    {tDetail('rotate.action')}
+                  </Button>
+                ) : null}
+              </div>
+            </section>
+          </aside>
+        </div>
+      </TabPanel>
+
+      {/* ───── Profile tab ─────
+          Sprint 2.A — placeholder shell. Sprint 2.D wires the
+          editable fields (contact / location / vehicle / acquisition
+          / assignment) with FieldGated for D5 field-level access.
+          Backend write path is the existing `PATCH /leads/:id`
+          endpoint — no API gap here. */}
+      <TabPanel id="profile" active={activeTab === 'profile'}>
+        <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+          <EmptyState
+            title={tDetail('tabs.profilePending.title')}
+            body={tDetail('tabs.profilePending.description')}
+          />
+        </section>
+      </TabPanel>
+
+      {/* ───── Partner Presence tab ─────
+          Sprint 2.A — surfaces the existing Partner Data + Evidence
+          read-only cards (D4.4 + D4.8). Sprint 4 expands this into
+          the multi-partner per-contact journey matrix; for now we
+          show what's there with an empty-state hint when no
+          partner data exists. */}
+      <TabPanel id="partnerPresence" active={activeTab === 'partnerPresence'}>
+        <div className="flex flex-col gap-3">
+          <PartnerDataCard leadId={lead.id} />
+          <EvidenceCard leadId={lead.id} />
+          <Notice tone="info">{tDetail('tabs.partnerPresenceHint')}</Notice>
+        </div>
+      </TabPanel>
+
+      {/* ───── Documents tab ─────
+          Sprint 2.A — placeholder shell. Sprint 2.E adds the
+          Uploaded / Accepted / Rejected / Missing / Needs
+          Resubmission status panels.
+          Backend gap: no document upload / accept endpoints exist
+          yet (no LeadDocument model in prisma). Sprint 2.E will
+          list the exact backend gap and show an empty UI scaffold;
+          Sprint 4 / D4 likely adds the model. */}
+      <TabPanel id="documents" active={activeTab === 'documents'}>
+        <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+          <EmptyState
+            title={tDetail('tabs.documentsPending.title')}
+            body={tDetail('tabs.documentsPending.description')}
+          />
+        </section>
+      </TabPanel>
+
+      {/* ───── Operations tab ─────
+          Sprint 2.A — placeholder shell. Sprint 2.D / 2.C move the
+          assign / convert / reactivate / rotate admin actions plus
+          the SLA / Attempts / Rotation history cards into this
+          tab. For now the Operations tab points at the existing
+          surfaces (those still render inside Overview's aside). */}
+      <TabPanel id="operations" active={activeTab === 'operations'}>
+        <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+          <EmptyState
+            title={tDetail('tabs.operationsPending.title')}
+            body={tDetail('tabs.operationsPending.description')}
+          />
+        </section>
+      </TabPanel>
+
+      {/* ───── Audit tab ─────
+          Sprint 2.A — link out to the tenant-wide Audit Log page
+          pre-filtered by this lead's id. The full embedded audit
+          view (with field-permission gates) lands in a future
+          sprint; for now we point the operator at the place where
+          the same data is already surfaced. */}
+      <TabPanel id="audit" active={activeTab === 'audit'}>
+        <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+          <EmptyState
+            title={tDetail('tabs.auditPending.title')}
+            body={tDetail('tabs.auditPending.description')}
+            action={
+              <Link
+                href={`/admin/audit?entityId=${encodeURIComponent(lead.id)}`}
+                className="inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline"
+              >
+                {tDetail('tabs.auditOpenFullAudit')}
+              </Link>
+            }
+          />
+        </section>
+      </TabPanel>
+
+      {/* Sprint 2.B — Add Action drawer. Unified entry for any
+          lead update. Internal router screen lets the agent pick
+          an intent (Lifecycle / Profile / Documents / Partner /
+          Note) before showing the focused panel. */}
+      <AddActionDrawer
+        open={addActionOpen}
+        onClose={() => setAddActionOpen(false)}
+        lead={lead}
+        onApplied={() => void reload()}
+      />
 
       {/* Phase A — A6: lost-reason modal. Opens when the agent
           picks a stage with terminalKind='lost'. The modal returns
@@ -1201,12 +1344,15 @@ interface QuickActionsBarProps {
   setStageMenuOpen: (open: boolean) => void;
   disabled: boolean;
   actionPending: string | null;
+  /** Sprint 2.B — opens the unified Add Action drawer. */
+  onAddAction: () => void;
   onCall: () => void;
   onAddNote: () => void;
   /** Phase B — B1: opens the FollowUpQuickModal. */
   onAddFollowUp: () => void;
   onPickStage: (code: LeadStageCode) => void;
   labels: {
+    addAction: string;
     call: string;
     addNote: string;
     addFollowUp: string;
@@ -1232,6 +1378,7 @@ function QuickActionsBar({
   setStageMenuOpen,
   disabled,
   actionPending,
+  onAddAction,
   onCall,
   onAddNote,
   onAddFollowUp,
@@ -1260,10 +1407,19 @@ function QuickActionsBar({
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+      {/* Sprint 2.B — unified Add Action entry. First button so it
+          reads as the primary path for any lead update; the
+          existing call / note / follow-up buttons remain as quick
+          shortcuts for the high-frequency cases. */}
+      <Button variant="primary" size="md" onClick={onAddAction} disabled={disabled}>
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        {labels.addAction}
+      </Button>
+
       <a
         href={`tel:${phone}`}
         onClick={onCall}
-        className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-surface-border bg-surface-card px-4 text-sm font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
       >
         <PhoneCall className="h-4 w-4" aria-hidden="true" />
         {labels.call}

@@ -32,6 +32,23 @@ export class PipelineService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Stages of the calling tenant's default pipeline, sorted by order. */
+  /**
+   * Stages of the calling tenant's default pipeline, sorted by order.
+   *
+   * Sprint 2.1 — also returns `lifecycleCategory` (the Sprint 1.A
+   * column on pipeline_stages) and `allowedStatuses` (the existing
+   * JSONB catalogue, already exposed per-lead via
+   * `getStageStatuses`). Exposing both off the catalogue surface
+   * lets the Add Action → Lifecycle drawer load Next Status
+   * options for ANY selected stage, not just the lead's current
+   * one — closing the Sprint 2 gap that bumped cross-stage
+   * lifecycle movement out to the QuickActionsBar.
+   *
+   * Capability gate stays `pipeline.read` (no new caps). The
+   * `allowedStatuses` value is the unparsed JSONB blob — callers
+   * that need rule validation re-run the existing
+   * `parseAllowedStatusesJson` helper at the consumer.
+   */
   list() {
     return this.prisma.withTenant(requireTenantId(), async (tx) => {
       const pipelineId = await this.findDefaultPipelineIdInTx(tx);
@@ -45,6 +62,8 @@ export class PipelineService {
           order: true,
           isTerminal: true,
           terminalKind: true,
+          lifecycleCategory: true,
+          allowedStatuses: true,
         },
       });
     });

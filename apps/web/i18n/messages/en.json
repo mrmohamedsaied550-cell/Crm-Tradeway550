@@ -113,7 +113,8 @@
       "clearFilters": "Clear filters",
       "errorTitle": "Couldn't load data",
       "select": "Select…",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "close": "Close"
     },
     "companies": {
       "title": "Companies",
@@ -407,17 +408,168 @@
             "dft": "DFT"
           }
         },
+        "tabs": {
+          "ariaLabel": "Lead detail sections",
+          "overview": "Overview",
+          "profile": "Profile",
+          "partnerPresence": "Partner Presence",
+          "documents": "Documents",
+          "operations": "Operations",
+          "audit": "Audit",
+          "profilePending": {
+            "title": "Profile editor coming next",
+            "description": "Sprint 2.D will surface contact, location, vehicle, acquisition and assignment fields here with field-level access still respected."
+          },
+          "partnerPresenceHint": "Sprint 4 expands this into the per-partner journey matrix (Uber / inDrive / DiDi / Careem / Yango). Today this tab shows the existing partner data + evidence projections.",
+          "documentsPending": {
+            "title": "Documents tab coming next",
+            "description": "Sprint 2.E adds the Uploaded / Accepted / Rejected / Missing / Needs Resubmission states. Backend gap: no LeadDocument model exists yet — that lands in a later sprint."
+          },
+          "operationsPending": {
+            "title": "Operations tab coming next",
+            "description": "Sprint 2.D regroups assign, convert, reactivate, rotate, SLA and rotation history here. Until then these live in the Overview tab's right column."
+          },
+          "auditPending": {
+            "title": "Audit",
+            "description": "All audit entries for this lead are visible in the tenant-wide Audit Log, filtered by entity id."
+          },
+          "auditOpenFullAudit": "Open full audit log →"
+        },
         "captainOnboarding": "Captain · {status}",
         "captainNotYet": "Not converted yet",
         "captainLost": "Marked as lost",
         "lostReasonLabel": "Lost reason",
         "viewCaptain": "View captain →",
         "quickActions": {
+          "addAction": "+ Add action",
           "call": "Call",
           "addNote": "Add note",
           "addFollowUp": "+ Follow-up",
           "moveStage": "Move stage",
           "terminalHint": "Lead is in a terminal stage"
+        },
+        "addAction": {
+          "routerTitle": "Add action",
+          "routerPrompt": "What do you want to update on this lead?",
+          "backToRouter": "Back",
+          "areas": {
+            "lifecycle": {
+              "title": "Lifecycle / Stage & Status",
+              "description": "Move the lead through the journey, set a new stage status, schedule the next action.",
+              "currentLabel": "Current",
+              "noStatusYet": "No status recorded for this stage yet",
+              "noStatusesTitle": "No statuses configured for this stage",
+              "noStatusesDescription": "An admin needs to add status entries to this stage's allowedStatuses catalogue before agents can record a status update here. Sprint 7's Lifecycle Builder UI will surface this configuration.",
+              "noData": "Could not load stage data.",
+              "nextStageLabel": "Next stage",
+              "sameStageHint": "current",
+              "transitionPreviewTitle": "Cross-stage transition",
+              "transitionPreviewBody": "This will move the lead from {from} to {to}. The lifecycle classifier, SLA timer, and activity timeline all update server-side as part of the move.",
+              "lostStageBlocker": "Moving to a lost stage requires a reason. Use the existing Move stage → Lost button on the Quick actions bar; Sprint 3 unifies these paths.",
+              "nextStatusLabel": "Next status",
+              "nextStatusPlaceholder": "Pick the new status…",
+              "nextStatusOptionalPlaceholder": "No status change (just move the stage)",
+              "communicationLabel": "Communication method",
+              "notesLabel": "Notes",
+              "notesPlaceholder": "Optional context — what happened, what the captain said, what to follow up on.",
+              "submit": "Save status update",
+              "submitMoveOnly": "Move stage",
+              "communication": {
+                "call": "Call",
+                "whatsapp": "WhatsApp",
+                "sms": "SMS",
+                "manual": "Manual / in-person",
+                "partner_sheet": "Partner sheet",
+                "system": "System"
+              },
+              "rules": {
+                "requiresFollowUp": {
+                  "title": "A follow-up will be scheduled",
+                  "suggested": "Suggested action: {title}",
+                  "dueAtLabel": "Due at"
+                },
+                "requiresReason": {
+                  "title": "A reason is required",
+                  "description": "This status requires a reason. Sprint 3 surfaces the reason picker; for now the agent should capture the reason in the notes field below.",
+                  "descriptionWithGroup": "This status requires a reason from the \"{group}\" catalogue. Sprint 3 surfaces the reason picker; for now the agent should capture the reason in the notes field below."
+                },
+                "closeJourney": {
+                  "lost": {
+                    "title": "This will mark the lead as LOST",
+                    "description": "Saving this status closes the lead. Use the existing Move stage → Lost flow for the full lost-reason capture (Sprint 3 unifies these paths)."
+                  },
+                  "rejected": {
+                    "title": "This will mark the lead as REJECTED",
+                    "description": "Saving this status closes the lead as rejected. The full reason-capture modal is reachable via Move stage today; Sprint 3 unifies the paths."
+                  },
+                  "not_qualified": {
+                    "title": "This will mark the lead as NOT QUALIFIED",
+                    "description": "Saving this status closes the lead as not qualified. The full reason-capture modal is reachable via Move stage today; Sprint 3 unifies the paths."
+                  }
+                },
+                "convertToCaptain": {
+                  "title": "This will trigger Lead → Captain conversion",
+                  "description": "Saving this status surfaces the conversion preview. Use the existing Convert button in Operations until Sprint 3 wires the inline flow."
+                },
+                "requiresApproval": {
+                  "title": "Approval required before this transition takes effect",
+                  "description": "Sprint 3 wires the approval engine. Today the status will save in pending-approval state — a TL or Ops user will still need to confirm via the existing surface."
+                },
+                "autoMoveStage": {
+                  "title": "Stage will auto-advance",
+                  "description": "Once Sprint 3 wires auto-move, this status will move the lead to stage code: {next}."
+                },
+                "requiredChecks": {
+                  "title": "Required pre-conditions"
+                }
+              },
+              "pendingTitle": "Lifecycle action coming next",
+              "pendingDescription": "Sprint 2.C wires Next Stage / Next Status pickers, communication method, follow-up auto-creation, reason capture, close / convert / approval previews — all driven by the Smart Status Rule schema shipped in Sprint 1.A."
+            },
+            "profile": {
+              "title": "Profile info",
+              "description": "Update contact, location, vehicle, acquisition and assignment fields.",
+              "nameLabel": "Name",
+              "phoneLabel": "Phone",
+              "emailLabel": "Email",
+              "submit": "Save profile",
+              "placeholders": {
+                "heading": "Coming in later sprints (backend schema gap)",
+                "location": "Location (city, address, lat/lng) — no schema field yet.",
+                "vehicle": "Vehicle (plate, model, year, category) — no schema field yet.",
+                "acquisition": "Acquisition channel (separate from attribution.source) — no schema field yet.",
+                "assignment": "Assignment editor — already lives in the Operations tab; will be regrouped here in a polish pass."
+              }
+            },
+            "documents": {
+              "title": "Documents",
+              "description": "Mark documents as Uploaded / Accepted / Rejected / Missing / Needs Resubmission.",
+              "gapTitle": "Documents tab — UI scaffold only",
+              "gapDescription": "Backend gap: no LeadDocument model exists yet, no upload endpoint, no status-update endpoint. Capability gates (lead.document.read / .write / .accept / .reject) need to be added when the model lands.",
+              "statusBreakdown": "Status breakdown (placeholder counts)",
+              "states": {
+                "uploaded": "Uploaded",
+                "accepted": "Accepted",
+                "rejected": "Rejected",
+                "missing": "Missing",
+                "needs_resubmission": "Needs resubmission"
+              }
+            },
+            "partnerData": {
+              "title": "Partner data",
+              "description": "Match, link, or review imported partner records against this contact.",
+              "gapTitle": "Partner data — read-only today",
+              "gapDescription": "The D4.4 projection (matched / mismatch / last sync) renders below. Write paths (apply / link to a different contact / mark as review) need POST /leads/:id/partner-data/{apply|link|review} endpoints + the partner.data.* capabilities. Sprint 4 owns the per-partner journey matrix."
+            },
+            "note": {
+              "title": "Note only",
+              "description": "Add a free-text note to the activity timeline.",
+              "helper": "The note is saved as an activity row and appears in the Overview timeline.",
+              "fieldLabel": "Note",
+              "placeholder": "e.g. Captain confirmed he prefers Uber EG signup over inDrive — moving him to signup link sent.",
+              "submit": "Save note"
+            }
+          }
         },
         "navigator": {
           "prev": "Previous lead (Alt + ← or k)",
