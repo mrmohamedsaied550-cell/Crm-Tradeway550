@@ -975,8 +975,8 @@
             "partnerData": {
               "title": "Partner data",
               "description": "Match, link, or review imported partner records against this contact.",
-              "gapTitle": "Partner data — read-only today",
-              "gapDescription": "The D4.4 projection (matched / mismatch / last sync) renders below. Write paths (apply / link to a different contact / mark as review) need POST /leads/:id/partner-data/{apply|link|review} endpoints + the partner.data.* capabilities. Sprint 4 owns the per-partner journey matrix."
+              "gapTitle": "Partner data — partial write support",
+              "gapDescription": "Partner targets can be added and edited from here (see the Add target action below); apply / link to a different contact / mark as review against the imported partner projection are still pending."
             },
             "note": {
               "title": "Note only",
