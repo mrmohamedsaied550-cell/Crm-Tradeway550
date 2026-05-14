@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Field, Select, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
 import {
   ApiError,
   followUpsApi,
@@ -117,6 +118,8 @@ export function LifecycleActionPanel({
 }: LifecycleActionPanelProps): JSX.Element {
   const t = useTranslations('admin.leads.detail.addAction.areas.lifecycle');
   const tCommon = useTranslations('admin.common');
+  const tToast = useTranslations('admin.notifications.toast');
+  const { toast } = useToast();
   const locale = useLocale();
 
   // ─────── Live data ───────
@@ -358,6 +361,7 @@ export function LifecycleActionPanel({
           ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}),
           ...resolvedReason,
         });
+        toast({ tone: 'success', title: tToast('requestSubmitted') });
         onApplied();
         onClose();
         return;
@@ -458,6 +462,8 @@ export function LifecycleActionPanel({
     onApplied,
     onClose,
     t,
+    tToast,
+    toast,
   ]);
 
   // ─────── Loading / empty / error states ───────

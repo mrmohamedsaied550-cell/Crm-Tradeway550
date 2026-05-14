@@ -1510,6 +1510,9 @@ model Team {
   /// named this team as the target queue.
   handoffTargetTransitions LeadTransitionRequest[]  @relation("LtrHandoffTargetTeam")
 
+  /// Sprint 9 (D9) — team-targeted notifications. See Notification.
+  notifications Notification[]
+
   @@unique([tenantId, countryId, name])
   @@index([tenantId, countryId])
   @@map("teams")
@@ -2114,19 +2117,41 @@ model Notification {
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  recipientUserId String @map("recipient_user_id") @db.Uuid
-  recipient       User   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  /// Sprint 9 (D9): nullable to allow team-only notifications. The
+  /// `notifications_target_check` constraint guarantees at least one
+  /// of (recipientUserId, recipientTeamId) is set on every row.
+  recipientUserId String? @map("recipient_user_id") @db.Uuid
+  recipient       User?   @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  /// Sprint 9 (D9): team-targeted notifications. Every member of the
+  /// team sees the row in their inbox; markRead is per-user via a
+  /// separate `notification_reads` table — not added here yet, so a
+  /// team notification is "read" the moment any member dismisses it.
+  /// That trade-off keeps Sprint 9 small; a per-user read table is
+  /// the natural follow-up.
+  recipientTeamId String? @map("recipient_team_id") @db.Uuid
+  recipientTeam   Team?   @relation(fields: [recipientTeamId], references: [id], onDelete: Cascade)
 
   kind    String
   title   String
   body    String?
-  payload Json?
-  readAt  DateTime? @map("read_at") @db.Timestamptz(6)
+  /// Sprint 9 (D9): severity drives the bell-dropdown color dot and
+  /// the toast tone. Nullable for back-compat with pre-Sprint-9 rows
+  /// where severity was either implicit or stored in `payload`.
+  severity String? @db.Text
+  /// Sprint 9 (D9): canonical click-through link for the bell list.
+  /// `null` keeps the row inert (no navigation).
+  actionUrl String? @map("action_url") @db.Text
+  payload   Json?
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // "My inbox, unread first then newest first" — covering index.
   @@index([tenantId, recipientUserId, readAt, createdAt])
+  /// Sprint 9 (D9): team inbox lookup. Partial index keeps it tiny
+  /// since most rows are user-targeted.
+  @@index([tenantId, recipientTeamId, readAt, createdAt])
   @@map("notifications")
 }
 

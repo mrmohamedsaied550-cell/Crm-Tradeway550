@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
+import { useToast } from '@/components/ui/toast';
 import { ApiError, transitionRequestsApi } from '@/lib/api';
 import { hasCapability } from '@/lib/auth';
 import type { LeadTransitionRequestRow } from '@/lib/api-types';
@@ -46,7 +47,9 @@ export function PendingTransitionRequestCard({
 }: PendingTransitionRequestCardProps): JSX.Element | null {
   const t = useTranslations('admin.leads.detail.pendingTransition');
   const tCommon = useTranslations('admin.common');
+  const tToast = useTranslations('admin.notifications.toast');
   const locale = useLocale();
+  const { toast } = useToast();
 
   const [rows, setRows] = useState<readonly LeadTransitionRequestRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -85,6 +88,7 @@ export function PendingTransitionRequestCard({
     setActionError(null);
     try {
       await transitionRequestsApi.approve(row.id);
+      toast({ tone: 'success', title: tToast('approved') });
       onChanged();
       await refresh();
     } catch (err) {
@@ -114,6 +118,7 @@ export function PendingTransitionRequestCard({
           ? { correctiveActionTitle: rejectActionTitle.trim() }
           : {}),
       });
+      toast({ tone: 'success', title: tToast('rejected') });
       setRejectTarget(null);
       onChanged();
       await refresh();

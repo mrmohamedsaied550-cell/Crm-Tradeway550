@@ -2,11 +2,14 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
@@ -51,6 +54,8 @@ import type { ScopeUserClaims } from '../rbac/scope-context.service';
  */
 @Injectable()
 export class LeadTransitionRequestService {
+  private readonly logger = new Logger(LeadTransitionRequestService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly leads: LeadsService,
@@ -63,7 +68,39 @@ export class LeadTransitionRequestService {
      *  'won', and writes the activity rows in one tx. */
     private readonly captains: CaptainsService,
     private readonly audit: AuditService,
+    /** Sprint 9 (D9) — best-effort notification emission. @Optional
+     *  so existing test fixtures that hand-build this service stay
+     *  green; production wiring (CrmModule) supplies it. Failures
+     *  are logged + swallowed — a notification outage MUST NOT
+     *  break the approval flow. */
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
+
+  /**
+   * Sprint 9 (D9) — wrap a notification emission so it can never
+   * abort the calling write. The notification service already
+   * swallows internal failures in its `create()` wrapper; this
+   * extra guard catches any synchronous error in the input shape
+   * itself.
+   */
+  private async safeNotify(args: {
+    recipientUserId?: string | null;
+    recipientTeamId?: string | null;
+    kind: string;
+    title: string;
+    body?: string | null;
+    severity?: 'info' | 'success' | 'warning' | 'danger' | null;
+    actionUrl?: string | null;
+    payload?: Prisma.InputJsonValue;
+  }): Promise<void> {
+    if (!this.notifications) return;
+    if (!args.recipientUserId && !args.recipientTeamId) return;
+    try {
+      await this.notifications.create(args);
+    } catch (err) {
+      this.logger.warn(`transition-request notification skipped: ${(err as Error).message}`);
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────
   //  Create
@@ -203,6 +240,45 @@ export class LeadTransitionRequestService {
           requestedStatusCode: input.requestedStatusCode ?? null,
           approverKind,
           handoffRule,
+        } as Prisma.InputJsonValue,
+      });
+
+      // Sprint 9 (D9) — notify the approver audience.
+      //
+      // Resolution strategy (intentionally conservative):
+      //   1. If the request carries a `handoffTargetUserId` (specific
+      //      owner handoff), notify that user directly.
+      //   2. Otherwise look up the lead's assignee's team and notify
+      //      the team — every TL on that team sees it in their inbox.
+      //   3. role:* approverKinds (e.g. role:ops_manager) currently
+      //      have no targeted notification — they fall through to
+      //      audit-only. A future sprint can add a "by-role" recipient.
+      const assigneeTeamId = lead.assignedToId
+        ? await tx.user
+            .findUnique({
+              where: { id: lead.assignedToId },
+              select: { teamId: true },
+            })
+            .then((u) => u?.teamId ?? null)
+        : null;
+      const recipientUserId =
+        handoffRule === 'specific_owner' && handoffOwnerUserId ? handoffOwnerUserId : null;
+      const recipientTeamId = recipientUserId ? null : assigneeTeamId;
+      // Body copy is intentionally generic — the linked Lead Detail
+      // page is the permission gate for details (D5 redaction
+      // already keeps sensitive fields out of the response).
+      await this.safeNotify({
+        recipientUserId,
+        recipientTeamId,
+        kind: 'transition_approval_requested',
+        title: 'Transition approval requested',
+        body: 'A stage transition is waiting for your decision. Open the lead for details.',
+        severity: 'info',
+        actionUrl: `/admin/leads/${input.leadId}`,
+        payload: {
+          leadId: input.leadId,
+          requestId: created.id,
+          approverKind,
         } as Prisma.InputJsonValue,
       });
 
@@ -399,6 +475,37 @@ export class LeadTransitionRequestService {
         } as Prisma.InputJsonValue,
       });
     });
+
+    // Sprint 9 (D9) — notify the original requester so the dashboard
+    // queue ("Waiting Approval") clears for them in real time. The
+    // notification flows whether or not the captain conversion ran;
+    // when it did, a second notification announces the captain.
+    await this.safeNotify({
+      recipientUserId: reqRow.requestedById,
+      kind: 'transition_approved',
+      title: 'Transition approved',
+      body: 'Your stage transition was approved.',
+      severity: 'success',
+      actionUrl: `/admin/leads/${reqRow.leadId}`,
+      payload: {
+        leadId: reqRow.leadId,
+        requestId,
+      } as Prisma.InputJsonValue,
+    });
+    if (convertedToCaptain) {
+      await this.safeNotify({
+        recipientUserId: reqRow.requestedById,
+        kind: 'lead_converted_to_captain',
+        title: 'Lead converted to Captain',
+        body: 'Approval triggered captain conversion. Open the lead for the final timeline.',
+        severity: 'success',
+        actionUrl: `/admin/leads/${reqRow.leadId}`,
+        payload: {
+          leadId: reqRow.leadId,
+          requestId,
+        } as Prisma.InputJsonValue,
+      });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -480,6 +587,41 @@ export class LeadTransitionRequestService {
           correctiveFollowupId: correctiveFollowup.id,
         } as Prisma.InputJsonValue,
       });
+    });
+
+    // Sprint 9 (D9) — twin notifications for the rejection path:
+    //   (a) The "you got rejected" alert lands the requester back
+    //       into the Returned-to-Me queue.
+    //   (b) The "corrective action" alert lands on the corrective
+    //       follow-up's assignee (which today is the requester) so
+    //       they know what to do next.
+    // We intentionally send both — they target the same user today
+    // but the corrective-action one carries a different severity
+    // and could target a different user once handoff-on-reject
+    // ships in a later sprint.
+    await this.safeNotify({
+      recipientUserId: reqRow.requestedById,
+      kind: 'transition_rejected',
+      title: 'Transition rejected',
+      body: 'Your stage transition was rejected. Open the lead for details.',
+      severity: 'warning',
+      actionUrl: `/admin/leads?queue=returnedToMe`,
+      payload: {
+        leadId: reqRow.leadId,
+        requestId,
+      } as Prisma.InputJsonValue,
+    });
+    await this.safeNotify({
+      recipientUserId: reqRow.requestedById,
+      kind: 'corrective_next_action_created',
+      title: 'Corrective next action assigned',
+      body: 'A corrective follow-up was added to this lead. Resolve it before re-requesting.',
+      severity: 'warning',
+      actionUrl: `/admin/leads/${reqRow.leadId}`,
+      payload: {
+        leadId: reqRow.leadId,
+        requestId,
+      } as Prisma.InputJsonValue,
     });
   }
 
