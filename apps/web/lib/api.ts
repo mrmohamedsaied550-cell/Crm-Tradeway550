@@ -1703,6 +1703,70 @@ export const leadDocumentsApi = {
 };
 
 // ───────────────────────────────────────────────────────────────────────
+// Lead Partner Targets (Sprint 13 / D13)
+// ───────────────────────────────────────────────────────────────────────
+
+export type LeadPartnerTargetStatus =
+  | 'target'
+  | 'not_started'
+  | 'contacted'
+  | 'signup_started'
+  | 'matched'
+  | 'rejected'
+  | 'inactive';
+
+export interface LeadPartnerTargetRow {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  partnerSourceId: string;
+  partnerSource: {
+    id: string;
+    partnerCode: string;
+    displayName: string;
+    companyId: string | null;
+    countryId: string | null;
+  } | null;
+  status: LeadPartnerTargetStatus;
+  countryId: string | null;
+  country: { id: string; code: string; name: string } | null;
+  teamId: string | null;
+  team: { id: string; name: string } | null;
+  ownerUserId: string | null;
+  owner: { id: string; name: string; email: string } | null;
+  createdById: string;
+  createdBy: { id: string; name: string; email: string } | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const leadPartnerTargetsApi = {
+  listForLead: (
+    leadId: string,
+    query: { status?: LeadPartnerTargetStatus; partnerSourceId?: string } = {},
+  ): Promise<LeadPartnerTargetRow[]> =>
+    apiFetch<LeadPartnerTargetRow[]>(`/leads/${leadId}/partner-targets`, {
+      query: {
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.partnerSourceId ? { partnerSourceId: query.partnerSourceId } : {}),
+      },
+    }),
+  create: (
+    leadId: string,
+    body: {
+      partnerSourceId: string;
+      status?: LeadPartnerTargetStatus;
+      countryId?: string;
+      teamId?: string;
+      ownerUserId?: string;
+      note?: string;
+    },
+  ): Promise<{ id: string }> =>
+    apiFetch<{ id: string }>(`/leads/${leadId}/partner-targets`, { method: 'POST', body }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Audit (C40)
 // ───────────────────────────────────────────────────────────────────────
 

@@ -26,6 +26,8 @@ import { LeadTransitionRequestService } from './lead-transition-request.service'
 import { LeadTransitionRequestController } from './lead-transition-request.controller';
 import { LeadDocumentsService } from './lead-documents.service';
 import { LeadDocumentsController } from './lead-documents.controller';
+import { LeadPartnerTargetsService } from './lead-partner-targets.service';
+import { LeadPartnerTargetsController } from './lead-partner-targets.controller';
 
 /**
  * CRM Core module (C10 + C11 + C18 + C29 + P2-07).
@@ -48,6 +50,7 @@ import { LeadDocumentsController } from './lead-documents.controller';
     AgentWorkspaceController,
     LeadTransitionRequestController,
     LeadDocumentsController,
+    LeadPartnerTargetsController,
   ],
   providers: [
     LeadsService,
@@ -68,6 +71,7 @@ import { LeadDocumentsController } from './lead-documents.controller';
     AgentWorkspaceService,
     LeadTransitionRequestService,
     LeadDocumentsService,
+    LeadPartnerTargetsService,
   ],
   exports: [
     LeadsService,
@@ -88,6 +92,7 @@ import { LeadDocumentsController } from './lead-documents.controller';
     AgentWorkspaceService,
     LeadTransitionRequestService,
     LeadDocumentsService,
+    LeadPartnerTargetsService,
   ],
 })
 export class CrmModule {}

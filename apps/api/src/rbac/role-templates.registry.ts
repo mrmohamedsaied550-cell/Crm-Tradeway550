@@ -99,6 +99,13 @@ const AGENT_ACTIONS: readonly CapabilityCode[] = [
   // accept/reject; that's reviewer territory (TL/Ops).
   'lead.document.read',
   'lead.document.write',
+  // Sprint 13 (D13) — sales agents own the "let's also target Uber"
+  // workflow on a working lead. Read + write are paired because
+  // the operator who can see partner-target rows must be able to
+  // add one; we don't need a separate review action since targets
+  // aren't approvable.
+  'partner.target.read',
+  'partner.target.write',
 ];
 
 // TL bundle WITHOUT partner.merge.write — that verb is high-risk
@@ -427,6 +434,8 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'captain.document.review',
       // Sprint 12 (D12) — QA reviews lead-side documents too.
       'lead.document.read',
+      // Sprint 13 (D13) — QA can audit partner-target intent.
+      'partner.target.read',
       'roles.read',
     ],
     scopes: [
@@ -568,6 +577,10 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'lead.document.write',
       'lead.document.accept',
       'lead.document.reject',
+      // Sprint 13 (D13) — ops/account templates also touch
+      // partner targets.
+      'partner.target.read',
+      'partner.target.write',
       'captain.trip.write',
       'partner.source.read',
       'partner.sync.run',
@@ -656,6 +669,10 @@ export const ROLE_TEMPLATE_DEFINITIONS: readonly RoleTemplateDef[] = [
       'lead.document.write',
       'lead.document.accept',
       'lead.document.reject',
+      // Sprint 13 (D13) — ops/account templates also touch
+      // partner targets.
+      'partner.target.read',
+      'partner.target.write',
       'captain.trip.write',
       'partner.source.read',
       'partner.source.write',

@@ -646,14 +646,39 @@
           },
           "addTarget": {
             "title": "Add Partner Target",
-            "action": "+ Add target",
-            "gapDescription": "Backend gap: no POST endpoint creates a partner-target journey row on the same contact yet. Today the Partner Data Hub creates partner records via sync from Uber/inDrive/DiDi/Careem/Yango sheets. A follow-up sprint adds an admin-side endpoint + capability so an agent can mark a contact as a target for an additional partner without duplicating the person. Logos / company assets are pending Branding & Asset Settings — initials shown as a fallback for now.",
-            "gapNeeds": {
-              "endpoint": "POST /leads/:id/partner-data/targets — creates a partner-target journey row on the same contact (no duplicate contact).",
-              "capability": "New capability partner.target.write (write only, audit-emitting; respects existing partner.data.read for surface).",
-              "dedupe": "Service must reject duplicates: one row per (contact, partnerCompany)."
+            "action": "Add target",
+            "modalTitle": "Add Partner Target",
+            "preview": "This will add a partner target on the same person. It will not create a duplicate lead or contact.",
+            "empty": "No partner targets yet.",
+            "noAccess": "You don't have permission to view partner targets.",
+            "ownedBy": "owned by {name}",
+            "toast": {
+              "added": "Partner target added."
             },
-            "disabledHint": "Disabled until the partner-target endpoint ships. Hover the disabled state and the gap notice for the exact backend ask."
+            "form": {
+              "partner": "Partner",
+              "note": "Note (optional)",
+              "notePlaceholder": "Why is this target being added?"
+            },
+            "status": {
+              "target": "Target",
+              "not_started": "Not started",
+              "contacted": "Contacted",
+              "signup_started": "Signup started",
+              "matched": "Matched",
+              "rejected": "Rejected",
+              "inactive": "Inactive"
+            },
+            "errors": {
+              "partnerRequired": "Pick a partner before saving.",
+              "duplicate": "This partner target already exists for this person.",
+              "partnerInvalid": "The selected partner source is not available.",
+              "noPartnerSources": "No active partner sources configured. Ask an admin to set one up."
+            },
+            "drawer": {
+              "title": "Add partner target",
+              "description": "Register another partner journey on this person without creating a new lead or contact."
+            }
           },
           "sharedPhone": {
             "title": "One contact, multiple partner journeys",

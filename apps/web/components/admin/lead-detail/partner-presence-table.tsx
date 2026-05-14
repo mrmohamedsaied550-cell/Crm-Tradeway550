@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, CheckCircle2, Network, Plus, ShieldQuestion } from 'lucide-react';
 
@@ -8,9 +8,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, partnerVerificationApi } from '@/lib/api';
+import {
+  ApiError,
+  leadPartnerTargetsApi,
+  partnerVerificationApi,
+  type LeadPartnerTargetRow,
+} from '@/lib/api';
+import { hasCapability } from '@/lib/auth';
 import type { PartnerVerificationProjection, PartnerVerificationResult } from '@/lib/api-types';
 
+import { AddPartnerTargetModal } from './add-partner-target-modal';
 import { toneForVerification } from './partner-presence-summary';
 
 /**
@@ -69,33 +76,64 @@ export function PartnerPresenceTable({
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState<boolean>(false);
 
+  // Sprint 13 (D13) — operator-driven partner targets. We fetch
+  // them in parallel with the read-side verification projection;
+  // failures are isolated (a 403 on either side doesn't blank
+  // the panel). The Add Target CTA opens a modal that posts to
+  // the same endpoint.
+  const [targets, setTargets] = useState<readonly LeadPartnerTargetRow[]>([]);
+  const [targetsForbidden, setTargetsForbidden] = useState<boolean>(false);
+  const [addOpen, setAddOpen] = useState<boolean>(false);
+  const canReadTargets = hasCapability('partner.target.read');
+  const canWriteTargets = hasCapability('partner.target.write');
+
+  const refreshTargets = useCallback(async () => {
+    if (!canReadTargets) {
+      setTargetsForbidden(true);
+      return;
+    }
+    try {
+      const rows = await leadPartnerTargetsApi.listForLead(leadId);
+      setTargets(rows);
+      setTargetsForbidden(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setTargetsForbidden(true);
+      }
+      // Other errors swallowed silently — the verification table
+      // is the primary surface, targets are an additive overlay.
+    }
+  }, [leadId, canReadTargets]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setForbidden(false);
-    partnerVerificationApi
-      .forLead(leadId)
-      .then((resp) => {
-        if (cancelled) return;
-        setData(resp);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 403) {
-          setForbidden(true);
-          return;
-        }
-        setError(err instanceof ApiError ? err.message : String(err));
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
+    Promise.all([
+      partnerVerificationApi
+        .forLead(leadId)
+        .then((resp) => {
+          if (cancelled) return;
+          setData(resp);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          if (err instanceof ApiError && err.status === 403) {
+            setForbidden(true);
+            return;
+          }
+          setError(err instanceof ApiError ? err.message : String(err));
+        }),
+      refreshTargets(),
+    ]).finally(() => {
+      if (cancelled) return;
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [leadId, refreshKey]);
+  }, [leadId, refreshKey, refreshTargets]);
 
   if (loading) {
     return (
@@ -156,36 +194,69 @@ export function PartnerPresenceTable({
         </section>
       )}
 
-      {/* ─────── Add Partner Target — Sprint 4.E placeholder ───────
-          The spec is explicit: "If backend is not ready: Show
-          disabled/placeholder state with exact backend gap. Do
-          not fake success."
-          Sprint 11 audit: gap still applies. The bullet list
-          below names the exact backend pieces a future sprint
-          must ship before this button can light up. */}
-      <section className="rounded-lg border border-dashed border-surface-border bg-surface p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-ink-primary">{t('addTarget.title')}</h3>
-            <p className="mt-1 text-xs text-ink-secondary">{t('addTarget.gapDescription')}</p>
-            <ul className="mt-2 list-disc ps-5 text-[11px] text-ink-tertiary">
-              <li>{t('addTarget.gapNeeds.endpoint')}</li>
-              <li>{t('addTarget.gapNeeds.capability')}</li>
-              <li>{t('addTarget.gapNeeds.dedupe')}</li>
-            </ul>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled
-            aria-disabled="true"
-            title={t('addTarget.disabledHint')}
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('addTarget.action')}
-          </Button>
-        </div>
+      {/* ─────── Sprint 13 (D13) — operator partner targets ───────
+          Lists the operator-driven LeadPartnerTarget rows
+          (separate from the read-side verification projection
+          above) and exposes the Add Target CTA. The CTA opens a
+          modal that POSTs to /leads/:id/partner-targets — never
+          duplicates the Lead / Contact. */}
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-ink-primary">{t('addTarget.title')}</h3>
+          {canWriteTargets ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setAddOpen(true)}
+              aria-label={t('addTarget.action')}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('addTarget.action')}
+            </Button>
+          ) : null}
+        </header>
+        {targetsForbidden ? (
+          <p className="text-xs text-ink-tertiary">{t('addTarget.noAccess')}</p>
+        ) : targets.length === 0 ? (
+          <p className="text-xs text-ink-tertiary">{t('addTarget.empty')}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {targets.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center gap-2 rounded-md border border-surface-border bg-surface px-3 py-2 text-sm"
+              >
+                <span className="font-medium text-ink-primary">
+                  {row.partnerSource?.displayName ?? row.partnerSourceId.slice(0, 8)}
+                </span>
+                <Badge tone="info">
+                  {t(`addTarget.status.${row.status}` as 'addTarget.status.target')}
+                </Badge>
+                {row.country ? (
+                  <span className="text-xs text-ink-secondary">{row.country.name}</span>
+                ) : null}
+                {row.owner ? (
+                  <span className="text-xs text-ink-tertiary">
+                    {t('addTarget.ownedBy', { name: row.owner.name })}
+                  </span>
+                ) : null}
+                {row.note ? (
+                  <p className="basis-full text-xs text-ink-secondary">{row.note}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
+
+      <AddPartnerTargetModal
+        open={addOpen}
+        leadId={leadId}
+        onClose={() => setAddOpen(false)}
+        onAdded={() => {
+          void refreshTargets();
+        }}
+      />
 
       {/* ─────── Duplicate / same-phone hint ───────
           When there are 2+ projections, the lead inherently
