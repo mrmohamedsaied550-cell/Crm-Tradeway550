@@ -1563,6 +1563,61 @@ export const notificationsApi = {
 };
 
 // ───────────────────────────────────────────────────────────────────────
+// Presence (Sprint 10 / D10)
+// ───────────────────────────────────────────────────────────────────────
+
+export type PresenceStatus = 'online' | 'away' | 'busy' | 'offline';
+
+export interface OwnPresenceRow {
+  userId: string;
+  status: PresenceStatus;
+  lastSeenAt: string;
+  lastActiveAt: string | null;
+  connectedAt: string | null;
+  busyUntil: string | null;
+  currentContext: string | null;
+  currentEntityType: string | null;
+  currentEntityId: string | null;
+}
+
+export interface OtherPresenceRow {
+  userId: string;
+  status: PresenceStatus;
+  lastSeenAt: string;
+  currentContext: string | null;
+}
+
+export const presenceApi = {
+  /**
+   * Sprint 10 (D10) — periodic "I'm here". Server-side throttle
+   * skips re-writes within 45 s; the client should send at most
+   * one per minute when the tab is visible.
+   */
+  heartbeat: (
+    body: { context?: string; entityType?: string; entityId?: string } = {},
+  ): Promise<OwnPresenceRow> =>
+    apiFetch<OwnPresenceRow>('/presence/heartbeat', { method: 'POST', body }),
+  /**
+   * Sprint 10 (D10) — interaction event. Pass `busy: true` to
+   * enter the in-action window (3 min default).
+   */
+  activity: (
+    body: {
+      context?: string;
+      entityType?: string;
+      entityId?: string;
+      busy?: boolean;
+    } = {},
+  ): Promise<OwnPresenceRow> =>
+    apiFetch<OwnPresenceRow>('/presence/activity', { method: 'POST', body }),
+  me: (): Promise<OwnPresenceRow> => apiFetch<OwnPresenceRow>('/presence/me'),
+  listForUsers: (query: { ids: readonly string[] }): Promise<{ items: OtherPresenceRow[] }> =>
+    apiFetch<{ items: OtherPresenceRow[] }>('/presence/users', {
+      query: { ids: query.ids.join(',') },
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
 // Audit (C40)
 // ───────────────────────────────────────────────────────────────────────
 

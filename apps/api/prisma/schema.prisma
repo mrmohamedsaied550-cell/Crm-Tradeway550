@@ -98,6 +98,8 @@ model Tenant {
   /// Phase D5 — D5.15-B: append-only role version history. One row
   /// per role-write that produces a real change.
   roleVersions                RoleVersion[]
+  /// Sprint 10 (D10) — per-user live presence rows.
+  userPresences               UserPresence[]
 
   @@map("tenants")
 }
@@ -341,6 +343,73 @@ model UserScopeAssignment {
   @@map("user_scope_assignments")
 }
 
+/// Sprint 10 (D10) — live user presence (online / away / busy /
+/// offline). One row per (tenant, user) — written by the heartbeat
+/// + activity endpoints. Persisted state is the raw signal
+/// (`lastSeenAt`, `lastActiveAt`, `busyUntil`); the derived
+/// presence label is computed at read time so a moving threshold
+/// doesn't require a write to every row.
+///
+/// Heartbeat semantics:
+///   * lastSeenAt — bumped on /presence/heartbeat (every ≤ 60 s
+///     from the client). Server-side throttle skips re-writes
+///     that arrive < 45 s after the previous one.
+///   * lastActiveAt — bumped on /presence/activity (interaction
+///     events: window focus, route change, action save, …).
+///   * busyUntil — set by /presence/activity with `busy=true` to
+///     mark "in-action" for a short window. Auto-expires at read
+///     time when it falls in the past.
+///
+/// Status thresholds (defaults; tunable on the service):
+///   * online    — lastSeenAt within 2 minutes (with busy override).
+///   * away      — lastSeenAt within 15 minutes BUT lastActiveAt
+///                 older than 5 minutes (or null).
+///   * offline   — lastSeenAt older than 15 minutes OR no row.
+///   * busy      — busyUntil > now() (overrides online).
+///
+/// No CASCADE from tenant only — the User cascade handles the
+/// per-user clean-up. Multiple indexes for the read patterns the
+/// Organization page + Roles Members tab care about.
+model UserPresence {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String   @unique @map("user_id") @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Last successful heartbeat (server-side timestamp).
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  /// Last meaningful interaction (focus / route / action save).
+  lastActiveAt DateTime? @map("last_active_at") @db.Timestamptz(6)
+  /// First time the current "session" came online — reset to now()
+  /// when a heartbeat lands after the offline threshold. Useful
+  /// for "online for the last 23 minutes" copy in a future polish.
+  connectedAt DateTime? @map("connected_at") @db.Timestamptz(6)
+  /// When set in the future, the user is rendered as `busy` (e.g.
+  /// "in Add Action"). Auto-expires at read time once now() passes
+  /// this value, so the row doesn't need a cleanup pass.
+  busyUntil   DateTime? @map("busy_until") @db.Timestamptz(6)
+  /// Generic short context label (e.g. "lead" — NOT lead identity).
+  /// Lead/captain identity stays out of the presence payload to
+  /// avoid leaking redacted entity names. The UI renders
+  /// "Working on a lead" — never the lead's phone or partner id.
+  currentContext    String? @map("current_context")
+  currentEntityType String? @map("current_entity_type")
+  /// Entity id is persisted for server-side debugging (audit can
+  /// correlate "Alice was busy on lead X at time T") but is NEVER
+  /// returned to the UI of a user who can't access that entity.
+  /// The bulk endpoint omits it entirely; only the caller's own
+  /// /presence/me returns it back to them.
+  currentEntityId   String? @map("current_entity_id") @db.Uuid
+  /// Free-form metadata (e.g. UA hint, tab count) — reserved for
+  /// future polish. Stays out of the bulk response by design.
+  metadata Json?
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, lastSeenAt])
+  @@index([tenantId, busyUntil])
+  @@map("user_presence")
+}
+
 /// A user inside a single tenant.
 ///
 /// Email is unique per tenant (case-insensitive: stored already-lowercased).
@@ -456,6 +525,12 @@ model User {
   /// Soft-linked (ON DELETE SET NULL) so the version row outlives
   /// a user that is later deleted.
   authoredRoleVersions        RoleVersion[]
+
+  /// Sprint 10 (D10) — live presence row (online/away/busy/offline).
+  /// One-to-one. The presence row is best-effort: a missing row
+  /// resolves to offline at read time, so the heartbeat can ship
+  /// independently from user creation.
+  presence UserPresence?
 
   @@unique([tenantId, email])
   @@index([tenantId, status])

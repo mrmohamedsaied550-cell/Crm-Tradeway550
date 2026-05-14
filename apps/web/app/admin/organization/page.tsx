@@ -23,7 +23,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
-import { ApiError, companiesApi, countriesApi, rolesApi, teamsApi, usersApi } from '@/lib/api';
+import {
+  ApiError,
+  companiesApi,
+  countriesApi,
+  presenceApi,
+  rolesApi,
+  teamsApi,
+  usersApi,
+  type OtherPresenceRow,
+} from '@/lib/api';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import type {
@@ -123,6 +132,12 @@ interface DataState {
   scopeAssignments: ReadonlyMap<string, UserScopeAssignmentsForUser>;
   /** True when scope data couldn't be loaded (e.g. capability denied). */
   scopeUnavailable: boolean;
+  /** Sprint 10 (D10) — per-user presence indexed by userId. */
+  presenceByUser: ReadonlyMap<string, OtherPresenceRow>;
+  /** Sprint 10 (D10) — true when the presence endpoint failed (auth/network). */
+  presenceUnavailable: boolean;
+  /** Sprint 10 (D10) — count of users currently online (status === 'online'). */
+  onlineCount: number;
 }
 
 const EMPTY_DATA: DataState = {
@@ -134,6 +149,9 @@ const EMPTY_DATA: DataState = {
   scopeCounts: new Map(),
   scopeAssignments: new Map(),
   scopeUnavailable: false,
+  presenceByUser: new Map(),
+  presenceUnavailable: false,
+  onlineCount: 0,
 };
 
 /**
@@ -216,11 +234,16 @@ export default function OrganizationPage(): JSX.Element {
       // resolves so we can scope the assignments call to visible
       // ids only. scope-counts is unfiltered (whole tenant view);
       // scope-assignments needs ids, capped at 200 per request.
+      // Sprint 10 — presence is fetched in the same parallel batch
+      // (one bulk call against the visible user list).
       const visibleUserIds = userPage.items.map((u) => u.id);
-      const [scopeCountsResp, scopeAssignmentsResp] = await Promise.all([
+      const [scopeCountsResp, scopeAssignmentsResp, presenceResp] = await Promise.all([
         safeScope(usersApi.listScopeCounts({})),
         visibleUserIds.length > 0
           ? safeScope(usersApi.listScopeAssignmentsBulk({ ids: visibleUserIds }))
+          : Promise.resolve({ items: [] }),
+        visibleUserIds.length > 0
+          ? safeScope(presenceApi.listForUsers({ ids: visibleUserIds }))
           : Promise.resolve({ items: [] }),
       ]);
 
@@ -234,6 +257,18 @@ export default function OrganizationPage(): JSX.Element {
       if (scopeAssignmentsResp !== SCOPE_FAIL) {
         for (const row of scopeAssignmentsResp.items) scopeAssignments.set(row.userId, row);
       }
+      // Sprint 10 — presence map indexed by userId. The KPI count
+      // comes directly from items where status === 'online'; users
+      // that don't appear in the response are treated as offline.
+      const presenceByUser = new Map<string, OtherPresenceRow>();
+      const presenceUnavailable = presenceResp === SCOPE_FAIL;
+      let onlineCount = 0;
+      if (presenceResp !== SCOPE_FAIL) {
+        for (const row of presenceResp.items) {
+          presenceByUser.set(row.userId, row);
+          if (row.status === 'online') onlineCount += 1;
+        }
+      }
 
       setData({
         companies,
@@ -244,6 +279,9 @@ export default function OrganizationPage(): JSX.Element {
         scopeCounts,
         scopeAssignments,
         scopeUnavailable,
+        presenceByUser,
+        presenceUnavailable,
+        onlineCount,
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -452,10 +490,12 @@ export default function OrganizationPage(): JSX.Element {
           />
           <KpiCard
             label={t('kpis.onlineUsers')}
-            count={null}
+            count={data.presenceUnavailable ? null : data.onlineCount}
             icon={Circle}
-            tone="neutral"
-            hint={t('presenceGap')}
+            tone={
+              data.presenceUnavailable ? 'neutral' : data.onlineCount > 0 ? 'healthy' : 'neutral'
+            }
+            hint={data.presenceUnavailable ? t('presenceUnavailable') : undefined}
             loading={loading}
           />
           <KpiCard
@@ -614,6 +654,8 @@ export default function OrganizationPage(): JSX.Element {
           canEdit={canWriteUsers}
           scopeAssignments={data.scopeAssignments}
           scopeUnavailable={data.scopeUnavailable}
+          presenceByUser={data.presenceByUser}
+          presenceUnavailable={data.presenceUnavailable}
           t={t}
         />
       </section>
@@ -1024,6 +1066,8 @@ function PeopleTable({
   canEdit,
   scopeAssignments,
   scopeUnavailable,
+  presenceByUser,
+  presenceUnavailable,
   t,
 }: {
   users: readonly AdminUser[];
@@ -1033,6 +1077,8 @@ function PeopleTable({
   canEdit: boolean;
   scopeAssignments: ReadonlyMap<string, UserScopeAssignmentsForUser>;
   scopeUnavailable: boolean;
+  presenceByUser: ReadonlyMap<string, OtherPresenceRow>;
+  presenceUnavailable: boolean;
   t: ReturnType<typeof useTranslations>;
 }): JSX.Element {
   if (!hasCapability('users.read')) {
@@ -1073,6 +1119,7 @@ function PeopleTable({
           <thead>
             <tr className="border-b border-surface-border bg-surface text-xs uppercase tracking-wide text-ink-tertiary">
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.user')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.presence')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.role')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.team')}</th>
               <th className="px-4 py-3 text-start font-semibold">{t('people.columns.scope')}</th>
@@ -1110,6 +1157,13 @@ function PeopleTable({
                         <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-4 py-3 align-top text-xs">
+                    <PresenceChip
+                      presence={presenceByUser.get(u.id)}
+                      unavailable={presenceUnavailable}
+                      t={t}
+                    />
                   </td>
                   <td className="px-4 py-3 align-top text-ink-primary">
                     {role ? (
@@ -1210,6 +1264,35 @@ function ScopeChip({
     <Badge tone="info" aria-label={parts.join(', ')}>
       {parts.join(' · ')}
     </Badge>
+  );
+}
+
+/**
+ * Sprint 10 (D10) — presence chip used by the People table.
+ * Tone palette matches the rest of the admin surface; neutral
+ * = unknown/offline.
+ */
+function PresenceChip({
+  presence,
+  unavailable,
+  t,
+}: {
+  presence: OtherPresenceRow | undefined;
+  unavailable: boolean;
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (unavailable) {
+    return <span className="text-ink-tertiary">{t('people.presence.unavailable')}</span>;
+  }
+  const status = presence?.status ?? 'offline';
+  const tone: Record<typeof status, 'healthy' | 'warning' | 'info' | 'neutral'> = {
+    online: 'healthy',
+    away: 'warning',
+    busy: 'info',
+    offline: 'neutral',
+  };
+  return (
+    <Badge tone={tone[status]}>{t(`people.presence.${status}` as 'people.presence.online')}</Badge>
   );
 }
 

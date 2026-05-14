@@ -28,7 +28,14 @@ import { ReviewChangesModal } from '@/components/admin/roles/review-changes-moda
 import { RoleHistoryTab } from '@/components/admin/roles/role-history-tab';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
-import { ApiError, rolesApi, teamsApi, usersApi } from '@/lib/api';
+import {
+  ApiError,
+  presenceApi,
+  rolesApi,
+  teamsApi,
+  usersApi,
+  type OtherPresenceRow,
+} from '@/lib/api';
 import type {
   AdminUser,
   CapabilityCatalogueEntry,
@@ -495,12 +502,17 @@ function formatShortDate(iso: string): string {
 
 function MembersTab({ roleId }: { roleId: string }): JSX.Element {
   const tHybrid = useTranslations('admin.roles.editorHybrid');
+  const tOrg = useTranslations('admin.organization');
   const canReadUsers = hasCapability('users.read');
   const canWriteUsers = hasCapability('users.write');
 
   const [items, setItems] = useState<readonly AdminUser[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [teams, setTeams] = useState<readonly Team[]>([]);
+  const [presenceByUser, setPresenceByUser] = useState<ReadonlyMap<string, OtherPresenceRow>>(
+    new Map(),
+  );
+  const [presenceUnavailable, setPresenceUnavailable] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -523,6 +535,22 @@ function MembersTab({ roleId }: { roleId: string }): JSX.Element {
         setItems(page.items);
         setTotal(page.total);
         setTeams(teamList);
+        // Sprint 10 — bulk presence for the visible members in
+        // the same effect. No N+1; one round-trip capped at 200.
+        const memberIds = page.items.map((u) => u.id);
+        if (memberIds.length > 0) {
+          try {
+            const presenceResp = await presenceApi.listForUsers({ ids: memberIds });
+            if (cancelled) return;
+            const map = new Map<string, OtherPresenceRow>();
+            for (const row of presenceResp.items) map.set(row.userId, row);
+            setPresenceByUser(map);
+            setPresenceUnavailable(false);
+          } catch {
+            if (cancelled) return;
+            setPresenceUnavailable(true);
+          }
+        }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof ApiError ? err.message : String(err));
@@ -589,6 +617,9 @@ function MembersTab({ roleId }: { roleId: string }): JSX.Element {
                   {tHybrid('members.columns.user')}
                 </th>
                 <th className="px-4 py-3 text-start font-semibold">
+                  {tOrg('people.columns.presence')}
+                </th>
+                <th className="px-4 py-3 text-start font-semibold">
                   {tHybrid('members.columns.team')}
                 </th>
                 <th className="px-4 py-3 text-start font-semibold">
@@ -624,6 +655,13 @@ function MembersTab({ roleId }: { roleId: string }): JSX.Element {
                           <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 align-top text-xs">
+                      <MembersPresenceChip
+                        presence={presenceByUser.get(u.id)}
+                        unavailable={presenceUnavailable}
+                        tOrg={tOrg}
+                      />
                     </td>
                     <td className="px-4 py-3 align-top text-ink-secondary">
                       {team ? (
@@ -1827,5 +1865,37 @@ function ModuleAccessCard({
         </div>
       ) : null}
     </li>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 10 (D10) — Presence chip used by the Members table. Stays
+// in this file so the data flow is obvious and the table doesn't
+// need to import a one-off shared component.
+// ────────────────────────────────────────────────────────────────────
+
+function MembersPresenceChip({
+  presence,
+  unavailable,
+  tOrg,
+}: {
+  presence: OtherPresenceRow | undefined;
+  unavailable: boolean;
+  tOrg: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (unavailable) {
+    return <span className="text-ink-tertiary">{tOrg('people.presence.unavailable')}</span>;
+  }
+  const status = presence?.status ?? 'offline';
+  const tone: Record<typeof status, 'healthy' | 'warning' | 'info' | 'neutral'> = {
+    online: 'healthy',
+    away: 'warning',
+    busy: 'info',
+    offline: 'neutral',
+  };
+  return (
+    <Badge tone={tone[status]}>
+      {tOrg(`people.presence.${status}` as 'people.presence.online')}
+    </Badge>
   );
 }

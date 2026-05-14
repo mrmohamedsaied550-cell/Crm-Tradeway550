@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { LogOut, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NotificationBell } from '@/components/admin/notification-bell';
+import { MyPresenceDot } from '@/components/admin/my-presence-dot';
 import { FollowUpBell } from '@/components/agent/follow-up-bell';
 import { ApiError, authApi } from '@/lib/api';
 import {
@@ -133,7 +134,10 @@ export function AuthBar(): JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-surface-border bg-surface-card px-3 py-2 text-sm">
       <div className="flex flex-col leading-tight">
-        <span className="font-medium text-ink-primary">{me?.name ?? me?.email ?? '…'}</span>
+        <span className="flex items-center gap-1.5 font-medium text-ink-primary">
+          <MyPresenceDot />
+          {me?.name ?? me?.email ?? '…'}
+        </span>
         <span className="text-xs text-ink-secondary">
           {me?.email ?? ''} · {me?.roleNameEn ?? me?.roleCode ?? ''}
           {me?.tenantCode ? ` · ${me.tenantCode}` : ''}
