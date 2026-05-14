@@ -458,6 +458,8 @@ export const usersApi = {
       phone?: string | null;
       language?: 'ar' | 'en';
       status?: UserStatus;
+      /** Sprint 15 (D15) — null clears, string sets, undefined keeps. */
+      avatarUrl?: string | null;
     },
   ): Promise<AdminUser> => apiFetch<AdminUser>(`/users/${id}`, { method: 'PATCH', body: input }),
   enable: (id: string): Promise<AdminUser> =>

@@ -104,6 +104,23 @@ const emailField = z.string().trim().toLowerCase().email().max(254);
 const userStatus = z.enum(['active', 'invited', 'disabled']);
 export type UserStatus = z.infer<typeof userStatus>;
 
+/**
+ * Sprint 15 (D15) — profile image URL. Same safety rules as the
+ * tenant-branding fields: only http(s):// and relative /paths,
+ * javascript:/data: rejected, max length cap. Optional + nullable;
+ * `null` clears, omitted leaves unchanged.
+ */
+const avatarUrlField = z
+  .string()
+  .trim()
+  .min(1, 'URL is required when set')
+  .max(2048, 'URL is too long')
+  .refine(
+    (v) => /^https?:\/\//iu.test(v) || v.startsWith('/'),
+    'URL must start with http://, https://, or /',
+  )
+  .refine((v) => !/^javascript:/iu.test(v) && !/^data:/iu.test(v), 'URL scheme is not allowed');
+
 export const CreateUserSchema = z
   .object({
     email: emailField,
@@ -127,6 +144,8 @@ export const UpdateUserSchema = z
     phone: z.string().trim().min(4).max(32).nullable().optional(),
     language: z.enum(['ar', 'en']).optional(),
     status: userStatus.optional(),
+    /** Sprint 15 (D15) — optional profile image URL. */
+    avatarUrl: avatarUrlField.nullable().optional(),
   })
   .strict();
 export type UpdateUserDto = z.infer<typeof UpdateUserSchema>;

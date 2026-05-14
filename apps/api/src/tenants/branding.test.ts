@@ -36,7 +36,7 @@ let tenantAId: string;
 let tenantBId: string;
 
 function withCtx<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-  return tenantContext.run({ tenantId }, fn);
+  return tenantContext.run({ tenantId, tenantCode: 'd15_test', source: 'header' }, fn);
 }
 
 async function withTenantRaw<T>(tid: string, fn: (tx: PrismaClient) => Promise<T>): Promise<T> {

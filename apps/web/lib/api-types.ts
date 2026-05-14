@@ -52,6 +52,8 @@ export interface AdminUser {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Sprint 15 (D15) — optional profile image URL. */
+  avatarUrl?: string | null;
 }
 
 export interface PaginatedResult<T> {
