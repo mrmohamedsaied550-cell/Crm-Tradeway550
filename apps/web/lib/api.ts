@@ -1898,6 +1898,29 @@ export const leadPartnerTargetsApi = {
     },
   ): Promise<{ id: string }> =>
     apiFetch<{ id: string }>(`/leads/${leadId}/partner-targets`, { method: 'POST', body }),
+  /**
+   * Sprint 17 (D17) — partial update of an existing target.
+   *
+   * Three-way null semantics on every nullable field: `undefined`
+   * skips, `null` clears, a value sets. `partnerSourceId` is
+   * intentionally not on this body — operators who want a different
+   * partner journey create a new target.
+   */
+  update: (
+    leadId: string,
+    targetId: string,
+    body: {
+      status?: LeadPartnerTargetStatus;
+      countryId?: string | null;
+      teamId?: string | null;
+      ownerUserId?: string | null;
+      note?: string | null;
+    },
+  ): Promise<{ id: string }> =>
+    apiFetch<{ id: string }>(`/leads/${leadId}/partner-targets/${targetId}`, {
+      method: 'PATCH',
+      body,
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
