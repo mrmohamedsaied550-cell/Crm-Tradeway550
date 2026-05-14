@@ -129,6 +129,28 @@ export type CreatePartnerSourceDto = z.infer<typeof CreatePartnerSourceSchema>;
  * re-checked in the service after merging with the existing row
  * (Zod can't see the persisted row at parse time).
  */
+/**
+ * Sprint 15 (D15) — safe URL + 6-digit hex color guards. Mirrors the
+ * tenant-branding and user-avatar guards so the partner editor uses
+ * the same allow-list (http(s):// or /relative paths; javascript:
+ * and data: schemes rejected; colors as #rrggbb).
+ */
+const partnerLogoUrlField = z
+  .string()
+  .trim()
+  .min(1, 'URL is required when set')
+  .max(2048, 'URL is too long')
+  .refine(
+    (v) => /^https?:\/\//iu.test(v) || v.startsWith('/'),
+    'URL must start with http://, https://, or /',
+  )
+  .refine((v) => !/^javascript:/iu.test(v) && !/^data:/iu.test(v), 'URL scheme is not allowed');
+
+const partnerBrandColorField = z
+  .string()
+  .trim()
+  .regex(/^#[0-9a-f]{6}$/iu, 'Color must be a 6-digit hex like #1f3864');
+
 export const UpdatePartnerSourceSchema = z
   .object({
     partnerCode: z.string().trim().min(1).max(64).optional(),
@@ -143,6 +165,9 @@ export const UpdatePartnerSourceSchema = z
     tabDiscoveryRule: TabDiscoveryRuleSchema.nullable().optional(),
     isActive: z.boolean().optional(),
     credentials: PartnerCredentialsSchema.nullable().optional(),
+    /** Sprint 15 (D15) — partner branding; null clears. */
+    logoUrl: partnerLogoUrlField.nullable().optional(),
+    brandColor: partnerBrandColorField.nullable().optional(),
   })
   .strict();
 export type UpdatePartnerSourceDto = z.infer<typeof UpdatePartnerSourceSchema>;
