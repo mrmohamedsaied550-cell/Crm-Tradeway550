@@ -215,7 +215,8 @@
           "team": "الفريق",
           "status": "الحالة",
           "issues": "الملاحظات",
-          "actions": "إجراءات"
+          "actions": "إجراءات",
+          "scope": "النطاق"
         },
         "issueChips": {
           "noTeam": "بدون فريق",
@@ -229,12 +230,17 @@
         },
         "allHaveTeam": "كل المستخدمين المعروضين لديهم فريق.",
         "allHaveRole": "كل المستخدمين المعروضين لديهم دور.",
-        "readOnly": "عرض فقط"
+        "readOnly": "عرض فقط",
+        "scopeNone": "بدون نطاق",
+        "scopeUnavailable": "—",
+        "scopeCompanyCount": "{n, plural, zero {بدون شركات} one {شركة واحدة} two {شركتان} few {# شركات} many {# شركة} other {# شركة}}",
+        "scopeCountryCount": "{n, plural, zero {بدون دول} one {دولة واحدة} two {دولتان} few {# دول} many {# دولة} other {# دولة}}"
       },
       "readOnly": "للقراءة فقط",
       "advanced": {
         "noAccess": "ليست لديك صلاحية لفتح شاشات الإدارة المتقدّمة. اطلب من مسؤول صلاحيات القراءة المطلوبة."
-      }
+      },
+      "scopeUnavailable": "إحصاءات النطاق غير متاحة. اطلب من المسؤول صلاحية users.read لرؤيتها."
     },
     "companies": {
       "title": "الشركات",

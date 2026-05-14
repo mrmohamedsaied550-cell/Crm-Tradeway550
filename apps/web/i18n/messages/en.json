@@ -215,7 +215,8 @@
           "team": "Team",
           "status": "Status",
           "issues": "Issues",
-          "actions": "Actions"
+          "actions": "Actions",
+          "scope": "Scope"
         },
         "issueChips": {
           "noTeam": "No team",
@@ -229,12 +230,17 @@
         },
         "allHaveTeam": "Every visible user has a team.",
         "allHaveRole": "Every visible user has a role.",
-        "readOnly": "View only"
+        "readOnly": "View only",
+        "scopeNone": "No scope",
+        "scopeUnavailable": "—",
+        "scopeCompanyCount": "{n, plural, one {# company} other {# companies}}",
+        "scopeCountryCount": "{n, plural, one {# country} other {# countries}}"
       },
       "readOnly": "Read-only",
       "advanced": {
         "noAccess": "You don't have permission to open the underlying admin matrix pages. Ask an admin for the relevant *.read capability."
-      }
+      },
+      "scopeUnavailable": "Scope counts unavailable. Ask an admin to grant users.read if you need to audit per-user scope assignments."
     },
     "companies": {
       "title": "Companies",
