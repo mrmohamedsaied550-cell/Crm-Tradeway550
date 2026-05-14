@@ -761,6 +761,14 @@ export const leadsApi = {
       hasOverdueFollowup?: boolean;
       /** D2.6 — narrow to multi-attempt rows (attemptIndex >= 2). */
       returningOnly?: boolean;
+      /**
+       * Sprint 5.2 — narrow to leads whose current stage status
+       * starts with the prefix (case-insensitive). Powers the
+       * "No Answer" queue with `no_answer`; any future
+       * status-category queue can reuse the same filter with
+       * its own prefix.
+       */
+      currentStatusCodePrefix?: string;
       limit?: number;
       offset?: number;
     } = {},
@@ -1248,6 +1256,19 @@ export const conversationsApi = {
 export const transitionRequestsApi = {
   list: (leadId: string): Promise<LeadTransitionRequestRow[]> =>
     apiFetch<LeadTransitionRequestRow[]>(`/leads/${leadId}/transition-requests`),
+  /**
+   * Sprint 5 — calling user's transition requests across all leads
+   * in the tenant. Used by the Sales Dashboard ("Returned to Me",
+   * "Waiting Approval") and the TL Dashboard ("Approval Queue").
+   */
+  mine: (
+    state?: 'pending' | 'rejected' | 'approved' | 'cancelled',
+  ): Promise<LeadTransitionRequestRow[]> =>
+    apiFetch<LeadTransitionRequestRow[]>('/lead-transition-requests/mine', {
+      query: state ? { state } : {},
+    }),
+  approverQueue: (): Promise<LeadTransitionRequestRow[]> =>
+    apiFetch<LeadTransitionRequestRow[]>('/lead-transition-requests/approver-queue'),
   request: (
     leadId: string,
     body: {

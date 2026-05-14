@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, useCallback, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Columns, List, Plus, Upload, UserPlus } from 'lucide-react';
@@ -17,6 +17,10 @@ import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { KanbanBoard, type KanbanFilters } from '@/components/admin/leads-workspace/kanban-board';
+import {
+  QueueListView,
+  type SpecializedQueueKey,
+} from '@/components/admin/leads-workspace/queue-list-view';
 import { LeadPreviewDrawer } from '@/components/admin/lead-preview-drawer';
 import { NextActionCell } from '@/components/admin/next-action-cell';
 import { useIsMobile } from '@/lib/use-media-query';
@@ -112,6 +116,23 @@ const EMPTY_CREATE_FORM: CreateForm = {
 
 const SOURCES: readonly LeadSource[] = ['manual', 'meta', 'tiktok', 'whatsapp', 'import'] as const;
 
+/**
+ * Sprint 5.C — Quick Queue chips shown at the top of the Leads
+ * Workspace. Order matches the priority on the Sales Dashboard.
+ * Keys must stay in sync with the dashboard's `queueHref(key)`
+ * values + the filter-mapping switch in this page.
+ */
+const QUEUE_CHIPS: ReadonlyArray<{ key: string }> = [
+  { key: 'freshMine' },
+  { key: 'overdue' },
+  { key: 'dueToday' },
+  { key: 'noAnswer' },
+  { key: 'followUpMine' },
+  { key: 'waitingApproval' },
+  { key: 'returnedToMe' },
+  { key: 'signup' },
+];
+
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
   if (s === 'breached') return 'breach';
   if (s === 'paused') return 'inactive';
@@ -176,6 +197,13 @@ export default function LeadsPage(): JSX.Element {
     setMeId(getCachedMe()?.userId ?? null);
   }, []);
 
+  // Sprint 5.C — read the `?queue=…` URL param from the Sales/TL
+  // dashboard. The mapping → filter-state useEffect lives below
+  // (after the filter state declarations).
+  const searchParams = useSearchParams();
+  const queueParam = searchParams?.get('queue') ?? null;
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
+
   const [rows, setRows] = useState<Lead[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -229,6 +257,49 @@ export default function LeadsPage(): JSX.Element {
   // by default so first-attempt rows stay in the picture.
   const [filterReturning, setFilterReturning] = useState<boolean>(false);
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
+
+  /**
+   * Sprint 5.C — apply the `?queue=<key>` URL param onto the
+   * existing filter state. Known keys map to (stage / assignee /
+   * overdue) combinations; unmapped keys (transition-request
+   * queues, status-aware "no answer", per-team rollups) still
+   * navigate cleanly but surface a notice explaining the gap.
+   */
+  useEffect(() => {
+    if (!queueParam) {
+      setQueueNotice(null);
+      return;
+    }
+    const myId = getCachedMe()?.userId ?? null;
+    switch (queueParam) {
+      case 'freshMine':
+        setFilterStage('new');
+        if (myId) setFilterAssignee(myId);
+        setFilterOverdue(false);
+        break;
+      case 'overdue':
+        setFilterStage('');
+        if (myId) setFilterAssignee(myId);
+        setFilterOverdue(true);
+        break;
+      case 'signup':
+        setFilterStage('interested' as LeadStageCode);
+        setFilterAssignee('');
+        setFilterOverdue(false);
+        break;
+      default:
+        // dueToday / followUpMine / returnedToMe / waitingApproval /
+        // approverQueue / returnedHandoffs / noAnswer / teamLeads /
+        // agentBreakdown — show notice + clear filters so the
+        // list reads as "all leads, with this queue's intended
+        // filter still pending".
+        setFilterStage('');
+        setFilterAssignee('');
+        setFilterOverdue(false);
+        break;
+    }
+    setQueueNotice(queueParam);
+  }, [queueParam]);
 
   const [creating, setCreating] = useState<boolean>(false);
   const [form, setForm] = useState<CreateForm>(EMPTY_CREATE_FORM);
@@ -854,100 +925,489 @@ export default function LeadsPage(): JSX.Element {
         }
       />
 
+      {/* ───── Sprint 5.C — Quick Queue chip bar ─────
+          Mirrors the Sales Dashboard tiles as a row of chips at
+          the top of the workspace. Clicking a chip pushes
+          ?queue=<key> into the URL; the effect above re-applies
+          the matching filter state. Active chip mirrors the
+          current queueParam. */}
+      <nav aria-label={t('queueBar.label')} className="flex flex-wrap gap-2">
+        {QUEUE_CHIPS.map((q) => {
+          const active = queueParam === q.key;
+          return (
+            <Link
+              key={q.key}
+              href={`/admin/leads?queue=${encodeURIComponent(q.key)}`}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                active
+                  ? 'border-brand-200 bg-brand-50 text-brand-700'
+                  : 'border-surface-border bg-surface-card text-ink-secondary hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700',
+              )}
+            >
+              {t(`queueBar.${q.key}` as 'queueBar.freshMine')}
+            </Link>
+          );
+        })}
+        {queueParam ? (
+          <Link
+            href="/admin/leads"
+            className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-surface-card px-3 py-1.5 text-xs font-medium text-ink-tertiary hover:text-ink-primary"
+          >
+            ✕ {tCommon('clearFilters')}
+          </Link>
+        ) : null}
+      </nav>
+
       {/*
-       * Phase 1 — Lens row. Pipeline picker on the left, view-mode
-       * toggle on the right. Both persist per-user via localStorage.
-       * When only one pipeline exists the picker is shown but
-       * disabled (still informative — the user knows what they're
-       * looking at).
+       * Sprint 5.1 — when the URL queue param is a queue-specific
+       * view (Due Today / Follow-up / Returned to Me / Waiting
+       * Approval / Approver Queue / No Answer / Team Leads /
+       * Agent Breakdown / Returned Handoffs), render the dedicated
+       * QueueListView instead of the lead DataTable. The QueueListView
+       * hits the right endpoint per queue (followUpsApi.mine,
+       * transitionRequestsApi.mine, transitionRequestsApi.approverQueue,
+       * etc.) and renders queue-specific rows that link to Lead
+       * Detail. For queues that still don't have a clean data
+       * source (noAnswer / teamLeads / agentBreakdown /
+       * returnedHandoffs) the view renders an honest "coming
+       * next" empty state — never the full lead list with a
+       * Notice on top.
        */}
-      {pipelines.length > 0 ? (
-        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-surface-border bg-surface-card px-3 py-2 shadow-card">
-          <div className="flex items-end gap-3">
-            <Field label={t('lens.pipeline')}>
-              <Select
-                value={activePipelineId ?? ''}
-                onChange={(e) => setActivePipelineId(e.target.value)}
-                disabled={pipelines.length <= 1}
-                className="min-w-[220px]"
+      {queueNotice &&
+      [
+        'dueToday',
+        'followUpMine',
+        'returnedToMe',
+        'waitingApproval',
+        'approverQueue',
+        'returnedHandoffs',
+        'noAnswer',
+        'teamLeads',
+        'agentBreakdown',
+      ].includes(queueNotice) ? (
+        <QueueListView queue={queueNotice as SpecializedQueueKey} />
+      ) : (
+        <>
+          {/*
+           * Phase 1 — Lens row. Pipeline picker on the left, view-mode
+           * toggle on the right. Both persist per-user via localStorage.
+           * When only one pipeline exists the picker is shown but
+           * disabled (still informative — the user knows what they're
+           * looking at).
+           */}
+          {pipelines.length > 0 ? (
+            <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-surface-border bg-surface-card px-3 py-2 shadow-card">
+              <div className="flex items-end gap-3">
+                <Field label={t('lens.pipeline')}>
+                  <Select
+                    value={activePipelineId ?? ''}
+                    onChange={(e) => setActivePipelineId(e.target.value)}
+                    disabled={pipelines.length <= 1}
+                    className="min-w-[220px]"
+                  >
+                    {pipelines.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.isDefault ? ` · ${t('lens.default')}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+              <div
+                className="inline-flex h-9 items-center rounded-md border border-surface-border bg-surface p-0.5"
+                role="tablist"
+                aria-label={t('lens.viewMode')}
               >
-                {pipelines.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.isDefault ? ` · ${t('lens.default')}` : ''}
+                {(['list', 'kanban'] as const).map((m) => {
+                  const Icon = m === 'list' ? List : Columns;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      role="tab"
+                      aria-selected={viewMode === m}
+                      onClick={() => changeViewMode(m)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded px-3 py-1 text-sm font-medium transition-colors',
+                        viewMode === m
+                          ? 'bg-surface-card text-brand-700 shadow-sm'
+                          : 'text-ink-secondary hover:text-ink-primary',
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t(`lens.${m}`)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/*
+           * Phase 1 — Kanban view. Renders a board grouped by the active
+           * pipeline's stages, sharing the same filter set as the list
+           * view. Drag-and-drop arrives in K1.4; quick actions / SLA /
+           * detail drawer arrive in Phase 2.
+           */}
+          {/* K1.5 — when the user has Kanban selected but the screen
+          dropped below 768px, surface the auto-switch with an opt-in
+          to force Kanban anyway. Avoids silently swapping the body. */}
+          {isMobile && viewMode === 'kanban' && !forceKanbanOnMobile ? (
+            <Notice tone="info">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span>{t('lens.mobileFallback')}</span>
+                <Button variant="ghost" size="sm" onClick={() => setForceKanbanOnMobile(true)}>
+                  {t('lens.useKanbanAnyway')}
+                </Button>
+              </div>
+            </Notice>
+          ) : null}
+
+          {/*
+           * Q1 — primary filter row + advanced panel are SHARED state and
+           * apply to both views. Lifted out of the list-only conditional
+           * so Kanban users can also filter, search, and clear.
+           *
+           * The stage filter (`filterStage`) is List-specific because the
+           * Kanban view groups BY stage — narrowing to one stage there
+           * would just hide the other columns. Hidden in Kanban.
+           */}
+          <div className="flex flex-wrap items-end gap-3">
+            {effectiveViewMode === 'list' ? (
+              <div className="w-full max-w-xs">
+                <Field label={t('filterByStage')}>
+                  <Select
+                    value={filterStage}
+                    onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
+                  >
+                    <option value="">{tCommon('all')}</option>
+                    {stages.map((s) => (
+                      <option key={s.code} value={s.code}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            ) : null}
+            <div className="w-full max-w-sm">
+              <Field label={t('search')}>
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
+              </Field>
+            </div>
+            {/* B4 — quick filter: leads assigned to me + overdue. Toggling
+            on sets both filterAssignee + filterOverdue; toggling off
+            clears them. Disabled when no signed-in user is cached. */}
+            <Button
+              variant={meId && filterAssignee === meId && filterOverdue ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => {
+                if (!meId) return;
+                const isActive = filterAssignee === meId && filterOverdue;
+                if (isActive) {
+                  setFilterAssignee('');
+                  setFilterOverdue(false);
+                } else {
+                  setFilterAssignee(meId);
+                  setFilterOverdue(true);
+                }
+              }}
+              disabled={!meId}
+              title={meId ? undefined : t('myOverdueDisabled')}
+            >
+              <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('myOverdue')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              aria-expanded={advancedOpen}
+            >
+              {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+            </Button>
+            {anyFilterActive ? (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                {tCommon('clearFilters')}
+              </Button>
+            ) : null}
+          </div>
+
+          {advancedOpen ? (
+            <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
+              {/* Phase C — C7: don't expose the field name through a
+              filter dropdown when the role can't see the field's
+              values. The source column itself is gated via
+              FieldGated; the filter UI follows the same rule. */}
+              <FieldGated resource="lead" field="source">
+                <Field label={t('advanced.source')}>
+                  <Select
+                    value={filterSource}
+                    onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
+                  >
+                    <option value="">{tCommon('all')}</option>
+                    <option value="manual">{t('advanced.sources.manual')}</option>
+                    <option value="meta">{t('advanced.sources.meta')}</option>
+                    <option value="tiktok">{t('advanced.sources.tiktok')}</option>
+                    <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
+                    <option value="import">{t('advanced.sources.import')}</option>
+                  </Select>
+                </Field>
+              </FieldGated>
+              <Field label={t('advanced.sla')}>
+                <Select
+                  value={filterSla}
+                  onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
+                >
+                  <option value="">{tCommon('all')}</option>
+                  <option value="active">{t('advanced.slaActive')}</option>
+                  <option value="breached">{t('advanced.slaBreached')}</option>
+                  <option value="paused">{t('advanced.slaPaused')}</option>
+                </Select>
+              </Field>
+              <Field label={t('advanced.assignee')}>
+                <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
+                  <option value="">{tCommon('all')}</option>
+                  <option value="__unassigned__">{t('advanced.unassigned')}</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={t('advanced.createdFrom')}>
+                <Input
+                  type="date"
+                  value={filterCreatedFrom}
+                  onChange={(e) => setFilterCreatedFrom(e.target.value)}
+                  max={filterCreatedTo || undefined}
+                />
+              </Field>
+              <Field label={t('advanced.createdTo')}>
+                <Input
+                  type="date"
+                  value={filterCreatedTo}
+                  onChange={(e) => setFilterCreatedTo(e.target.value)}
+                  min={filterCreatedFrom || undefined}
+                />
+              </Field>
+              <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+                <input
+                  type="checkbox"
+                  checked={filterOverdue}
+                  onChange={(e) => setFilterOverdue(e.target.checked)}
+                />
+                {t('advanced.overdueOnly')}
+              </label>
+              {/* Phase D2 — D2.6: returning-leads chip. Available on the
+              list view only; Kanban doesn't expose this filter. */}
+              <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
+                <input
+                  type="checkbox"
+                  checked={filterReturning}
+                  onChange={(e) => setFilterReturning(e.target.checked)}
+                />
+                {t('advanced.returningOnly')}
+              </label>
+            </div>
+          ) : null}
+
+          {effectiveViewMode === 'kanban' && kanbanFilters ? (
+            <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
+          ) : null}
+
+          {effectiveViewMode === 'list' ? (
+            <>
+              {/*
+               * Q1 — the filter row above is now shared. The list view
+               * keeps its own load-error / notice / empty-state /
+               * DataTable / bulk-action bar below.
+               */}
+
+              {error ? (
+                <Notice tone="error">
+                  <div className="flex items-start justify-between gap-3">
+                    <span>{error}</span>
+                    <Button variant="ghost" size="sm" onClick={() => void reload()}>
+                      {tCommon('retry')}
+                    </Button>
+                  </div>
+                </Notice>
+              ) : null}
+              {notice ? <Notice tone="success">{notice}</Notice> : null}
+
+              {!loading && !error && rows.length === 0 ? (
+                <EmptyState
+                  title={anyFilterActive ? t('emptyFiltered') : t('empty')}
+                  body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
+                  action={
+                    anyFilterActive ? (
+                      <Button variant="secondary" size="sm" onClick={clearFilters}>
+                        {tCommon('clearFilters')}
+                      </Button>
+                    ) : (
+                      <Button variant="primary" size="sm" onClick={openNew}>
+                        {t('newButton')}
+                      </Button>
+                    )
+                  }
+                />
+              ) : (
+                <>
+                  {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
+                  {selectedIds.size > 0 ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
+                      <span className="font-medium text-brand-800">
+                        {t('bulk.selected', { n: selectedIds.size })}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setBulkAssignTarget('');
+                            setBulkAssignOpen(true);
+                          }}
+                          disabled={bulkSubmitting}
+                        >
+                          {t('bulk.assign')}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setBulkStageTarget('');
+                            setBulkStageOpen(true);
+                          }}
+                          disabled={bulkSubmitting}
+                        >
+                          {t('bulk.stage')}
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => void onBulkDelete()}
+                          disabled={bulkSubmitting}
+                        >
+                          {t('bulk.delete')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedIds(new Set())}
+                          disabled={bulkSubmitting}
+                        >
+                          {t('bulk.clear')}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <DataTable
+                    columns={columns}
+                    rows={rows}
+                    /* Phase C — C7: keyOf falls back to phone when the
+                   role denies `lead.id` (server strips the field on
+                   read; the row arrives without an `id`). Phone is
+                   tenant-unique, so it works as a stable key. */
+                    keyOf={(r) => r.id ?? r.phone ?? ''}
+                    loading={loading}
+                    skeletonRows={6}
+                    selection={{
+                      selectedIds,
+                      onChange: setSelectedIds,
+                      ariaLabel: t('bulk.selectRow'),
+                    }}
+                    /* C7: only wire row click → drawer when we actually
+                   have an id to open. When `id` is denied the row
+                   stays visible but interaction is suppressed. */
+                    onRowClick={(row) => row.id && setPreviewLeadId(row.id)}
+                    onRowDoubleClick={(row) => row.id && router.push(`/admin/leads/${row.id}`)}
+                    selectedRowId={previewLeadId}
+                    rowClassName={(r) => (isOverdueRow(r) ? 'bg-status-breach/5' : null)}
+                    rowActions={(row) => (
+                      <>
+                        {/* C7: hide the Open link entirely when id is
+                        denied — the link would navigate to
+                        /admin/leads/undefined otherwise. */}
+                        <FieldGated resource="lead" field="id">
+                          <Link
+                            href={`/admin/leads/${row.id}`}
+                            className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
+                          >
+                            {t('openDetail')}
+                          </Link>
+                        </FieldGated>
+                        <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
+                          {tCommon('delete')}
+                        </Button>
+                      </>
+                    )}
+                  />
+                </>
+              )}
+            </>
+          ) : null}
+
+          {/* P3-05 — bulk assign modal */}
+          <Modal
+            open={bulkAssignOpen}
+            title={t('bulk.assignModalTitle', { n: selectedIds.size })}
+            onClose={() => setBulkAssignOpen(false)}
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setBulkAssignOpen(false)}>
+                  {tCommon('cancel')}
+                </Button>
+                <Button onClick={() => void onBulkAssign()} loading={bulkSubmitting}>
+                  {tCommon('save')}
+                </Button>
+              </>
+            }
+          >
+            <Field label={t('bulk.assignee')} required>
+              <Select
+                value={bulkAssignTarget}
+                onChange={(e) => setBulkAssignTarget(e.target.value)}
+                required
+              >
+                <option value="">{t('bulk.pickAssignee')}</option>
+                <option value="__unassign__">{t('bulk.unassignAll')}</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
                   </option>
                 ))}
               </Select>
             </Field>
-          </div>
-          <div
-            className="inline-flex h-9 items-center rounded-md border border-surface-border bg-surface p-0.5"
-            role="tablist"
-            aria-label={t('lens.viewMode')}
+          </Modal>
+
+          {/* P3-05 — bulk stage move modal */}
+          <Modal
+            open={bulkStageOpen}
+            title={t('bulk.stageModalTitle', { n: selectedIds.size })}
+            onClose={() => setBulkStageOpen(false)}
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setBulkStageOpen(false)}>
+                  {tCommon('cancel')}
+                </Button>
+                <Button onClick={() => void onBulkStage()} loading={bulkSubmitting}>
+                  {tCommon('save')}
+                </Button>
+              </>
+            }
           >
-            {(['list', 'kanban'] as const).map((m) => {
-              const Icon = m === 'list' ? List : Columns;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  role="tab"
-                  aria-selected={viewMode === m}
-                  onClick={() => changeViewMode(m)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded px-3 py-1 text-sm font-medium transition-colors',
-                    viewMode === m
-                      ? 'bg-surface-card text-brand-700 shadow-sm'
-                      : 'text-ink-secondary hover:text-ink-primary',
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t(`lens.${m}`)}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {/*
-       * Phase 1 — Kanban view. Renders a board grouped by the active
-       * pipeline's stages, sharing the same filter set as the list
-       * view. Drag-and-drop arrives in K1.4; quick actions / SLA /
-       * detail drawer arrive in Phase 2.
-       */}
-      {/* K1.5 — when the user has Kanban selected but the screen
-          dropped below 768px, surface the auto-switch with an opt-in
-          to force Kanban anyway. Avoids silently swapping the body. */}
-      {isMobile && viewMode === 'kanban' && !forceKanbanOnMobile ? (
-        <Notice tone="info">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>{t('lens.mobileFallback')}</span>
-            <Button variant="ghost" size="sm" onClick={() => setForceKanbanOnMobile(true)}>
-              {t('lens.useKanbanAnyway')}
-            </Button>
-          </div>
-        </Notice>
-      ) : null}
-
-      {/*
-       * Q1 — primary filter row + advanced panel are SHARED state and
-       * apply to both views. Lifted out of the list-only conditional
-       * so Kanban users can also filter, search, and clear.
-       *
-       * The stage filter (`filterStage`) is List-specific because the
-       * Kanban view groups BY stage — narrowing to one stage there
-       * would just hide the other columns. Hidden in Kanban.
-       */}
-      <div className="flex flex-wrap items-end gap-3">
-        {effectiveViewMode === 'list' ? (
-          <div className="w-full max-w-xs">
-            <Field label={t('filterByStage')}>
+            <Field label={t('bulk.stageTarget')} required>
               <Select
-                value={filterStage}
-                onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
+                value={bulkStageTarget}
+                onChange={(e) => setBulkStageTarget(e.target.value as LeadStageCode | '')}
+                required
               >
-                <option value="">{tCommon('all')}</option>
+                <option value="">{t('bulk.pickStage')}</option>
                 {stages.map((s) => (
                   <option key={s.code} value={s.code}>
                     {s.name}
@@ -955,603 +1415,282 @@ export default function LeadsPage(): JSX.Element {
                 ))}
               </Select>
             </Field>
-          </div>
-        ) : null}
-        <div className="w-full max-w-sm">
-          <Field label={t('search')}>
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="…" />
-          </Field>
-        </div>
-        {/* B4 — quick filter: leads assigned to me + overdue. Toggling
-            on sets both filterAssignee + filterOverdue; toggling off
-            clears them. Disabled when no signed-in user is cached. */}
-        <Button
-          variant={meId && filterAssignee === meId && filterOverdue ? 'primary' : 'secondary'}
-          size="sm"
-          onClick={() => {
-            if (!meId) return;
-            const isActive = filterAssignee === meId && filterOverdue;
-            if (isActive) {
-              setFilterAssignee('');
-              setFilterOverdue(false);
-            } else {
-              setFilterAssignee(meId);
-              setFilterOverdue(true);
-            }
-          }}
-          disabled={!meId}
-          title={meId ? undefined : t('myOverdueDisabled')}
-        >
-          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-          {t('myOverdue')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          aria-expanded={advancedOpen}
-        >
-          {advancedOpen ? t('advanced.hide') : t('advanced.show')}
-        </Button>
-        {anyFilterActive ? (
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
-            {tCommon('clearFilters')}
-          </Button>
-        ) : null}
-      </div>
+          </Modal>
 
-      {advancedOpen ? (
-        <div className="grid grid-cols-1 gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:grid-cols-2 lg:grid-cols-3">
-          {/* Phase C — C7: don't expose the field name through a
-              filter dropdown when the role can't see the field's
-              values. The source column itself is gated via
-              FieldGated; the filter UI follows the same rule. */}
-          <FieldGated resource="lead" field="source">
-            <Field label={t('advanced.source')}>
-              <Select
-                value={filterSource}
-                onChange={(e) => setFilterSource(e.target.value as LeadSource | '')}
-              >
-                <option value="">{tCommon('all')}</option>
-                <option value="manual">{t('advanced.sources.manual')}</option>
-                <option value="meta">{t('advanced.sources.meta')}</option>
-                <option value="tiktok">{t('advanced.sources.tiktok')}</option>
-                <option value="whatsapp">{t('advanced.sources.whatsapp')}</option>
-                <option value="import">{t('advanced.sources.import')}</option>
-              </Select>
-            </Field>
-          </FieldGated>
-          <Field label={t('advanced.sla')}>
-            <Select
-              value={filterSla}
-              onChange={(e) => setFilterSla(e.target.value as SlaStatus | '')}
-            >
-              <option value="">{tCommon('all')}</option>
-              <option value="active">{t('advanced.slaActive')}</option>
-              <option value="breached">{t('advanced.slaBreached')}</option>
-              <option value="paused">{t('advanced.slaPaused')}</option>
-            </Select>
-          </Field>
-          <Field label={t('advanced.assignee')}>
-            <Select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
-              <option value="">{tCommon('all')}</option>
-              <option value="__unassigned__">{t('advanced.unassigned')}</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label={t('advanced.createdFrom')}>
-            <Input
-              type="date"
-              value={filterCreatedFrom}
-              onChange={(e) => setFilterCreatedFrom(e.target.value)}
-              max={filterCreatedTo || undefined}
-            />
-          </Field>
-          <Field label={t('advanced.createdTo')}>
-            <Input
-              type="date"
-              value={filterCreatedTo}
-              onChange={(e) => setFilterCreatedTo(e.target.value)}
-              min={filterCreatedFrom || undefined}
-            />
-          </Field>
-          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
-            <input
-              type="checkbox"
-              checked={filterOverdue}
-              onChange={(e) => setFilterOverdue(e.target.checked)}
-            />
-            {t('advanced.overdueOnly')}
-          </label>
-          {/* Phase D2 — D2.6: returning-leads chip. Available on the
-              list view only; Kanban doesn't expose this filter. */}
-          <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-primary">
-            <input
-              type="checkbox"
-              checked={filterReturning}
-              onChange={(e) => setFilterReturning(e.target.checked)}
-            />
-            {t('advanced.returningOnly')}
-          </label>
-        </div>
-      ) : null}
-
-      {effectiveViewMode === 'kanban' && kanbanFilters ? (
-        <KanbanBoard filters={kanbanFilters} users={users} onCreate={openNew} />
-      ) : null}
-
-      {effectiveViewMode === 'list' ? (
-        <>
-          {/*
-           * Q1 — the filter row above is now shared. The list view
-           * keeps its own load-error / notice / empty-state /
-           * DataTable / bulk-action bar below.
-           */}
-
-          {error ? (
-            <Notice tone="error">
-              <div className="flex items-start justify-between gap-3">
-                <span>{error}</span>
-                <Button variant="ghost" size="sm" onClick={() => void reload()}>
-                  {tCommon('retry')}
+          <Modal
+            open={importing}
+            title={tImport('title')}
+            onClose={closeImport}
+            footer={
+              <>
+                <Button variant="ghost" onClick={closeImport}>
+                  {tCommon('cancel')}
                 </Button>
-              </div>
-            </Notice>
-          ) : null}
-          {notice ? <Notice tone="success">{notice}</Notice> : null}
-
-          {!loading && !error && rows.length === 0 ? (
-            <EmptyState
-              title={anyFilterActive ? t('emptyFiltered') : t('empty')}
-              body={anyFilterActive ? t('emptyFilteredHint') : t('emptyHint')}
-              action={
-                anyFilterActive ? (
-                  <Button variant="secondary" size="sm" onClick={clearFilters}>
-                    {tCommon('clearFilters')}
-                  </Button>
-                ) : (
-                  <Button variant="primary" size="sm" onClick={openNew}>
-                    {t('newButton')}
-                  </Button>
-                )
-              }
-            />
-          ) : (
-            <>
-              {/* P3-05 — bulk action bar (only shown when 1+ rows are selected). */}
-              {selectedIds.size > 0 ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm">
-                  <span className="font-medium text-brand-800">
-                    {t('bulk.selected', { n: selectedIds.size })}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setBulkAssignTarget('');
-                        setBulkAssignOpen(true);
-                      }}
-                      disabled={bulkSubmitting}
-                    >
-                      {t('bulk.assign')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setBulkStageTarget('');
-                        setBulkStageOpen(true);
-                      }}
-                      disabled={bulkSubmitting}
-                    >
-                      {t('bulk.stage')}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => void onBulkDelete()}
-                      disabled={bulkSubmitting}
-                    >
-                      {t('bulk.delete')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSelectedIds(new Set())}
-                      disabled={bulkSubmitting}
-                    >
-                      {t('bulk.clear')}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              <DataTable
-                columns={columns}
-                rows={rows}
-                /* Phase C — C7: keyOf falls back to phone when the
-                   role denies `lead.id` (server strips the field on
-                   read; the row arrives without an `id`). Phone is
-                   tenant-unique, so it works as a stable key. */
-                keyOf={(r) => r.id ?? r.phone ?? ''}
-                loading={loading}
-                skeletonRows={6}
-                selection={{
-                  selectedIds,
-                  onChange: setSelectedIds,
-                  ariaLabel: t('bulk.selectRow'),
-                }}
-                /* C7: only wire row click → drawer when we actually
-                   have an id to open. When `id` is denied the row
-                   stays visible but interaction is suppressed. */
-                onRowClick={(row) => row.id && setPreviewLeadId(row.id)}
-                onRowDoubleClick={(row) => row.id && router.push(`/admin/leads/${row.id}`)}
-                selectedRowId={previewLeadId}
-                rowClassName={(r) => (isOverdueRow(r) ? 'bg-status-breach/5' : null)}
-                rowActions={(row) => (
-                  <>
-                    {/* C7: hide the Open link entirely when id is
-                        denied — the link would navigate to
-                        /admin/leads/undefined otherwise. */}
-                    <FieldGated resource="lead" field="id">
-                      <Link
-                        href={`/admin/leads/${row.id}`}
-                        className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-                      >
-                        {t('openDetail')}
-                      </Link>
-                    </FieldGated>
-                    <Button variant="ghost" size="sm" onClick={() => void onDelete(row)}>
-                      {tCommon('delete')}
-                    </Button>
-                  </>
-                )}
-              />
-            </>
-          )}
-        </>
-      ) : null}
-
-      {/* P3-05 — bulk assign modal */}
-      <Modal
-        open={bulkAssignOpen}
-        title={t('bulk.assignModalTitle', { n: selectedIds.size })}
-        onClose={() => setBulkAssignOpen(false)}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setBulkAssignOpen(false)}>
-              {tCommon('cancel')}
-            </Button>
-            <Button onClick={() => void onBulkAssign()} loading={bulkSubmitting}>
-              {tCommon('save')}
-            </Button>
-          </>
-        }
-      >
-        <Field label={t('bulk.assignee')} required>
-          <Select
-            value={bulkAssignTarget}
-            onChange={(e) => setBulkAssignTarget(e.target.value)}
-            required
+                <Button
+                  type="submit"
+                  form="leadImportForm"
+                  loading={importLoading}
+                  disabled={importLoading || importCsvText.length === 0}
+                >
+                  {tImport('submit')}
+                </Button>
+              </>
+            }
           >
-            <option value="">{t('bulk.pickAssignee')}</option>
-            <option value="__unassign__">{t('bulk.unassignAll')}</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </Modal>
-
-      {/* P3-05 — bulk stage move modal */}
-      <Modal
-        open={bulkStageOpen}
-        title={t('bulk.stageModalTitle', { n: selectedIds.size })}
-        onClose={() => setBulkStageOpen(false)}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setBulkStageOpen(false)}>
-              {tCommon('cancel')}
-            </Button>
-            <Button onClick={() => void onBulkStage()} loading={bulkSubmitting}>
-              {tCommon('save')}
-            </Button>
-          </>
-        }
-      >
-        <Field label={t('bulk.stageTarget')} required>
-          <Select
-            value={bulkStageTarget}
-            onChange={(e) => setBulkStageTarget(e.target.value as LeadStageCode | '')}
-            required
-          >
-            <option value="">{t('bulk.pickStage')}</option>
-            {stages.map((s) => (
-              <option key={s.code} value={s.code}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </Modal>
-
-      <Modal
-        open={importing}
-        title={tImport('title')}
-        onClose={closeImport}
-        footer={
-          <>
-            <Button variant="ghost" onClick={closeImport}>
-              {tCommon('cancel')}
-            </Button>
-            <Button
-              type="submit"
-              form="leadImportForm"
-              loading={importLoading}
-              disabled={importLoading || importCsvText.length === 0}
-            >
-              {tImport('submit')}
-            </Button>
-          </>
-        }
-      >
-        <form id="leadImportForm" className="flex flex-col gap-3" onSubmit={onSubmitImport}>
-          {importError ? <Notice tone="error">{importError}</Notice> : null}
-          {importResult ? (
-            <Notice tone={importResult.errors.length > 0 ? 'info' : 'success'}>
-              {tImport('result', {
-                created: importResult.created,
-                total: importResult.total,
-                duplicates: importResult.duplicates,
-                errors: importResult.errors.length,
-              })}
-              {importResult.errors.length > 0 ? (
-                <ul className="mt-2 list-disc ps-5 text-xs text-ink-secondary">
-                  {importResult.errors.slice(0, 20).map((e) => (
-                    <li key={`${e.row}-${e.reason}`}>
-                      {tImport('errorRow', { row: e.row, reason: e.reason })}
-                    </li>
-                  ))}
-                </ul>
+            <form id="leadImportForm" className="flex flex-col gap-3" onSubmit={onSubmitImport}>
+              {importError ? <Notice tone="error">{importError}</Notice> : null}
+              {importResult ? (
+                <Notice tone={importResult.errors.length > 0 ? 'info' : 'success'}>
+                  {tImport('result', {
+                    created: importResult.created,
+                    total: importResult.total,
+                    duplicates: importResult.duplicates,
+                    errors: importResult.errors.length,
+                  })}
+                  {importResult.errors.length > 0 ? (
+                    <ul className="mt-2 list-disc ps-5 text-xs text-ink-secondary">
+                      {importResult.errors.slice(0, 20).map((e) => (
+                        <li key={`${e.row}-${e.reason}`}>
+                          {tImport('errorRow', { row: e.row, reason: e.reason })}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </Notice>
               ) : null}
-            </Notice>
-          ) : null}
-          <Field label={tImport('fileLabel')} hint={tImport('fileHint')} required>
-            <Input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => void onPickCsvFile(e.target.files?.[0] ?? null)}
-            />
-          </Field>
-          {importFile && importHeaders.length === 0 ? (
-            <p className="text-xs text-ink-tertiary">{tImport('loadingHeaders')}</p>
-          ) : null}
-          {importHeaders.length > 0 ? (
-            <>
-              <Field label={tImport('mapName')} required>
-                <Select
-                  value={importMap.name}
-                  onChange={(e) => setImportMap((m) => ({ ...m, name: e.target.value }))}
-                  required
-                >
-                  <option value="">—</option>
-                  {importHeaders.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={tImport('mapPhone')} required>
-                <Select
-                  value={importMap.phone}
-                  onChange={(e) => setImportMap((m) => ({ ...m, phone: e.target.value }))}
-                  required
-                >
-                  <option value="">—</option>
-                  {importHeaders.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={tImport('mapEmail')}>
-                <Select
-                  value={importMap.email}
-                  onChange={(e) => setImportMap((m) => ({ ...m, email: e.target.value }))}
-                >
-                  <option value="">—</option>
-                  {importHeaders.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={tImport('defaultSource')}>
-                <Select
-                  value={importSource}
-                  onChange={(e) => setImportSource(e.target.value as LeadSource)}
-                >
-                  {SOURCES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <label className="flex items-center gap-2 text-sm text-ink-primary">
-                <input
-                  type="checkbox"
-                  checked={importAutoAssign}
-                  onChange={(e) => setImportAutoAssign(e.target.checked)}
+              <Field label={tImport('fileLabel')} hint={tImport('fileHint')} required>
+                <Input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => void onPickCsvFile(e.target.files?.[0] ?? null)}
                 />
-                {tImport('autoAssign')}
-              </label>
-            </>
-          ) : null}
-        </form>
-      </Modal>
+              </Field>
+              {importFile && importHeaders.length === 0 ? (
+                <p className="text-xs text-ink-tertiary">{tImport('loadingHeaders')}</p>
+              ) : null}
+              {importHeaders.length > 0 ? (
+                <>
+                  <Field label={tImport('mapName')} required>
+                    <Select
+                      value={importMap.name}
+                      onChange={(e) => setImportMap((m) => ({ ...m, name: e.target.value }))}
+                      required
+                    >
+                      <option value="">—</option>
+                      {importHeaders.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label={tImport('mapPhone')} required>
+                    <Select
+                      value={importMap.phone}
+                      onChange={(e) => setImportMap((m) => ({ ...m, phone: e.target.value }))}
+                      required
+                    >
+                      <option value="">—</option>
+                      {importHeaders.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label={tImport('mapEmail')}>
+                    <Select
+                      value={importMap.email}
+                      onChange={(e) => setImportMap((m) => ({ ...m, email: e.target.value }))}
+                    >
+                      <option value="">—</option>
+                      {importHeaders.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label={tImport('defaultSource')}>
+                    <Select
+                      value={importSource}
+                      onChange={(e) => setImportSource(e.target.value as LeadSource)}
+                    >
+                      {SOURCES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <label className="flex items-center gap-2 text-sm text-ink-primary">
+                    <input
+                      type="checkbox"
+                      checked={importAutoAssign}
+                      onChange={(e) => setImportAutoAssign(e.target.checked)}
+                    />
+                    {tImport('autoAssign')}
+                  </label>
+                </>
+              ) : null}
+            </form>
+          </Modal>
 
-      <Modal
-        open={creating}
-        title={t('newTitle')}
-        onClose={closeForm}
-        footer={
-          <>
-            <Button variant="ghost" onClick={closeForm}>
-              {tCommon('cancel')}
-            </Button>
-            <Button type="submit" form="leadCreateForm" loading={submitting}>
-              {tCommon('save')}
-            </Button>
-          </>
-        }
-      >
-        <form id="leadCreateForm" className="flex flex-col gap-3" onSubmit={onCreate}>
-          {formError ? <Notice tone="error">{formError}</Notice> : null}
-          {/* Phase C — C7: each catalogued input is wrapped in
+          <Modal
+            open={creating}
+            title={t('newTitle')}
+            onClose={closeForm}
+            footer={
+              <>
+                <Button variant="ghost" onClick={closeForm}>
+                  {tCommon('cancel')}
+                </Button>
+                <Button type="submit" form="leadCreateForm" loading={submitting}>
+                  {tCommon('save')}
+                </Button>
+              </>
+            }
+          >
+            <form id="leadCreateForm" className="flex flex-col gap-3" onSubmit={onCreate}>
+              {formError ? <Notice tone="error">{formError}</Notice> : null}
+              {/* Phase C — C7: each catalogued input is wrapped in
               edit-mode FieldGated. When the role can't write the
               field, the input is rendered disabled / readOnly so
               the operator can still see its current value (in
               edit-mode the label + placeholder remain visible). The
               C5 server-side filter strips the same keys from the
               POST payload regardless of the UI state. */}
-          <FieldGated resource="lead" field="name" mode="edit">
-            <Field label={t('name')} required>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                required
-                maxLength={120}
-              />
-            </Field>
-          </FieldGated>
-          <FieldGated resource="lead" field="phone" mode="edit">
-            <Field label={t('phone')} required hint="E.164 format (e.g. +201001112222)">
-              <Input
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                required
-                minLength={6}
-                maxLength={32}
-              />
-            </Field>
-          </FieldGated>
-          <FieldGated resource="lead" field="email" mode="edit">
-            <Field label={t('email')}>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                maxLength={254}
-              />
-            </Field>
-          </FieldGated>
-          {/* Source: edit-mode hides the choice when canWrite=false
+              <FieldGated resource="lead" field="name" mode="edit">
+                <Field label={t('name')} required>
+                  <Input
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    required
+                    maxLength={120}
+                  />
+                </Field>
+              </FieldGated>
+              <FieldGated resource="lead" field="phone" mode="edit">
+                <Field label={t('phone')} required hint="E.164 format (e.g. +201001112222)">
+                  <Input
+                    value={form.phone}
+                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                    required
+                    minLength={6}
+                    maxLength={32}
+                  />
+                </Field>
+              </FieldGated>
+              <FieldGated resource="lead" field="email" mode="edit">
+                <Field label={t('email')}>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    maxLength={254}
+                  />
+                </Field>
+              </FieldGated>
+              {/* Source: edit-mode hides the choice when canWrite=false
               AND read-mode hides the whole field when canRead=false
               (e.g. sales_agent). Wrap the field in a read-mode gate
               so denied roles don't even see "Source: meta/manual"
               in the form. */}
-          <FieldGated resource="lead" field="source">
-            <FieldGated resource="lead" field="source" mode="edit">
-              <Field label={t('source')}>
-                <Select
-                  value={form.source}
-                  onChange={(e) => setForm((f) => ({ ...f, source: e.target.value as LeadSource }))}
-                >
-                  {SOURCES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </FieldGated>
-          </FieldGated>
-          {/* Phase 1B — explicit (company × country). Both optional;
+              <FieldGated resource="lead" field="source">
+                <FieldGated resource="lead" field="source" mode="edit">
+                  <Field label={t('source')}>
+                    <Select
+                      value={form.source}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, source: e.target.value as LeadSource }))
+                      }
+                    >
+                      {SOURCES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </FieldGated>
+              </FieldGated>
+              {/* Phase 1B — explicit (company × country). Both optional;
               empty values let the server fall back to the tenant default
               pipeline. The country dropdown is filtered by the chosen
               company so admins can't pick an invalid (company, country)
               tuple. */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label={t('company') ?? 'Company'}>
-              <Select
-                value={form.companyId}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    companyId: e.target.value,
-                    // Drop the country if it no longer matches the new company.
-                    countryId: '',
-                  }))
-                }
-              >
-                <option value="">— ({tCommon('all')})</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label={t('country') ?? 'Country'}>
-              <Select
-                value={form.countryId}
-                onChange={(e) => setForm((f) => ({ ...f, countryId: e.target.value }))}
-              >
-                <option value="">— ({tCommon('all')})</option>
-                {(form.companyId
-                  ? countries.filter((c) => c.companyId === form.companyId)
-                  : countries
-                ).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <Field label={t('stage')}>
-            <Select
-              value={form.stageCode}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, stageCode: e.target.value as LeadStageCode | '' }))
-              }
-            >
-              <option value="">— (default: new)</option>
-              {stages.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <FieldGated resource="lead" field="assignedToId" mode="edit">
-            <Field label={t('assignee')}>
-              <Select
-                value={form.assignedToId}
-                onChange={(e) => setForm((f) => ({ ...f, assignedToId: e.target.value }))}
-              >
-                <option value="">{t('unassigned')}</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.email})
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </FieldGated>
-        </form>
-      </Modal>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={t('company') ?? 'Company'}>
+                  <Select
+                    value={form.companyId}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        companyId: e.target.value,
+                        // Drop the country if it no longer matches the new company.
+                        countryId: '',
+                      }))
+                    }
+                  >
+                    <option value="">— ({tCommon('all')})</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label={t('country') ?? 'Country'}>
+                  <Select
+                    value={form.countryId}
+                    onChange={(e) => setForm((f) => ({ ...f, countryId: e.target.value }))}
+                  >
+                    <option value="">— ({tCommon('all')})</option>
+                    {(form.companyId
+                      ? countries.filter((c) => c.companyId === form.companyId)
+                      : countries
+                    ).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+              <Field label={t('stage')}>
+                <Select
+                  value={form.stageCode}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, stageCode: e.target.value as LeadStageCode | '' }))
+                  }
+                >
+                  <option value="">— (default: new)</option>
+                  {stages.map((s) => (
+                    <option key={s.code} value={s.code}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <FieldGated resource="lead" field="assignedToId" mode="edit">
+                <Field label={t('assignee')}>
+                  <Select
+                    value={form.assignedToId}
+                    onChange={(e) => setForm((f) => ({ ...f, assignedToId: e.target.value }))}
+                  >
+                    <option value="">{t('unassigned')}</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.email})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </FieldGated>
+            </form>
+          </Modal>
+        </>
+      )}
 
       {/* Phase B — Speed: lead preview drawer. Single row click opens
           this; double click navigates to the full page. The drawer

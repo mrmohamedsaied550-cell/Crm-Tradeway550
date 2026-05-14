@@ -1241,6 +1241,19 @@ export type LeadTransitionRequestState = 'pending' | 'approved' | 'rejected' | '
 export interface LeadTransitionRequestRow {
   id: string;
   leadId: string;
+  /**
+   * Sprint 5.1 — present on the `/mine` + `/approver-queue` list
+   * endpoints (D7.1 service join). Optional because the per-lead
+   * list endpoint omits it (the lead is already in scope via the
+   * route param).
+   */
+  lead?: {
+    id: string;
+    name: string;
+    phone: string;
+    stageId: string;
+    assignedToId: string | null;
+  };
   fromStage: { id: string; code: string; name: string };
   toStage: {
     id: string;

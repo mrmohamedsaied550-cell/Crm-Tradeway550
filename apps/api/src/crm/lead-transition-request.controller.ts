@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -122,6 +123,38 @@ export class LeadTransitionRequestController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.service.listForLead(leadId, claimsToScope(user));
+  }
+
+  /**
+   * Sprint 5 — the calling user's transition requests across all
+   * leads, used by the Sales Dashboard / TL Dashboard for the
+   * "Returned to Me" + "Waiting Approval" queues.
+   */
+  @Get('lead-transition-requests/mine')
+  @RequireCapability('lead.transition.request')
+  @ApiOperation({ summary: 'List my transition requests (Sprint 5)' })
+  listMineAsRequester(
+    @CurrentUser() user: AccessTokenClaims,
+    @Query('state') state?: 'pending' | 'rejected' | 'approved' | 'cancelled',
+  ) {
+    return this.service.listForUser(claimsToScope(user), { role: 'requester', state });
+  }
+
+  /**
+   * Sprint 5 — pending requests where the caller is in-scope as
+   * approver. Gated on `lead.transition.approve`; today the
+   * service returns the tenant's pending queue (RLS scoped),
+   * tightened in a later sprint when team-leader signal is
+   * formalised.
+   */
+  @Get('lead-transition-requests/approver-queue')
+  @RequireCapability('lead.transition.approve')
+  @ApiOperation({ summary: 'List pending transition requests I can approve (Sprint 5)' })
+  listMineAsApprover(@CurrentUser() user: AccessTokenClaims) {
+    return this.service.listForUser(claimsToScope(user), {
+      role: 'approver',
+      state: 'pending',
+    });
   }
 
   @Post('lead-transition-requests/:id/approve')

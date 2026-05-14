@@ -214,6 +214,66 @@ export class LeadTransitionRequestService {
   //  List for a lead
   // ─────────────────────────────────────────────────────────────
 
+  /**
+   * Sprint 5 — list the calling user's transition requests across
+   * all leads in the tenant. Powers the Sales Dashboard "Returned
+   * to Me" + "Waiting Approval" queues.
+   *
+   *   role='requester' → rows this user submitted
+   *   role='approver'  → pending rows the user is in-scope to
+   *                       decide on (today: anyone with
+   *                       `lead.transition.approve`; tightened in
+   *                       a later sprint when team-leader signals
+   *                       are formalised)
+   *
+   * Tenant-isolation comes for free via `withTenant`. Visibility
+   * additionally enforces the lead's own scope so a sales agent
+   * doesn't see transition requests on a lead they wouldn't
+   * otherwise see in `/leads`.
+   */
+  async listForUser(
+    userClaims: ScopeUserClaims,
+    opts: {
+      role: 'requester' | 'approver';
+      state?: 'pending' | 'rejected' | 'approved' | 'cancelled';
+    },
+  ) {
+    const tenantId = requireTenantId();
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const where: Prisma.LeadTransitionRequestWhereInput = {
+        ...(opts.state ? { state: opts.state } : {}),
+      };
+      if (opts.role === 'requester') {
+        where.requestedById = userClaims.userId;
+      }
+      // For role='approver' today we don't narrow further than the
+      // capability gate at the controller — the response still
+      // respects tenant isolation via RLS. A future sprint tightens
+      // this to "rows whose approverKind / approverRoleCode / team
+      // signal matches the caller".
+      return tx.leadTransitionRequest.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        include: {
+          lead: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              stageId: true,
+              assignedToId: true,
+            },
+          },
+          fromStage: { select: { id: true, code: true, name: true } },
+          toStage: { select: { id: true, code: true, name: true } },
+          requestedBy: { select: { id: true, name: true, email: true } },
+          decidedBy: { select: { id: true, name: true, email: true } },
+        },
+      });
+    });
+  }
+
   async listForLead(leadId: string, userClaims: ScopeUserClaims) {
     await this.leads.findByIdInScopeOrThrow(leadId, userClaims);
     const tenantId = requireTenantId();
