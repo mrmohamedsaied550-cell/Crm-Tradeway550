@@ -63,6 +63,7 @@ import {
   partnerVerificationApi,
   pipelineApi,
   pipelinesApi,
+  presenceApi,
   teamsApi,
   usersApi,
 } from '@/lib/api';
@@ -237,6 +238,19 @@ export default function LeadDetailPage(): JSX.Element {
   const [navigatorPos, setNavigatorPos] = useState<NavigatorPosition | null>(null);
   useEffect(() => {
     setNavigatorPos(readListContext(id));
+  }, [id]);
+
+  // Sprint 11 — Sprint 10 carry-forward: ship a presence activity
+  // ping when the operator opens Lead Detail so the chip's
+  // `currentContext` reads "lead" for other viewers. Best-effort
+  // (presence outage must never break Lead Detail).
+  useEffect(() => {
+    if (!id) return;
+    void presenceApi
+      .activity({ context: 'lead_detail', entityType: 'lead', entityId: id })
+      .catch(() => {
+        /* swallow */
+      });
   }, [id]);
 
   // Keyboard shortcuts: Alt+←/→ + j/k. Active only when no input,
@@ -872,6 +886,17 @@ export default function LeadDetailPage(): JSX.Element {
         leadId={lead.id}
         refreshKey={lead.updatedAt}
         onChanged={() => void reload()}
+        onRequestAgain={(row) => {
+          // Sprint 11 (D11) — "Request again" on a rejected
+          // transition prefills the Add Action drawer's Lifecycle
+          // panel with the original target stage. The drawer's
+          // normal save flow still runs the smart-status rule
+          // chain, so requiresApproval / handoff are honoured
+          // exactly the same way as a brand-new request.
+          setAddActionInitialArea('lifecycle');
+          setAddActionInitialStageId(row.toStage.id);
+          setAddActionOpen(true);
+        }}
       />
 
       {/* ───── Sprint 4 — Partner Presence compact summary ─────

@@ -159,14 +159,28 @@ export function PartnerPresenceTable({
       {/* ─────── Add Partner Target — Sprint 4.E placeholder ───────
           The spec is explicit: "If backend is not ready: Show
           disabled/placeholder state with exact backend gap. Do
-          not fake success." */}
+          not fake success."
+          Sprint 11 audit: gap still applies. The bullet list
+          below names the exact backend pieces a future sprint
+          must ship before this button can light up. */}
       <section className="rounded-lg border border-dashed border-surface-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-ink-primary">{t('addTarget.title')}</h3>
             <p className="mt-1 text-xs text-ink-secondary">{t('addTarget.gapDescription')}</p>
+            <ul className="mt-2 list-disc ps-5 text-[11px] text-ink-tertiary">
+              <li>{t('addTarget.gapNeeds.endpoint')}</li>
+              <li>{t('addTarget.gapNeeds.capability')}</li>
+              <li>{t('addTarget.gapNeeds.dedupe')}</li>
+            </ul>
           </div>
-          <Button variant="secondary" size="sm" disabled>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled
+            aria-disabled="true"
+            title={t('addTarget.disabledHint')}
+          >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             {t('addTarget.action')}
           </Button>

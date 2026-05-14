@@ -72,6 +72,12 @@ export function DocumentsActionPanel({
       <Notice tone="info">
         <p className="text-sm font-medium">{t('gapTitle')}</p>
         <p className="mt-1 text-xs text-ink-secondary">{t('gapDescription')}</p>
+        <ul className="mt-2 list-disc ps-5 text-[11px] text-ink-tertiary">
+          <li>{t('gapNeeds.model')}</li>
+          <li>{t('gapNeeds.upload')}</li>
+          <li>{t('gapNeeds.status')}</li>
+          <li>{t('gapNeeds.capabilities')}</li>
+        </ul>
       </Notice>
 
       <section className="rounded-lg border border-surface-border bg-surface-card p-3">
