@@ -7,10 +7,18 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
+import type { Readable } from 'node:stream';
+
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ScopeUserClaims } from '../rbac/scope-context.service';
+import {
+  ALLOWED_DOCUMENT_MIMES,
+  readUploadLimit,
+  sanitizeFileName,
+  StorageService,
+} from '../storage/storage.service';
 import { requireTenantId } from '../tenants/tenant-context';
 
 import { LeadsService } from './leads.service';
@@ -59,6 +67,13 @@ export class LeadDocumentsService {
     private readonly prisma: PrismaService,
     private readonly leads: LeadsService,
     private readonly audit: AuditService,
+    /**
+     * Sprint 16 (D16) — private storage. Optional in the constructor
+     * so legacy test fixtures (Sprint 12) keep compiling without
+     * wiring a temp storage root; production module always provides
+     * the global StorageService.
+     */
+    @Optional() private readonly storage?: StorageService,
     @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
@@ -334,6 +349,224 @@ export class LeadDocumentsService {
       return { id: documentId };
     });
   }
+
+  // ─────────────────── Sprint 16 (D16) — binary upload / download ───────────────────
+
+  /**
+   * Accept the uploaded bytes and persist them under the active
+   * StorageService. The caller (controller) has already verified
+   * `lead.document.write` and resolved the multipart file. This
+   * method:
+   *
+   *   1. re-checks lead scope so a user with the capability but no
+   *      lead visibility cannot upload,
+   *   2. resolves the existing document row (404 on cross-tenant),
+   *   3. enforces the server-side MIME allow-list + size cap a
+   *      second time (multer's checks are first-line; this is
+   *      defence-in-depth),
+   *   4. writes the bytes to the storage provider,
+   *   5. updates the row with storage refs + metadata + status,
+   *   6. emits an audit row + a LeadActivity row in the same tx,
+   *   7. returns the safe row projection used by the read paths.
+   *
+   * Replacement semantics: if the document already has a `storageKey`
+   * the new file replaces the metadata; the old key is left in
+   * storage. A future sprint can add a tombstone sweeper — for now
+   * the audit row records the replaced hash so ops can reconcile.
+   */
+  async uploadFile(
+    leadId: string,
+    documentId: string,
+    file: { buffer: Buffer; mimeType: string; originalName: string | null },
+    userClaims: ScopeUserClaims,
+  ): Promise<{ id: string }> {
+    if (!this.storage) {
+      throw new BadRequestException({
+        code: 'lead.document.storage_unavailable',
+        message: 'Document storage is not configured on this deploy.',
+      });
+    }
+    const tenantId = requireTenantId();
+    await this.leads.findByIdInScopeOrThrow(leadId, userClaims);
+
+    // MIME allow-list + size cap. Multer's `limits.fileSize` is the
+    // first guard; rechecking here covers the case where a custom
+    // upload path bypasses the interceptor's limit.
+    if (!ALLOWED_DOCUMENT_MIMES.has(file.mimeType)) {
+      throw new BadRequestException({
+        code: 'lead.document.unsupported_type',
+        message: `MIME type ${file.mimeType} is not allowed.`,
+      });
+    }
+    const limit = readUploadLimit();
+    if (file.buffer.byteLength > limit) {
+      throw new BadRequestException({
+        code: 'lead.document.too_large',
+        message: `File exceeds the ${limit}-byte limit.`,
+      });
+    }
+    if (file.buffer.byteLength === 0) {
+      throw new BadRequestException({
+        code: 'lead.document.empty',
+        message: 'Uploaded file is empty.',
+      });
+    }
+
+    // Resolve the row first (under the tenant context) so we can
+    // 404 cleanly before touching the disk. The row + scope gate
+    // above guarantee tenant isolation.
+    const existing = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.leadDocument.findFirst({
+        where: { id: documentId, leadId },
+        select: { id: true, type: true, storageKey: true, fileHash: true },
+      }),
+    );
+    if (!existing) {
+      throw new NotFoundException({
+        code: 'lead.document.not_found',
+        message: 'Document not found for this lead.',
+      });
+    }
+    const previousKey = existing.storageKey;
+    const previousHash = existing.fileHash;
+
+    // Persist bytes BEFORE the row update so a transient FS failure
+    // doesn't leave the DB pointing at a missing key. The storage
+    // key encodes (tenantId, leadId, documentId) so a same-tenant
+    // collision is impossible.
+    const stored = await this.storage.save(
+      { tenantId, leadId, documentId },
+      file.buffer,
+      file.mimeType,
+    );
+
+    const safeFileName = sanitizeFileName(file.originalName);
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const updated = await tx.leadDocument.update({
+        where: { id: documentId },
+        data: {
+          status: 'uploaded',
+          fileName: safeFileName,
+          mimeType: file.mimeType,
+          sizeBytes: stored.sizeBytes,
+          storageKey: stored.key,
+          storageProvider: stored.provider,
+          fileHash: stored.fileHash,
+          uploadedById: userClaims.userId,
+        },
+        select: { id: true },
+      });
+
+      const isReplacement = previousKey !== null;
+      await this.audit.writeInTx(tx, tenantId, {
+        action: isReplacement ? 'lead.document.file_replaced' : 'lead.document.file_uploaded',
+        entityType: 'lead_document',
+        entityId: documentId,
+        actorUserId: userClaims.userId,
+        payload: {
+          leadId,
+          documentId,
+          type: existing.type,
+          fileName: safeFileName,
+          mimeType: file.mimeType,
+          sizeBytes: stored.sizeBytes,
+          fileHash: stored.fileHash,
+          provider: stored.provider,
+          ...(isReplacement && { previousFileHash: previousHash }),
+        } as Prisma.InputJsonValue,
+      });
+      await tx.leadActivity.create({
+        data: {
+          tenantId,
+          leadId,
+          type: 'system',
+          body: isReplacement
+            ? `Document ${existing.type} file replaced (${safeFileName}).`
+            : `Document ${existing.type} file uploaded (${safeFileName}).`,
+          createdById: userClaims.userId,
+          payload: {
+            kind: 'document',
+            documentId,
+            documentType: existing.type,
+            event: isReplacement ? 'file_replaced' : 'file_uploaded',
+            fileName: safeFileName,
+            mimeType: file.mimeType,
+            sizeBytes: stored.sizeBytes,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return updated;
+    });
+  }
+
+  /**
+   * Resolve the row + open a read stream for the controller to pipe
+   * into the HTTP response. Returns the file metadata alongside the
+   * stream so the controller can set Content-Type / Content-Length /
+   * Content-Disposition.
+   *
+   * Throws NotFoundException when:
+   *   - the lead is out of the caller's scope, OR
+   *   - the document row doesn't exist in the tenant, OR
+   *   - the row exists but has never been uploaded (no storageKey).
+   *
+   * The caller must already hold `lead.document.read`.
+   */
+  async openFileForDownload(
+    leadId: string,
+    documentId: string,
+    userClaims: ScopeUserClaims,
+  ): Promise<{
+    stream: Readable;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+  }> {
+    if (!this.storage) {
+      throw new NotFoundException({
+        code: 'lead.document.storage_unavailable',
+        message: 'Document storage is not configured on this deploy.',
+      });
+    }
+    const tenantId = requireTenantId();
+    await this.leads.findByIdInScopeOrThrow(leadId, userClaims);
+
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.leadDocument.findFirst({
+        where: { id: documentId, leadId },
+        select: {
+          storageKey: true,
+          storageProvider: true,
+          fileName: true,
+          mimeType: true,
+          sizeBytes: true,
+        },
+      }),
+    );
+    if (!row) {
+      throw new NotFoundException({
+        code: 'lead.document.not_found',
+        message: 'Document not found for this lead.',
+      });
+    }
+    if (!row.storageKey) {
+      throw new NotFoundException({
+        code: 'lead.document.file_missing',
+        message: 'No file has been uploaded for this document yet.',
+      });
+    }
+
+    const stream = await this.storage.openStream(row.storageKey);
+    return {
+      stream,
+      fileName: row.fileName ?? 'document',
+      mimeType: row.mimeType ?? 'application/octet-stream',
+      sizeBytes: row.sizeBytes ?? 0,
+    };
+  }
+
+  // ─────────────────── helpers ───────────────────
 
   private activityBody(
     type: string,

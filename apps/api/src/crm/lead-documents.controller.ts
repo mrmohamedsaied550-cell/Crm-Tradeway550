@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,10 +11,31 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createZodDto } from 'nestjs-zod';
+
+/**
+ * Sprint 16 (D16) — local shape for multer's uploaded-file payload.
+ * Sidesteps the `Express.Multer.File` global namespace which is only
+ * registered when `@types/multer` is forced into the project's
+ * `types` field. Keeps the controller self-contained.
+ */
+interface UploadedDocumentFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname?: string;
+  size: number;
+}
+
+import { ALLOWED_DOCUMENT_MIMES, readUploadLimit } from '../storage/storage.service';
 
 import { CurrentUser } from '../identity/current-user.decorator';
 import { JwtAuthGuard } from '../identity/jwt-auth.guard';
@@ -122,5 +145,109 @@ export class LeadDocumentsController {
       canAccept,
       canReject,
     });
+  }
+
+  /**
+   * Sprint 16 (D16) — accept a multipart upload, persist to private
+   * storage, update the document row.
+   *
+   * Multer enforces `fileSize` and `files = 1` as the first guard;
+   * the service rechecks size + MIME so a custom upload path can't
+   * bypass the interceptor. The `fileFilter` rejects unsupported
+   * MIMEs at parse time so we don't allocate a large buffer for a
+   * file we'd reject anyway.
+   */
+  @Post(':documentId/upload')
+  @HttpCode(HttpStatus.OK)
+  @RequireCapability('lead.document.write')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: readUploadLimit(), files: 1 },
+      fileFilter: (_req, file, cb) => {
+        if (!ALLOWED_DOCUMENT_MIMES.has(file.mimetype)) {
+          cb(
+            new BadRequestException({
+              code: 'lead.document.unsupported_type',
+              message: `MIME type ${file.mimetype} is not allowed.`,
+            }),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  @ApiOperation({ summary: 'Upload (or replace) the file backing this document' })
+  async upload(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @Param('documentId', new ParseUUIDPipe()) documentId: string,
+    @UploadedFile() file: UploadedDocumentFile | undefined,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        code: 'lead.document.missing_file',
+        message: 'No file part named "file" in the multipart payload.',
+      });
+    }
+    return this.documents.uploadFile(
+      leadId,
+      documentId,
+      {
+        buffer: file.buffer,
+        mimeType: file.mimetype,
+        originalName: file.originalname ?? null,
+      },
+      this.claimsToScope(user),
+    );
+  }
+
+  /**
+   * Sprint 16 (D16) — stream the document's stored file back to the
+   * browser. Capability gate is `lead.document.read`; lead-scope is
+   * re-checked in the service. Image / PDF MIMEs render inline so
+   * the UI can show a preview; other allowed MIMEs would render
+   * inline too but the allow-list is image+pdf only.
+   *
+   * Returns 404 when the row exists but no file has been uploaded
+   * (storage key NULL) so the client can distinguish "row missing"
+   * from "row has no file yet" via the error code.
+   */
+  @Get(':documentId/file')
+  @RequireCapability('lead.document.read')
+  @Header('Cache-Control', 'private, no-store')
+  @ApiOperation({ summary: "Stream the document's stored file" })
+  async download(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @Param('documentId', new ParseUUIDPipe()) documentId: string,
+    @CurrentUser() user: AccessTokenClaims,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { stream, fileName, mimeType, sizeBytes } = await this.documents.openFileForDownload(
+      leadId,
+      documentId,
+      this.claimsToScope(user),
+    );
+    // Inline-display the curated allow-list (jpeg/png/webp/pdf); the
+    // browser sandbox handles these safely. Anything else (which the
+    // upload allow-list would already have rejected) defaults to
+    // attachment for a download prompt.
+    const disposition =
+      mimeType.startsWith('image/') || mimeType === 'application/pdf' ? 'inline' : 'attachment';
+    // Escape the filename per RFC 6266 so a quote / non-ASCII char
+    // doesn't break the header. Browsers prefer `filename*` for
+    // UTF-8 payloads.
+    const asciiFallback = fileName.replace(/[^\x20-\x7e]/gu, '_').replace(/["\\]/gu, '_');
+    const encoded = encodeURIComponent(fileName);
+    res.setHeader(
+      'Content-Disposition',
+      `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`,
+    );
+    res.setHeader('Content-Type', mimeType);
+    if (sizeBytes > 0) {
+      res.setHeader('Content-Length', String(sizeBytes));
+    }
+    return new StreamableFile(stream);
   }
 }
