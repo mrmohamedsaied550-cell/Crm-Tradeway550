@@ -2233,6 +2233,10 @@
         "emptyMineBody": "New inbound messages routed to you will appear here automatically.",
         "emptyAllTitle": "No conversations in your scope",
         "emptyAllBody": "Once your tenant starts receiving WhatsApp messages, they'll show up here.",
+        "emptyFilteredTitle": "No conversations match your filters",
+        "emptyFilteredBody": "Nothing matched \"{query}\". Try a different search, or clear filters to see every conversation in your scope.",
+        "emptyFilteredNoQueryBody": "No conversation matched the active account or queue filter. Clear filters to see every conversation in your scope.",
+        "clearFilters": "Clear filters",
         "switchToAll": "Switch to All in scope",
         "time": {
           "now": "now",
