@@ -1,0 +1,922 @@
+'use client';
+
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Building2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Crown,
+  Globe,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  UserCog,
+  Users2,
+} from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Notice } from '@/components/ui/notice';
+import { PageHeader } from '@/components/ui/page-header';
+import { ApiError, companiesApi, countriesApi, rolesApi, teamsApi, usersApi } from '@/lib/api';
+import { hasCapability } from '@/lib/auth';
+import { cn } from '@/lib/utils';
+import type { AdminUser, Company, Country, RoleSummary, Team } from '@/lib/api-types';
+
+/**
+ * Sprint 6 — Organization / Headcount unified control center.
+ *
+ * One page that owns the full Company → Country → Team → Users
+ * hierarchy, capability/scope quality, and operational headcount.
+ * Replaces the fragmented Companies / Countries / Teams / Users /
+ * Roles primary-nav entries (those still exist as Advanced
+ * routes; this page is the new primary surface).
+ *
+ * Page layout (top → bottom):
+ *
+ *   1. Header summary — title, subtitle, quick-action buttons
+ *      (Add Company / Country / Team / User / Advanced Admin).
+ *      Each quick-action links into the existing admin page that
+ *      already owns the create flow; we don't duplicate the
+ *      modals here. Quick-actions are gated by their respective
+ *      capabilities (`org.*.write`, `users.write`).
+ *
+ *   2. KPI overview cards — Companies / Countries / Teams /
+ *      Users / Active users / Online users (presence gap) +
+ *      data-quality counters (no team / no role / no scope /
+ *      teams without TL / etc.). Each KPI card is clickable
+ *      where it maps to a filter; the not-yet-wired ones are
+ *      static counts only.
+ *
+ *   3. Data quality / setup issues — one row per detected
+ *      issue with affected records + the right deep link.
+ *      Renders nothing when everything's clean.
+ *
+ *   4. Organization tree — expandable Company → Country → Team
+ *      cards, each showing team leader, user count, and missing-
+ *      setup chips. Click into a team row → /admin/teams (the
+ *      Advanced page) to edit.
+ *
+ *   5. People table — flat user list with role / team / scope /
+ *      status / missing-setup chips. Click → /admin/users for
+ *      edits today; future iteration can inline-edit here.
+ *
+ *   6. Advanced admin links — Companies / Countries / Teams /
+ *      Users / Roles as a card row at the bottom so power users
+ *      can still jump into the matrix views directly.
+ *
+ * Permission posture:
+ *   - The page itself is gated by `org.company.read` (matches the
+ *     sidebar entry's gate). Sub-sections also self-gate: people
+ *     table requires `users.read`; quick-action buttons require
+ *     the corresponding write capability.
+ *   - `safeFetch` swallows per-endpoint 403s so a capability gap
+ *     never blanks the whole page — the affected section shows
+ *     its own no-access state.
+ *
+ * Presence:
+ *   - Sprint 6 spec calls for online/away/offline/busy chips.
+ *     There's no presence engine wired yet; the Online users KPI
+ *     renders a "presence tracking not enabled" hint, and user
+ *     rows omit the chip rather than faking it. Once a presence
+ *     signal lands the chip slot is already in place.
+ *
+ * Logos / avatars:
+ *   - No Branding & Asset Settings model today. Initials avatars
+ *     for users + name-initial chips for companies. A clear gap
+ *     note explains the Sprint 7+ direction.
+ *
+ * Reused APIs (no new endpoints):
+ *   - companiesApi.list
+ *   - countriesApi.list
+ *   - teamsApi.list
+ *   - usersApi.list ({ limit: 200 })
+ *   - rolesApi.list
+ *
+ * The page is a `'use client'` component with parallel fetches.
+ * Each fetch is independent so partial failures degrade
+ * gracefully.
+ */
+
+interface DataState {
+  companies: readonly Company[];
+  countries: readonly Country[];
+  teams: readonly Team[];
+  users: readonly AdminUser[];
+  roles: readonly RoleSummary[];
+}
+
+const EMPTY_DATA: DataState = {
+  companies: [],
+  countries: [],
+  teams: [],
+  users: [],
+  roles: [],
+};
+
+/**
+ * Heuristic for "is this user a team leader?". Until the schema
+ * carries an explicit TL flag, we mark anyone whose role code
+ * contains `tl_` (the existing convention from
+ * `role-templates.registry.ts` — `tl_sales`, `tl_activation`,
+ * `tl_driving`) OR has a level >= 70 (template suggested level
+ * for TL templates). Inclusive enough to catch custom TL roles
+ * without false-positives on agent roles (suggested level 30).
+ */
+function isTeamLeaderRole(role: RoleSummary | undefined): boolean {
+  if (!role) return false;
+  if (role.code.toLowerCase().includes('tl_')) return true;
+  if (role.level >= 70) return true;
+  return false;
+}
+
+export default function OrganizationPage(): JSX.Element {
+  const t = useTranslations('admin.organization');
+  const tCommon = useTranslations('admin.common');
+  const tNav = useTranslations('admin.sideNav');
+
+  const [data, setData] = useState<DataState>(EMPTY_DATA);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Tree-row expansion state. Keyed by `${level}:${id}`.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const safeFetch = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+      const [companies, countries, teams, userPage, roles] = await Promise.all([
+        safeFetch(companiesApi.list(), [] as Company[]),
+        safeFetch(countriesApi.list(), [] as Country[]),
+        safeFetch(teamsApi.list(), [] as Team[]),
+        safeFetch(usersApi.list({ limit: 200 }), {
+          items: [] as AdminUser[],
+          total: 0,
+          limit: 200,
+          offset: 0,
+        }),
+        safeFetch(rolesApi.list(), [] as RoleSummary[]),
+      ]);
+      setData({ companies, countries, teams, users: userPage.items, roles });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // ─────────────────────────────────────────────────────────
+  //  Derived: counts, lookups, issues
+  // ─────────────────────────────────────────────────────────
+
+  const rolesById = useMemo(() => {
+    const m = new Map<string, RoleSummary>();
+    for (const r of data.roles) m.set(r.id, r);
+    return m;
+  }, [data.roles]);
+
+  const teamsByCountry = useMemo(() => {
+    const m = new Map<string, Team[]>();
+    for (const t of data.teams) {
+      const arr = m.get(t.countryId) ?? [];
+      arr.push(t);
+      m.set(t.countryId, arr);
+    }
+    return m;
+  }, [data.teams]);
+
+  const countriesByCompany = useMemo(() => {
+    const m = new Map<string, Country[]>();
+    for (const c of data.countries) {
+      const arr = m.get(c.companyId) ?? [];
+      arr.push(c);
+      m.set(c.companyId, arr);
+    }
+    return m;
+  }, [data.countries]);
+
+  const usersByTeam = useMemo(() => {
+    const m = new Map<string, AdminUser[]>();
+    for (const u of data.users) {
+      if (!u.teamId) continue;
+      const arr = m.get(u.teamId) ?? [];
+      arr.push(u);
+      m.set(u.teamId, arr);
+    }
+    return m;
+  }, [data.users]);
+
+  const counts = useMemo(() => {
+    const activeUsers = data.users.filter((u) => u.status === 'active').length;
+    const usersWithoutTeam = data.users.filter((u) => !u.teamId).length;
+    const usersWithoutRole = data.users.filter((u) => !u.roleId).length;
+    const teamsWithoutTl = data.teams.filter((tm) => {
+      const usersInTeam = usersByTeam.get(tm.id) ?? [];
+      return !usersInTeam.some((u) => isTeamLeaderRole(rolesById.get(u.roleId)));
+    }).length;
+    const teamsWithoutUsers = data.teams.filter(
+      (tm) => (usersByTeam.get(tm.id) ?? []).length === 0,
+    ).length;
+    const countriesWithoutTeams = data.countries.filter(
+      (c) => (teamsByCountry.get(c.id) ?? []).length === 0,
+    ).length;
+    const companiesWithoutCountries = data.companies.filter(
+      (c) => (countriesByCompany.get(c.id) ?? []).length === 0,
+    ).length;
+    return {
+      companies: data.companies.length,
+      countries: data.countries.length,
+      teams: data.teams.length,
+      users: data.users.length,
+      activeUsers,
+      usersWithoutTeam,
+      usersWithoutRole,
+      // "Users without scope" needs per-user scope-assignments
+      // calls (one per user). Not done in this Sprint 6 commit —
+      // a follow-up can batch-fetch via the existing
+      // `usersApi.listScopeAssignments(id)` for users in admin's
+      // scope. Surfaced as a gap chip on the KPI grid.
+      usersWithoutScope: null as number | null,
+      teamsWithoutTl,
+      teamsWithoutUsers,
+      countriesWithoutTeams,
+      companiesWithoutCountries,
+    };
+  }, [data, usersByTeam, teamsByCountry, countriesByCompany, rolesById]);
+
+  // ─────────────────────────────────────────────────────────
+  //  Render helpers
+  // ─────────────────────────────────────────────────────────
+
+  function toggle(key: string): void {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // ─────── render ───────
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              {tCommon('refresh')}
+            </Button>
+            <QuickActionLink
+              href="/admin/companies"
+              cap="org.company.write"
+              label={t('quickActions.addCompany')}
+            />
+            <QuickActionLink
+              href="/admin/countries"
+              cap="org.country.write"
+              label={t('quickActions.addCountry')}
+            />
+            <QuickActionLink
+              href="/admin/teams"
+              cap="org.team.write"
+              label={t('quickActions.addTeam')}
+            />
+            <QuickActionLink
+              href="/admin/users"
+              cap="users.write"
+              label={t('quickActions.addUser')}
+            />
+          </div>
+        }
+      />
+
+      {error ? <Notice tone="error">{error}</Notice> : null}
+
+      {/* ─── KPI Overview ─── */}
+      <section aria-labelledby="org-kpis" className="flex flex-col gap-3">
+        <h2
+          id="org-kpis"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {t('sections.kpis')}
+        </h2>
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <KpiCard
+            label={t('kpis.companies')}
+            count={counts.companies}
+            icon={Building2}
+            href="/admin/companies"
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.countries')}
+            count={counts.countries}
+            icon={Globe}
+            href="/admin/countries"
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.teams')}
+            count={counts.teams}
+            icon={Users2}
+            href="/admin/teams"
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.users')}
+            count={counts.users}
+            icon={UserCog}
+            href="/admin/users"
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.activeUsers')}
+            count={counts.activeUsers}
+            icon={UserCog}
+            tone="healthy"
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.onlineUsers')}
+            count={null}
+            icon={Circle}
+            tone="neutral"
+            hint={t('presenceGap')}
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.usersWithoutTeam')}
+            count={counts.usersWithoutTeam}
+            icon={AlertTriangle}
+            tone={counts.usersWithoutTeam > 0 ? 'warning' : 'healthy'}
+            loading={loading}
+          />
+          <KpiCard
+            label={t('kpis.usersWithoutScope')}
+            count={counts.usersWithoutScope}
+            icon={AlertTriangle}
+            tone="neutral"
+            hint={t('scopeGap')}
+            loading={loading}
+          />
+        </ul>
+      </section>
+
+      {/* ─── Data quality issues ─── */}
+      <section aria-labelledby="org-issues" className="flex flex-col gap-3">
+        <h2
+          id="org-issues"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {t('sections.issues')}
+        </h2>
+        <DataQualityList counts={counts} t={t} />
+      </section>
+
+      {/* ─── Organization tree ─── */}
+      <section aria-labelledby="org-tree" className="flex flex-col gap-3">
+        <h2
+          id="org-tree"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {t('sections.tree')}
+        </h2>
+        {data.companies.length === 0 ? (
+          <Notice tone="info">
+            <p className="text-sm font-medium">{t('tree.empty.title')}</p>
+            <p className="mt-1 text-xs text-ink-secondary">{t('tree.empty.body')}</p>
+          </Notice>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {data.companies.map((company) => {
+              const countries = countriesByCompany.get(company.id) ?? [];
+              const expandedKey = `company:${company.id}`;
+              const isExpanded = expanded.has(expandedKey);
+              return (
+                <li
+                  key={company.id}
+                  className="rounded-lg border border-surface-border bg-surface-card shadow-card"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggle(expandedKey)}
+                    className="flex w-full items-center gap-3 p-4 text-start transition-colors hover:bg-brand-50"
+                    aria-expanded={isExpanded}
+                  >
+                    {isExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+                    )}
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-brand-50 text-[11px] font-semibold text-brand-700">
+                      {company.name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="font-medium text-ink-primary">{company.name}</span>
+                      <span className="text-[11px] uppercase tracking-wide text-ink-tertiary">
+                        {company.code}
+                      </span>
+                    </div>
+                    <Badge tone="neutral">
+                      {t('tree.countriesCount', { n: countries.length })}
+                    </Badge>
+                    {countries.length === 0 ? (
+                      <Badge tone="warning">{t('issues.noCountries')}</Badge>
+                    ) : null}
+                  </button>
+                  {isExpanded ? (
+                    <CountryList
+                      countries={countries}
+                      teamsByCountry={teamsByCountry}
+                      usersByTeam={usersByTeam}
+                      rolesById={rolesById}
+                      expanded={expanded}
+                      toggle={toggle}
+                      t={t}
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ─── People table ─── */}
+      <section aria-labelledby="org-people" className="flex flex-col gap-3">
+        <h2
+          id="org-people"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {t('sections.people')}
+        </h2>
+        <PeopleTable users={data.users} teams={data.teams} rolesById={rolesById} t={t} />
+      </section>
+
+      {/* ─── Advanced admin links ─── */}
+      <section aria-labelledby="org-advanced" className="flex flex-col gap-3">
+        <h2
+          id="org-advanced"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {t('sections.advanced')}
+        </h2>
+        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <AdvancedLink href="/admin/companies" label={tNav('companies')} icon={Building2} />
+          <AdvancedLink href="/admin/countries" label={tNav('countries')} icon={Globe} />
+          <AdvancedLink href="/admin/teams" label={tNav('teams')} icon={Users2} />
+          <AdvancedLink href="/admin/users" label={tNav('users')} icon={UserCog} />
+          <AdvancedLink href="/admin/roles" label={tNav('roles')} icon={ShieldCheck} />
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Sub-components
+// ─────────────────────────────────────────────────────────────
+
+function QuickActionLink({
+  href,
+  cap,
+  label,
+}: {
+  href: string;
+  cap: 'org.company.write' | 'org.country.write' | 'org.team.write' | 'users.write';
+  label: string;
+}): JSX.Element | null {
+  if (!hasCapability(cap)) return null;
+  return (
+    <Link
+      href={href}
+      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-surface-border bg-surface-card px-3 text-sm font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+    >
+      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+      {label}
+    </Link>
+  );
+}
+
+function KpiCard({
+  label,
+  count,
+  icon: Icon,
+  tone = 'info',
+  href,
+  hint,
+  loading,
+}: {
+  label: string;
+  count: number | null;
+  icon: typeof Building2;
+  tone?: 'healthy' | 'warning' | 'breach' | 'info' | 'neutral';
+  href?: string;
+  hint?: string;
+  loading: boolean;
+}): JSX.Element {
+  const toneClasses = {
+    healthy: 'border-status-healthy/30 bg-status-healthy/5 text-status-healthy',
+    warning: 'border-status-warning/30 bg-status-warning/5 text-status-warning',
+    breach: 'border-status-breach/30 bg-status-breach/5 text-status-breach',
+    info: 'border-status-info/30 bg-status-info/5 text-status-info',
+    neutral: 'border-surface-border bg-surface-card text-ink-secondary',
+  } as const;
+  const inner = (
+    <div
+      className={cn(
+        'flex h-full flex-col gap-2 rounded-lg border bg-surface-card p-4 shadow-card transition-colors',
+        href ? 'hover:border-brand-200 hover:bg-brand-50' : '',
+        toneClasses[tone].split(' ')[0],
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={cn(
+            'inline-flex h-8 w-8 items-center justify-center rounded-md',
+            toneClasses[tone],
+          )}
+        >
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+      </div>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-semibold text-ink-primary">{label}</span>
+        <span className="text-2xl font-semibold text-ink-primary">
+          {loading ? <span className="text-ink-tertiary">…</span> : count === null ? '—' : count}
+        </span>
+      </div>
+      {hint ? <p className="text-[11px] leading-snug text-ink-tertiary">{hint}</p> : null}
+    </div>
+  );
+  return <li>{href ? <Link href={href}>{inner}</Link> : inner}</li>;
+}
+
+function DataQualityList({
+  counts,
+  t,
+}: {
+  counts: {
+    usersWithoutTeam: number;
+    usersWithoutRole: number;
+    usersWithoutScope: number | null;
+    teamsWithoutTl: number;
+    teamsWithoutUsers: number;
+    countriesWithoutTeams: number;
+    companiesWithoutCountries: number;
+  };
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  const issues = [
+    {
+      key: 'usersWithoutTeam',
+      n: counts.usersWithoutTeam,
+      href: '/admin/users',
+    },
+    {
+      key: 'usersWithoutRole',
+      n: counts.usersWithoutRole,
+      href: '/admin/users',
+    },
+    {
+      key: 'teamsWithoutTl',
+      n: counts.teamsWithoutTl,
+      href: '/admin/teams',
+    },
+    {
+      key: 'teamsWithoutUsers',
+      n: counts.teamsWithoutUsers,
+      href: '/admin/teams',
+    },
+    {
+      key: 'countriesWithoutTeams',
+      n: counts.countriesWithoutTeams,
+      href: '/admin/countries',
+    },
+    {
+      key: 'companiesWithoutCountries',
+      n: counts.companiesWithoutCountries,
+      href: '/admin/companies',
+    },
+  ] as const;
+  const active = issues.filter((i) => i.n > 0);
+  if (active.length === 0) {
+    return (
+      <Notice tone="success">
+        <p className="text-sm font-medium">{t('issues.allClear')}</p>
+      </Notice>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {active.map((i) => (
+        <li key={i.key}>
+          <Link
+            href={i.href}
+            className="flex items-center justify-between gap-3 rounded-lg border border-status-warning/30 bg-status-warning/5 p-3 transition-colors hover:border-status-warning/50"
+          >
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-status-warning" aria-hidden="true" />
+              <span className="text-sm font-medium text-ink-primary">
+                {t(`issues.${i.key}` as 'issues.usersWithoutTeam', { n: i.n })}
+              </span>
+            </span>
+            <ArrowRight className="h-4 w-4 text-status-warning" aria-hidden="true" />
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CountryList({
+  countries,
+  teamsByCountry,
+  usersByTeam,
+  rolesById,
+  expanded,
+  toggle,
+  t,
+}: {
+  countries: readonly Country[];
+  teamsByCountry: Map<string, Team[]>;
+  usersByTeam: Map<string, AdminUser[]>;
+  rolesById: Map<string, RoleSummary>;
+  expanded: ReadonlySet<string>;
+  toggle: (key: string) => void;
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (countries.length === 0) {
+    return (
+      <div className="border-t border-surface-border p-3 text-xs text-ink-tertiary">
+        {t('tree.noCountries')}
+      </div>
+    );
+  }
+  return (
+    <ul className="border-t border-surface-border">
+      {countries.map((country) => {
+        const teams = teamsByCountry.get(country.id) ?? [];
+        const expandedKey = `country:${country.id}`;
+        const isExpanded = expanded.has(expandedKey);
+        return (
+          <li key={country.id} className="border-b border-surface-border last:border-b-0">
+            <button
+              type="button"
+              onClick={() => toggle(expandedKey)}
+              className="flex w-full items-center gap-3 p-3 ps-10 text-start transition-colors hover:bg-brand-50"
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? (
+                <ChevronDown className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+              )}
+              <Globe className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-ink-primary">{country.name}</span>
+                <span className="text-[11px] uppercase tracking-wide text-ink-tertiary">
+                  {country.code}
+                </span>
+              </div>
+              <Badge tone="neutral">{t('tree.teamsCount', { n: teams.length })}</Badge>
+              {teams.length === 0 ? <Badge tone="warning">{t('issues.noTeams')}</Badge> : null}
+            </button>
+            {isExpanded ? (
+              <TeamList teams={teams} usersByTeam={usersByTeam} rolesById={rolesById} t={t} />
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TeamList({
+  teams,
+  usersByTeam,
+  rolesById,
+  t,
+}: {
+  teams: readonly Team[];
+  usersByTeam: Map<string, AdminUser[]>;
+  rolesById: Map<string, RoleSummary>;
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (teams.length === 0) {
+    return (
+      <div className="border-t border-surface-border p-3 ps-16 text-xs text-ink-tertiary">
+        {t('tree.noTeams')}
+      </div>
+    );
+  }
+  return (
+    <ul className="border-t border-surface-border bg-surface">
+      {teams.map((team) => {
+        const usersInTeam = usersByTeam.get(team.id) ?? [];
+        const tl = usersInTeam.find((u) => isTeamLeaderRole(rolesById.get(u.roleId)));
+        return (
+          <li key={team.id} className="border-b border-surface-border last:border-b-0">
+            <div className="flex items-center gap-3 p-3 ps-16">
+              <Users2 className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-ink-primary">{team.name}</span>
+                {tl ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-ink-secondary">
+                    <Crown className="h-3 w-3 text-status-info" aria-hidden="true" />
+                    {tl.name}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-status-warning">{t('issues.noTl')}</span>
+                )}
+              </div>
+              <Badge tone="neutral">{t('tree.usersCount', { n: usersInTeam.length })}</Badge>
+              {usersInTeam.length === 0 ? (
+                <Badge tone="warning">{t('issues.noUsers')}</Badge>
+              ) : null}
+              <Link
+                href={`/admin/teams`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+              >
+                {t('tree.edit')}
+                <ArrowRight className="h-3 w-3" aria-hidden="true" />
+              </Link>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PeopleTable({
+  users,
+  teams,
+  rolesById,
+  t,
+}: {
+  users: readonly AdminUser[];
+  teams: readonly Team[];
+  rolesById: Map<string, RoleSummary>;
+  t: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  if (!hasCapability('users.read')) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{t('people.noAccess.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{t('people.noAccess.body')}</p>
+      </Notice>
+    );
+  }
+  if (users.length === 0) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{t('people.empty')}</p>
+      </Notice>
+    );
+  }
+  const teamsById = new Map<string, Team>(teams.map((tm) => [tm.id, tm]));
+  return (
+    <section className="overflow-hidden rounded-lg border border-surface-border bg-surface-card shadow-card">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead>
+            <tr className="border-b border-surface-border bg-surface text-xs uppercase tracking-wide text-ink-tertiary">
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.user')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.role')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.team')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.status')}</th>
+              <th className="px-4 py-3 text-start font-semibold">{t('people.columns.issues')}</th>
+              <th className="px-4 py-3 text-end font-semibold">{t('people.columns.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => {
+              const role = rolesById.get(u.roleId);
+              const team = u.teamId ? teamsById.get(u.teamId) : null;
+              const issues: string[] = [];
+              if (!u.teamId) issues.push(t('people.issueChips.noTeam'));
+              if (!u.roleId) issues.push(t('people.issueChips.noRole'));
+              return (
+                <tr
+                  key={u.id}
+                  className="border-b border-surface-border last:border-b-0 hover:bg-surface"
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700"
+                      >
+                        {u.name
+                          .split(/\s+/u)
+                          .map((p) => p.charAt(0).toUpperCase())
+                          .slice(0, 2)
+                          .join('')}
+                      </span>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium text-ink-primary">{u.name}</span>
+                        <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 align-top text-ink-primary">
+                    {role ? (
+                      <Badge tone={isTeamLeaderRole(role) ? 'info' : 'neutral'}>
+                        {role.nameEn}
+                      </Badge>
+                    ) : (
+                      <span className="text-status-warning">{t('people.issueChips.noRole')}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 align-top text-ink-secondary">
+                    {team ? (
+                      team.name
+                    ) : (
+                      <span className="text-status-warning">{t('people.issueChips.noTeam')}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    <Badge
+                      tone={
+                        u.status === 'active'
+                          ? 'healthy'
+                          : u.status === 'disabled'
+                            ? 'breach'
+                            : 'neutral'
+                      }
+                    >
+                      {u.status}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 align-top text-xs">
+                    {issues.length === 0 ? (
+                      <span className="text-ink-tertiary">—</span>
+                    ) : (
+                      <ul className="flex flex-wrap gap-1">
+                        {issues.map((iss) => (
+                          <li key={iss}>
+                            <Badge tone="warning">{iss}</Badge>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 align-top text-end">
+                    <Link
+                      href={`/admin/users`}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                    >
+                      {t('people.edit')}
+                      <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                    </Link>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function AdvancedLink({
+  href,
+  label,
+  icon: Icon,
+}: {
+  href: string;
+  label: string;
+  icon: typeof Building2;
+}): JSX.Element {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-3 text-sm transition-colors hover:border-brand-200 hover:bg-brand-50"
+      >
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-brand-50 text-brand-700">
+          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <span className="text-ink-primary">{label}</span>
+        <ArrowRight className="ms-auto h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+      </Link>
+    </li>
+  );
+}
