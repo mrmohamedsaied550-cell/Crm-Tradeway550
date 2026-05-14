@@ -647,7 +647,13 @@
           "addTarget": {
             "title": "Add Partner Target",
             "action": "+ Add target",
-            "gapDescription": "Backend gap: no POST endpoint creates a partner-target journey row on the same contact yet. Today the Partner Data Hub creates partner records via sync from Uber/inDrive/DiDi/Careem/Yango sheets. A follow-up sprint adds an admin-side endpoint + capability so an agent can mark a contact as a target for an additional partner without duplicating the person. Logos / company assets are pending Branding & Asset Settings — initials shown as a fallback for now."
+            "gapDescription": "Backend gap: no POST endpoint creates a partner-target journey row on the same contact yet. Today the Partner Data Hub creates partner records via sync from Uber/inDrive/DiDi/Careem/Yango sheets. A follow-up sprint adds an admin-side endpoint + capability so an agent can mark a contact as a target for an additional partner without duplicating the person. Logos / company assets are pending Branding & Asset Settings — initials shown as a fallback for now.",
+            "gapNeeds": {
+              "endpoint": "POST /leads/:id/partner-data/targets — creates a partner-target journey row on the same contact (no duplicate contact).",
+              "capability": "New capability partner.target.write (write only, audit-emitting; respects existing partner.data.read for surface).",
+              "dedupe": "Service must reject duplicates: one row per (contact, partnerCompany)."
+            },
+            "disabledHint": "Disabled until the partner-target endpoint ships. Hover the disabled state and the gap notice for the exact backend ask."
           },
           "sharedPhone": {
             "title": "One contact, multiple partner journeys",
@@ -849,6 +855,12 @@
                 "rejected": "Rejected",
                 "missing": "Missing",
                 "needs_resubmission": "Needs resubmission"
+              },
+              "gapNeeds": {
+                "model": "LeadDocument model: id, leadId, kind, status (missing | uploaded | accepted | rejected | needs_resubmission), reason, uploadedAt, reviewedById.",
+                "upload": "POST /leads/:id/documents — accepts file metadata + URL; emits lead.document.uploaded audit.",
+                "status": "PATCH /leads/:id/documents/:docId — operator transitions status; emits lead.document.{accepted|rejected} audit.",
+                "capabilities": "Capabilities: lead.document.read / .write / .accept / .reject; respected by the field-level access chain."
               }
             },
             "partnerData": {
