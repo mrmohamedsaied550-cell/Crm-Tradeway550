@@ -293,7 +293,7 @@ export function AddActionDrawer({
             // Reuses the D4.4 PartnerDataCard read-only projection;
             // backend gap (write paths apply/link/review) is
             // explicit.
-            <PartnerDataActionPanel lead={lead} onClose={close} />
+            <PartnerDataActionPanel lead={lead} onClose={close} onApplied={onApplied} />
           ) : area === 'note' ? (
             // ─────── Sprint 2.G — Note Only panel (LIVE) ───────
             // Re-uses the same `leadsApi.addActivity` endpoint that

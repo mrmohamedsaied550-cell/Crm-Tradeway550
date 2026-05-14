@@ -674,6 +674,10 @@
               "duplicate": "This partner target already exists for this person.",
               "partnerInvalid": "The selected partner source is not available.",
               "noPartnerSources": "No active partner sources configured. Ask an admin to set one up."
+            },
+            "drawer": {
+              "title": "Add partner target",
+              "description": "Register another partner journey on this person without creating a new lead or contact."
             }
           },
           "sharedPhone": {
