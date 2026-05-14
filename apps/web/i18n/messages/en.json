@@ -2646,10 +2646,21 @@
         "advanced": {
           "title": "Advanced controls",
           "body": "Power-user surfaces. Keep editing under Module Access / Field Access / Scope unless you need the cross-role comparison or raw view.",
+          "shortcutsTitle": "Shortcuts",
           "matrix": "Permission matrix",
           "matrixHint": "Compare capabilities across every role at once.",
           "changeHistory": "Change history",
           "changeHistoryHint": "Audit log filtered to this role.",
+          "dependenciesTitle": "Role dependencies",
+          "dependenciesBody": "Live analysis of the current capability set: missing prerequisites, high-risk combinations, and lockout warnings.",
+          "dependenciesLoading": "Analysing capability dependencies…",
+          "dependenciesSystem": "System roles are immutable. The dependency engine is skipped for them.",
+          "rawTitle": "Raw capability codes",
+          "rawBody": "Read-only list of every capability granted to this role. Sensitive caps are highlighted; tab into Module Access to edit.",
+          "rawSearchPlaceholder": "Filter raw codes",
+          "rawEmpty": "This role has no capabilities granted yet.",
+          "rawNoMatch": "No codes match the filter.",
+          "rawCounter": "Showing {shown} of {total} codes.",
           "followUp": "Raw capability list and dependency resolver come in Sprint 7.F."
         },
         "accessLevel": {
@@ -2665,6 +2676,18 @@
         },
         "moduleCounts": {
           "summary": "{on} / {total} caps"
+        },
+        "risk": {
+          "introTitle": "Risk & Preview",
+          "introBody": "Read-only simulation of this role's runtime permissions. Use it before approving big changes — the warnings list comes from the server, not from local heuristics.",
+          "noAccessTitle": "Preview hidden",
+          "noAccessBody": "You don't have permission.preview. Ask an admin to grant it if you need to inspect runtime permissions."
+        },
+        "audit": {
+          "introTitle": "Audit & history",
+          "introBody": "Every save on this role appears here. Older events sit in the full audit log.",
+          "openFullAudit": "Open full audit log",
+          "noAuditRead": "Full audit needs audit.read"
         }
       },
       "fieldHybrid": {

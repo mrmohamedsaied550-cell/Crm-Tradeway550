@@ -295,11 +295,17 @@ export default function RoleEditorPage(): JSX.Element {
         <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
       ) : null}
       {activeTab === 'members' ? <MembersTab roleId={role.id} /> : null}
-      {activeTab === 'riskPreview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
-      {activeTab === 'audit' ? (
-        <RoleHistoryTab roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
+      {activeTab === 'riskPreview' ? (
+        canPreview ? (
+          <RiskPreviewTabWrapper roleId={role.id} />
+        ) : (
+          <RiskPreviewNoAccess />
+        )
       ) : null}
-      {activeTab === 'advanced' ? <AdvancedTabPlaceholder roleId={role.id} /> : null}
+      {activeTab === 'audit' ? (
+        <AuditTabWrapper roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
+      ) : null}
+      {activeTab === 'advanced' ? <AdvancedTab role={role} capabilities={capabilities} /> : null}
     </div>
   );
 }
@@ -652,31 +658,229 @@ function MembersTab({ roleId }: { roleId: string }): JSX.Element {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Sprint 7.B — Advanced tab (container; Sprint 7.F fills it in).
+// Sprint 7.F — Risk & Preview wrapper (intro + the existing
+// RolePreviewTab component; the preview engine itself is unchanged).
 // ────────────────────────────────────────────────────────────────────
 
-function AdvancedTabPlaceholder({ roleId }: { roleId: string }): JSX.Element {
+function RiskPreviewTabWrapper({ roleId }: { roleId: string }): JSX.Element {
   const tHybrid = useTranslations('admin.roles.editorHybrid');
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
-      <header>
-        <h3 className="text-sm font-semibold text-ink-primary">{tHybrid('advanced.title')}</h3>
+    <div className="flex flex-col gap-3">
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('risk.introTitle')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('risk.introBody')}</p>
+      </Notice>
+      <RolePreviewTab roleId={roleId} />
+    </div>
+  );
+}
+
+function RiskPreviewNoAccess(): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  return (
+    <Notice tone="info">
+      <p className="text-sm font-medium">{tHybrid('risk.noAccessTitle')}</p>
+      <p className="mt-1 text-xs text-ink-secondary">{tHybrid('risk.noAccessBody')}</p>
+    </Notice>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.F — Audit wrapper (intro + Audit deep-link + the existing
+// RoleHistoryTab). No change to the underlying history endpoint or
+// revert flow.
+// ────────────────────────────────────────────────────────────────────
+
+function AuditTabWrapper({
+  roleId,
+  roleIsSystem,
+  onReverted,
+}: {
+  roleId: string;
+  roleIsSystem: boolean;
+  onReverted: () => Promise<void>;
+}): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  const canReadAudit = hasCapability('audit.read');
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+        <div className="flex flex-col">
+          <span className="text-sm font-medium text-ink-primary">
+            {tHybrid('audit.introTitle')}
+          </span>
+          <span className="text-[11px] text-ink-secondary">{tHybrid('audit.introBody')}</span>
+        </div>
+        {canReadAudit ? (
+          <Link
+            href={`/admin/audit?entity=Role&entityId=${roleId}`}
+            className="inline-flex items-center gap-1 rounded-md border border-surface-border bg-surface px-2 py-1 text-xs font-medium text-brand-700 transition-colors hover:border-brand-200 hover:bg-brand-50"
+          >
+            {tHybrid('audit.openFullAudit')}
+            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </Link>
+        ) : (
+          <span className="text-[11px] text-ink-tertiary">{tHybrid('audit.noAuditRead')}</span>
+        )}
+      </div>
+      <RoleHistoryTab roleId={roleId} roleIsSystem={roleIsSystem} onReverted={onReverted} />
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.F — Advanced tab. Power-user surfaces: matrix link,
+// audit deep-link, raw capability list, and live dependency
+// analysis. All read-only; the actual edit flow stays on the Module
+// Access / Field Access / Scope tabs.
+// ────────────────────────────────────────────────────────────────────
+
+function AdvancedTab({
+  role,
+  capabilities,
+}: {
+  role: RoleDetail;
+  capabilities: readonly CapabilityCatalogueEntry[];
+}): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  const [analysis, setAnalysis] = useState<RoleDependencyAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
+
+  // Surface the existing capability set's dependency analysis so the
+  // operator sees missing requirements / high-risk warnings without
+  // having to toggle anything. We don't fail silently — if the
+  // endpoint errors, we render an explicit notice.
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  useEffect(() => {
+    if (role.isSystem) {
+      setAnalysis(null);
+      return;
+    }
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    rolesApi
+      .dependencyCheck(role.id, [...role.capabilities].sort())
+      .then((res) => setAnalysis(res))
+      .catch((err) => setAnalysisError(err instanceof ApiError ? err.message : String(err)))
+      .finally(() => setAnalysisLoading(false));
+  }, [role.id, role.isSystem, role.capabilities]);
+
+  // Raw capability search — read-only filter over role.capabilities.
+  const [rawQuery, setRawQuery] = useState<string>('');
+  const capByCode = useMemo(() => {
+    const m = new Map<string, CapabilityCatalogueEntry>();
+    for (const c of capabilities) m.set(c.code, c);
+    return m;
+  }, [capabilities]);
+  const filteredRaw = useMemo(() => {
+    const q = rawQuery.trim().toLowerCase();
+    const all = [...role.capabilities].sort();
+    if (!q) return all;
+    return all.filter((code) => {
+      const cap = capByCode.get(code);
+      const hay = `${code} ${cap?.description ?? ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [role.capabilities, rawQuery, capByCode]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('advanced.title')}</p>
         <p className="mt-1 text-xs text-ink-secondary">{tHybrid('advanced.body')}</p>
-      </header>
-      <ul className="grid gap-2 sm:grid-cols-2">
-        <AdvancedRow
-          href="/admin/roles?view=matrix"
-          label={tHybrid('advanced.matrix')}
-          hint={tHybrid('advanced.matrixHint')}
-        />
-        <AdvancedRow
-          href={`/admin/audit?entity=Role&entityId=${roleId}`}
-          label={tHybrid('advanced.changeHistory')}
-          hint={tHybrid('advanced.changeHistoryHint')}
-        />
-      </ul>
-      <p className="text-[11px] text-ink-tertiary">{tHybrid('advanced.followUp')}</p>
-    </section>
+      </Notice>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('advanced.shortcutsTitle')}
+        </h3>
+        <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+          <AdvancedRow
+            href="/admin/roles?view=matrix"
+            label={tHybrid('advanced.matrix')}
+            hint={tHybrid('advanced.matrixHint')}
+          />
+          <AdvancedRow
+            href={`/admin/audit?entity=Role&entityId=${role.id}`}
+            label={tHybrid('advanced.changeHistory')}
+            hint={tHybrid('advanced.changeHistoryHint')}
+          />
+        </ul>
+      </section>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('advanced.dependenciesTitle')}
+        </h3>
+        <p className="mt-1 text-[11px] text-ink-secondary">
+          {tHybrid('advanced.dependenciesBody')}
+        </p>
+        <div className="mt-2">
+          {role.isSystem ? (
+            <p className="text-xs text-ink-tertiary">{tHybrid('advanced.dependenciesSystem')}</p>
+          ) : analysisLoading ? (
+            <p className="text-xs text-ink-tertiary">{tHybrid('advanced.dependenciesLoading')}</p>
+          ) : analysisError ? (
+            <Notice tone="error">{analysisError}</Notice>
+          ) : (
+            <DependencyWarningsPanel analysis={analysis} />
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+              {tHybrid('advanced.rawTitle')}
+            </h3>
+            <p className="mt-1 text-[11px] text-ink-secondary">{tHybrid('advanced.rawBody')}</p>
+          </div>
+          <Input
+            type="search"
+            value={rawQuery}
+            onChange={(e) => setRawQuery(e.target.value)}
+            placeholder={tHybrid('advanced.rawSearchPlaceholder')}
+            aria-label={tHybrid('advanced.rawSearchPlaceholder')}
+            className="max-w-xs"
+          />
+        </header>
+        {role.capabilities.length === 0 ? (
+          <p className="mt-3 text-xs text-ink-tertiary">{tHybrid('advanced.rawEmpty')}</p>
+        ) : filteredRaw.length === 0 ? (
+          <p className="mt-3 text-xs text-ink-tertiary">{tHybrid('advanced.rawNoMatch')}</p>
+        ) : (
+          <ul className="mt-3 flex flex-wrap gap-1">
+            {filteredRaw.map((code) => {
+              const cap = capByCode.get(code);
+              const risky = isRiskyCap(code);
+              return (
+                <li key={code}>
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px]',
+                      risky
+                        ? 'border-status-warning/40 bg-status-warning/5 text-status-warning'
+                        : 'border-surface-border bg-surface text-ink-primary',
+                    )}
+                    title={cap?.description ?? code}
+                  >
+                    {code}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-3 text-[11px] text-ink-tertiary">
+          {tHybrid('advanced.rawCounter', {
+            shown: filteredRaw.length,
+            total: role.capabilities.length,
+          })}
+        </p>
+      </section>
+    </div>
   );
 }
 
