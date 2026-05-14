@@ -890,6 +890,8 @@
               },
               "uploadGapTitle": "File upload storage not configured",
               "uploadGapBody": "Sprint 12 tracks documents as metadata only. You can record a file name to log \"we have the document via WhatsApp / email\" but the binary storage backend ships in a follow-up sprint.",
+              "privacyTitle": "Files are stored privately",
+              "privacyBody": "Uploaded files are saved outside any public folder and require the lead.document.read capability to view or download. Allowed types: JPEG, PNG, WebP, PDF — up to 10 MB.",
               "listHeading": "Documents",
               "addHeading": "Add or update a document",
               "reasonLabel": "Reason",
@@ -913,14 +915,21 @@
                 "label": "Label (when type = Other)",
                 "fileName": "File name",
                 "fileNamePlaceholder": "e.g. national_id_front.jpg",
-                "fileNameHint": "Leave blank to record the document as Missing for now."
+                "fileNameHint": "Leave blank to record the document as Missing for now.",
+                "file": "File",
+                "fileHint": "Allowed: JPEG, PNG, WebP, PDF. Max 10 MB. Leave empty to add a placeholder row only."
               },
               "actions": {
                 "add": "Add record",
+                "addWithUpload": "Add and upload",
                 "markUploaded": "Mark uploaded",
                 "accept": "Accept",
                 "reject": "Reject",
-                "needsResubmission": "Needs resubmission"
+                "needsResubmission": "Needs resubmission",
+                "uploadFile": "Upload file",
+                "replaceFile": "Replace file",
+                "viewFile": "View",
+                "downloadFile": "Download"
               },
               "rejectModal": {
                 "titleReject": "Reject document",
@@ -933,7 +942,18 @@
                 "uploaded": "Marked as uploaded.",
                 "accepted": "Document accepted.",
                 "rejected": "Document rejected. The lead assignee has been notified.",
-                "needsResubmission": "Document marked needs resubmission."
+                "needsResubmission": "Document marked needs resubmission.",
+                "uploadSuccess": "File uploaded.",
+                "uploadReplaced": "File replaced."
+              },
+              "errors": {
+                "unsupportedType": "Unsupported file type. Allowed: JPEG, PNG, WebP, PDF.",
+                "tooLarge": "File is too large. Maximum 10 MB.",
+                "empty": "The picked file is empty.",
+                "missingFile": "No file was picked.",
+                "fileMissingOnServer": "No file has been uploaded for this document yet.",
+                "notFound": "Document not found.",
+                "storageUnavailable": "Document storage is not configured on this deploy."
               }
             },
             "partnerData": {

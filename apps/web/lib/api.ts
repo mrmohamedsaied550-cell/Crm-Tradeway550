@@ -1667,6 +1667,13 @@ export interface LeadDocumentRow {
   fileUrl: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
+  /** Sprint 16 (D16) — private storage references; never exposed to
+   *  the browser as a URL. The UI keys "has a file?" off
+   *  `storageProvider !== null` and downloads via the protected
+   *  GET /leads/:id/documents/:id/file endpoint. */
+  storageKey?: string | null;
+  storageProvider?: string | null;
+  fileHash?: string | null;
   uploadedById: string | null;
   uploadedBy: { id: string; name: string; email: string } | null;
   reviewedById: string | null;
@@ -1728,6 +1735,105 @@ export const leadDocumentsApi = {
       method: 'PATCH',
       body,
     }),
+  /**
+   * Sprint 16 (D16) — multipart upload. Posts a single `file` field
+   * via FormData with the Bearer token attached; on failure surfaces
+   * the same ApiError envelope as the rest of the client so the UI
+   * can render typed codes (lead.document.unsupported_type,
+   * lead.document.too_large, …).
+   */
+  async upload(leadId: string, documentId: string, file: File): Promise<{ id: string }> {
+    const token = getAccessToken();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const url = `${API_BASE_URL}${API_VERSION_PREFIX}/leads/${leadId}/documents/${documentId}/upload`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: form,
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (res.status === 204) return { id: documentId };
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+    if (!res.ok) {
+      const obj = parsed as Record<string, unknown> | null;
+      const inner = (obj && (obj['message'] as Record<string, unknown> | string)) ??
+        obj ?? { message: text };
+      let code: string | null = null;
+      let message: string = res.statusText;
+      if (typeof inner === 'string') {
+        message = inner;
+      } else if (inner && typeof inner === 'object') {
+        const i = inner as Record<string, unknown>;
+        if (typeof i['code'] === 'string') code = i['code'] as string;
+        if (typeof i['message'] === 'string') message = i['message'] as string;
+      }
+      throw new ApiError(res.status, code, message, parsed);
+    }
+    return parsed as { id: string };
+  },
+  /**
+   * Sprint 16 (D16) — fetch the protected file as a Blob so the UI
+   * can render it via `URL.createObjectURL()` (inline preview) or
+   * trigger a download. The Bearer token is required so we cannot
+   * use a plain `<img src>` pointing at the API; this helper lets
+   * the UI hold the bytes in a short-lived blob URL instead.
+   */
+  async downloadFile(
+    leadId: string,
+    documentId: string,
+  ): Promise<{ blob: Blob; fileName: string; mimeType: string }> {
+    const token = getAccessToken();
+    const headers: Record<string, string> = { Accept: '*/*' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const url = `${API_BASE_URL}${API_VERSION_PREFIX}/leads/${leadId}/documents/${documentId}/file`;
+    const res = await fetch(url, { headers, credentials: 'omit', cache: 'no-store' });
+    if (!res.ok) {
+      const text = await res.text();
+      let parsed: unknown = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = text;
+      }
+      const obj = parsed as Record<string, unknown> | null;
+      const inner = (obj && (obj['message'] as Record<string, unknown> | string)) ?? obj ?? null;
+      let code: string | null = null;
+      let message: string = res.statusText;
+      if (inner && typeof inner === 'object') {
+        const i = inner as Record<string, unknown>;
+        if (typeof i['code'] === 'string') code = i['code'] as string;
+        if (typeof i['message'] === 'string') message = i['message'] as string;
+      }
+      throw new ApiError(res.status, code, message, parsed);
+    }
+    const blob = await res.blob();
+    // Pull the server-side filename out of Content-Disposition when
+    // present so the UI download button matches the operator's intent.
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/iu);
+    const asciiMatch = disposition.match(/filename="([^"]+)"/iu);
+    let fileName = 'document';
+    if (utf8Match) {
+      try {
+        fileName = decodeURIComponent(utf8Match[1]!);
+      } catch {
+        // fall through to ascii
+      }
+    }
+    if (fileName === 'document' && asciiMatch) fileName = asciiMatch[1]!;
+    const mimeType = res.headers.get('content-type') ?? blob.type ?? 'application/octet-stream';
+    return { blob, fileName, mimeType };
+  },
 };
 
 // ───────────────────────────────────────────────────────────────────────
