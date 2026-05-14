@@ -2,39 +2,70 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { Copy, Lock, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Copy,
+  History,
+  Lock,
+  Pencil,
+  Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Table,
+  Trash2,
+  Users2,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DataTable, type Column } from '@/components/ui/data-table';
-import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { RoleTemplatePicker } from '@/components/admin/roles/role-template-picker';
-import { ApiError, rolesApi } from '@/lib/api';
-import type { RoleSummary } from '@/lib/api-types';
+import { ApiError, rolesApi, usersApi } from '@/lib/api';
+import type { AdminUser, CapabilityCatalogueEntry, RoleSummary } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
+import { cn } from '@/lib/utils';
 
 /**
- * Phase C — C8: /admin/roles — list of every tenant role.
+ * Sprint 7 — Roles & Permissions Hybrid UX overview.
  *
- * Two write paths are exposed:
- *   • "New role" — creates a custom role from scratch (modal),
- *     redirects to the editor for tab-by-tab configuration.
- *   • "Duplicate" — clones any role (system or custom) into a new
- *     editable role. System roles ONLY expose this action — their
- *     direct edit is blocked by the C2 service guard with
- *     `role.system_immutable`.
+ * Replaces the original DataTable surface with a card-based
+ * overview that surfaces what an operator actually decides on:
+ * who has this role, how broad it is, and how risky it is. The
+ * editor at /admin/roles/[id] still owns the per-role detail
+ * (now tab-based per Sprint 7.B → 7.G) and the existing
+ * capability matrix moves under the editor's Advanced section.
  *
- * Capability gates (mirrored server-side):
- *   • roles.read  → list, get (everyone with the cap)
- *   • roles.write → create, update, delete, duplicate, scopes,
- *                   field-permissions
+ * Data sources (no mocks, no fabrication):
+ *   • rolesApi.list                  → roles + system flag + level
+ *   • rolesApi.listCapabilities      → total catalogue size for
+ *                                      the permission-coverage chip
+ *   • usersApi.list({ limit: 200 })  → per-role member count via
+ *                                      groupBy(roleId)
+ *
+ * Heuristics surfaced as derived chips (clearly labelled, never
+ * presented as authoritative metadata):
+ *   • Risk = function of capabilitiesCount / level / isSystem
+ *   • Module families = first dot-segment of each capability —
+ *     not shown here yet because RoleSummary does not carry
+ *     `capabilities[]`; surfaced on the editor instead. The
+ *     overview keeps a "view modules" link into the editor for
+ *     each card.
+ *
+ * Known gaps (carried forward from Sprint 6 verification):
+ *   • Per-role scope summary — RoleSummary has no scopes payload.
+ *     The card shows a "View scope in editor" link.
+ *   • Last-updated timestamp — no `updatedAt` on RoleSummary.
+ *     Hidden on the card with an inline gap chip on the meta row.
+ *   • Field-access count — not in summary either. Editor only.
  */
 
 interface CreateFormState {
@@ -60,19 +91,61 @@ interface DuplicateFormState {
   description: string;
 }
 
-const EMPTY_DUPLICATE: DuplicateFormState = { code: '', nameEn: '', nameAr: '', description: '' };
+const EMPTY_DUPLICATE: DuplicateFormState = {
+  code: '',
+  nameEn: '',
+  nameAr: '',
+  description: '',
+};
+
+type RoleFilter = 'all' | 'system' | 'custom' | 'admin' | 'sales' | 'tl' | 'highRisk' | 'noMembers';
+
+interface AugmentedRole extends RoleSummary {
+  memberCount: number;
+  riskLevel: 'low' | 'medium' | 'high';
+  family: 'admin' | 'sales' | 'tl' | 'ops' | 'other';
+}
+
+const ADMIN_CODE_HINTS = ['super_admin', 'admin', 'tenant_owner'] as const;
+const SALES_CODE_HINTS = ['sales', 'agent'] as const;
+const TL_CODE_HINTS = ['tl_', 'team_leader', 'team-leader'] as const;
+
+function familyOf(code: string, level: number): AugmentedRole['family'] {
+  const lower = code.toLowerCase();
+  if (ADMIN_CODE_HINTS.some((h) => lower.includes(h))) return 'admin';
+  if (TL_CODE_HINTS.some((h) => lower.startsWith(h) || lower.includes(h))) return 'tl';
+  if (SALES_CODE_HINTS.some((h) => lower.includes(h))) return 'sales';
+  if (level >= 80) return 'admin';
+  if (level >= 60) return 'tl';
+  return 'ops';
+}
+
+function riskOf(capCount: number, level: number, isSystem: boolean): AugmentedRole['riskLevel'] {
+  if (capCount >= 40 || level >= 80) return 'high';
+  if (capCount >= 15 || level >= 60 || isSystem) return 'medium';
+  return 'low';
+}
 
 export default function RolesAdminPage(): JSX.Element {
   const t = useTranslations('admin.roles');
+  const tHybrid = useTranslations('admin.roles.hybrid');
   const tCommon = useTranslations('admin.common');
+  const tNav = useTranslations('admin.sideNav');
   const router = useRouter();
   const { toast } = useToast();
 
   const canWrite = hasCapability('roles.write');
+  const canReadUsers = hasCapability('users.read');
 
-  const [rows, setRows] = useState<RoleSummary[]>([]);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [users, setUsers] = useState<readonly AdminUser[]>([]);
+  const [usersTotal, setUsersTotal] = useState<number>(0);
+  const [catalogue, setCatalogue] = useState<readonly CapabilityCatalogueEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [query, setQuery] = useState<string>('');
+  const [filter, setFilter] = useState<RoleFilter>('all');
 
   // Create modal
   const [createOpen, setCreateOpen] = useState<boolean>(false);
@@ -86,19 +159,28 @@ export default function RolesAdminPage(): JSX.Element {
   const [submittingDup, setSubmittingDup] = useState<boolean>(false);
   const [dupError, setDupError] = useState<string | null>(null);
 
-  // D5.16 — Template picker state. The picker is the safer
-  // alternative to the duplicate flow: it ships curated capability
-  // sets + safe field-permission denies + sensible scope defaults,
-  // routed through the existing D5.14 dependency-check + D5.15-B
-  // version-capture chain.
+  // Template picker
   const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
-      const list = await rolesApi.list();
-      setRows(list);
+      const safe = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+      const [list, userPage, caps] = await Promise.all([
+        rolesApi.list(),
+        safe(usersApi.list({ limit: 200 }), {
+          items: [] as AdminUser[],
+          total: 0,
+          limit: 200,
+          offset: 0,
+        }),
+        safe(rolesApi.listCapabilities(), [] as CapabilityCatalogueEntry[]),
+      ]);
+      setRoles(list);
+      setUsers(userPage.items);
+      setUsersTotal(userPage.total);
+      setCatalogue(caps);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -109,6 +191,56 @@ export default function RolesAdminPage(): JSX.Element {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const membersByRole = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const u of users) {
+      if (!u.roleId) continue;
+      m.set(u.roleId, (m.get(u.roleId) ?? 0) + 1);
+    }
+    return m;
+  }, [users]);
+
+  const augmented = useMemo<readonly AugmentedRole[]>(() => {
+    return roles.map((r) => ({
+      ...r,
+      memberCount: membersByRole.get(r.id) ?? 0,
+      riskLevel: riskOf(r.capabilitiesCount, r.level, r.isSystem),
+      family: familyOf(r.code, r.level),
+    }));
+  }, [roles, membersByRole]);
+
+  const filtered = useMemo<readonly AugmentedRole[]>(() => {
+    const q = query.trim().toLowerCase();
+    return augmented.filter((r) => {
+      if (q) {
+        const hay = `${r.nameEn} ${r.nameAr} ${r.code} ${r.description ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      switch (filter) {
+        case 'all':
+          return true;
+        case 'system':
+          return r.isSystem;
+        case 'custom':
+          return !r.isSystem;
+        case 'admin':
+          return r.family === 'admin';
+        case 'sales':
+          return r.family === 'sales';
+        case 'tl':
+          return r.family === 'tl';
+        case 'highRisk':
+          return r.riskLevel === 'high';
+        case 'noMembers':
+          return r.memberCount === 0;
+        default:
+          return true;
+      }
+    });
+  }, [augmented, query, filter]);
+
+  const usersTruncated = usersTotal > users.length;
 
   function openCreate(): void {
     setCreateForm(EMPTY_CREATE);
@@ -186,67 +318,31 @@ export default function RolesAdminPage(): JSX.Element {
     }
   }
 
-  const columns: ReadonlyArray<Column<RoleSummary>> = [
-    {
-      key: 'code',
-      header: t('cols.code'),
-      render: (r) => <code className="font-mono text-xs">{r.code}</code>,
-    },
-    {
-      key: 'name',
-      header: t('cols.name'),
-      render: (r) => (
-        <div className="flex flex-col leading-tight">
-          <span className="font-medium text-ink-primary">{r.nameEn}</span>
-          <span className="text-xs text-ink-tertiary">{r.nameAr}</span>
-        </div>
-      ),
-    },
-    {
-      key: 'level',
-      header: t('cols.level'),
-      render: (r) => <span className="text-xs text-ink-secondary">{r.level}</span>,
-    },
-    {
-      key: 'type',
-      header: t('cols.type'),
-      render: (r) =>
-        r.isSystem ? (
-          <Badge tone="inactive">
-            <Lock className="me-1 inline h-3 w-3" aria-hidden="true" />
-            {t('typeSystem')}
-          </Badge>
-        ) : (
-          <Badge tone="info">{t('typeCustom')}</Badge>
-        ),
-    },
-    {
-      key: 'caps',
-      header: t('cols.capabilities'),
-      render: (r) => <span className="text-xs text-ink-secondary">{r.capabilitiesCount}</span>,
-    },
-    {
-      key: 'description',
-      header: t('cols.description'),
-      render: (r) =>
-        r.description ? (
-          <span className="line-clamp-1 text-xs text-ink-secondary" title={r.description}>
-            {r.description}
-          </span>
-        ) : (
-          <span className="text-xs text-ink-tertiary">—</span>
-        ),
-    },
-  ];
-
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-tertiary">
+        <Link
+          href="/admin/organization"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-brand-50 hover:text-brand-700"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+          {tNav('organization')}
+        </Link>
+        <span aria-hidden="true">›</span>
+        <span className="font-medium text-ink-secondary">{tNav('roles')}</span>
+      </div>
+
       <PageHeader
         title={t('title')}
-        subtitle={t('subtitle')}
+        subtitle={tHybrid('subtitle')}
         actions={
-          canWrite ? (
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
+            {!canWrite ? (
+              <Badge tone="neutral" aria-label={tHybrid('readOnly')}>
+                {tHybrid('readOnly')}
+              </Badge>
+            ) : null}
+            {canWrite ? (
               <Button
                 variant="secondary"
                 onClick={() => setTemplatePickerOpen(true)}
@@ -255,12 +351,14 @@ export default function RolesAdminPage(): JSX.Element {
                 <Sparkles className="h-4 w-4" aria-hidden="true" />
                 {t('templates.picker.openCta')}
               </Button>
+            ) : null}
+            {canWrite ? (
               <Button onClick={openCreate}>
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 {t('newRole')}
               </Button>
-            </div>
-          ) : null
+            ) : null}
+          </div>
         }
       />
 
@@ -275,40 +373,116 @@ export default function RolesAdminPage(): JSX.Element {
         </Notice>
       ) : null}
 
-      {!loading && rows.length === 0 ? (
-        <EmptyState title={t('emptyTitle')} body={t('emptyBody')} />
+      <section
+        aria-label={tHybrid('toolbar.label')}
+        className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="relative max-w-sm flex-1">
+          <Search
+            className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary"
+            aria-hidden="true"
+          />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={tHybrid('toolbar.searchPlaceholder')}
+            aria-label={tHybrid('toolbar.searchPlaceholder')}
+            className="ps-9"
+          />
+        </div>
+        <div
+          role="tablist"
+          aria-label={tHybrid('toolbar.filterLabel')}
+          className="flex flex-wrap gap-1"
+        >
+          {(
+            [
+              ['all', augmented.length],
+              ['system', augmented.filter((r) => r.isSystem).length],
+              ['custom', augmented.filter((r) => !r.isSystem).length],
+              ['admin', augmented.filter((r) => r.family === 'admin').length],
+              ['sales', augmented.filter((r) => r.family === 'sales').length],
+              ['tl', augmented.filter((r) => r.family === 'tl').length],
+              ['highRisk', augmented.filter((r) => r.riskLevel === 'high').length],
+              ['noMembers', augmented.filter((r) => r.memberCount === 0).length],
+            ] as ReadonlyArray<[RoleFilter, number]>
+          ).map(([key, n]) => (
+            <FilterChip
+              key={key}
+              active={filter === key}
+              onClick={() => setFilter(key)}
+              label={tHybrid(`filters.${key}` as 'filters.all', { n })}
+            />
+          ))}
+        </div>
+      </section>
+
+      {!canReadUsers ? (
+        <Notice tone="info">{tHybrid('membersGap.noUsersRead')}</Notice>
+      ) : usersTruncated ? (
+        <Notice tone="info">{tHybrid('membersGap.truncated', { n: users.length })}</Notice>
+      ) : null}
+
+      {loading ? (
+        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <li
+              key={i}
+              className="h-48 animate-pulse rounded-lg border border-surface-border bg-surface-card"
+              aria-hidden="true"
+            />
+          ))}
+        </ul>
+      ) : filtered.length === 0 ? (
+        <Notice tone="info">
+          <p className="text-sm font-medium">{tHybrid('empty.title')}</p>
+          <p className="mt-1 text-xs text-ink-secondary">{tHybrid('empty.body')}</p>
+        </Notice>
       ) : (
-        <DataTable<RoleSummary>
-          columns={columns}
-          rows={rows}
-          keyOf={(r) => r.id}
-          loading={loading}
-          skeletonRows={6}
-          rowActions={(r) => (
-            <>
-              <Link
-                href={`/admin/roles/${r.id}`}
-                className="inline-flex h-8 items-center justify-center rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary hover:bg-brand-50 hover:border-brand-200"
-              >
-                <Pencil className="me-1 h-3.5 w-3.5" aria-hidden="true" />
-                {r.isSystem ? t('view') : t('edit')}
-              </Link>
-              {canWrite ? (
-                <Button variant="ghost" size="sm" onClick={() => openDuplicate(r)}>
-                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t('duplicate')}
-                </Button>
-              ) : null}
-              {canWrite && !r.isSystem ? (
-                <Button variant="ghost" size="sm" onClick={() => void onDelete(r)}>
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  {tCommon('delete')}
-                </Button>
-              ) : null}
-            </>
-          )}
-        />
+        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((r) => (
+            <RoleCard
+              key={r.id}
+              role={r}
+              catalogueSize={catalogue.length}
+              canWrite={canWrite}
+              onDuplicate={() => openDuplicate(r)}
+              onDelete={() => void onDelete(r)}
+              t={t}
+              tHybrid={tHybrid}
+              tCommon={tCommon}
+            />
+          ))}
+        </ul>
       )}
+
+      <section
+        aria-labelledby="roles-advanced"
+        className="flex flex-col gap-2 rounded-lg border border-surface-border bg-surface-card p-4 shadow-card"
+      >
+        <h2
+          id="roles-advanced"
+          className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary"
+        >
+          {tHybrid('advanced.title')}
+        </h2>
+        <p className="text-xs text-ink-secondary">{tHybrid('advanced.body')}</p>
+        <ul className="mt-1 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <AdvancedLink
+            href="/admin/roles?view=matrix"
+            label={tHybrid('advanced.matrix')}
+            icon={Table}
+            hint={tHybrid('advanced.matrixHint')}
+          />
+          <AdvancedLink
+            href="/admin/audit?entity=Role"
+            label={tHybrid('advanced.changeHistory')}
+            icon={History}
+            hint={tHybrid('advanced.changeHistoryHint')}
+          />
+        </ul>
+      </section>
 
       {/* Create modal */}
       <Modal
@@ -435,12 +609,6 @@ export default function RolesAdminPage(): JSX.Element {
         </form>
       </Modal>
 
-      {/* D5.16 — curated template picker. Sits alongside the
-          existing duplicate flow as the safer "Create from
-          template" path. Successful creates route to the new
-          role's detail page so the admin can review the seeded
-          capabilities / scopes / field denies before assigning
-          users. */}
       <RoleTemplatePicker
         open={templatePickerOpen}
         onClose={() => setTemplatePickerOpen(false)}
@@ -450,5 +618,228 @@ export default function RolesAdminPage(): JSX.Element {
         }}
       />
     </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+        active
+          ? 'border-brand-200 bg-brand-50 text-brand-700'
+          : 'border-surface-border bg-surface-card text-ink-secondary hover:border-brand-200 hover:bg-brand-50/40',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function RoleCard({
+  role,
+  catalogueSize,
+  canWrite,
+  onDuplicate,
+  onDelete,
+  t,
+  tHybrid,
+  tCommon,
+}: {
+  role: AugmentedRole;
+  catalogueSize: number;
+  canWrite: boolean;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  t: ReturnType<typeof useTranslations>;
+  tHybrid: ReturnType<typeof useTranslations>;
+  tCommon: ReturnType<typeof useTranslations>;
+}): JSX.Element {
+  const coverage =
+    catalogueSize > 0 ? Math.round((role.capabilitiesCount / catalogueSize) * 100) : null;
+  const riskTone: Record<AugmentedRole['riskLevel'], 'healthy' | 'warning' | 'breach'> = {
+    low: 'healthy',
+    medium: 'warning',
+    high: 'breach',
+  };
+  return (
+    <li
+      className={cn(
+        'flex flex-col gap-3 rounded-lg border bg-surface-card p-4 shadow-card transition-colors hover:border-brand-200',
+        role.riskLevel === 'high'
+          ? 'border-status-breach/30'
+          : role.memberCount === 0
+            ? 'border-status-warning/30'
+            : 'border-surface-border',
+      )}
+    >
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <Link
+            href={`/admin/roles/${role.id}`}
+            className="truncate text-base font-semibold text-ink-primary hover:underline"
+          >
+            {role.nameEn}
+          </Link>
+          <code className="font-mono text-[11px] text-ink-tertiary">{role.code}</code>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {role.isSystem ? (
+            <Badge tone="inactive">
+              <Lock className="me-1 inline h-3 w-3" aria-hidden="true" />
+              {t('typeSystem')}
+            </Badge>
+          ) : (
+            <Badge tone="info">{t('typeCustom')}</Badge>
+          )}
+          <Badge tone={riskTone[role.riskLevel]}>
+            {tHybrid(`risk.${role.riskLevel}` as 'risk.low')}
+          </Badge>
+        </div>
+      </header>
+
+      {role.description ? (
+        <p className="line-clamp-2 text-xs text-ink-secondary">{role.description}</p>
+      ) : (
+        <p className="text-xs text-ink-tertiary">{tHybrid('noDescription')}</p>
+      )}
+
+      <dl className="grid grid-cols-2 gap-y-2 text-xs sm:grid-cols-4">
+        <Metric
+          label={tHybrid('card.members')}
+          value={role.memberCount}
+          tone={role.memberCount === 0 ? 'warning' : 'neutral'}
+          icon={Users2}
+        />
+        <Metric
+          label={tHybrid('card.capabilities')}
+          value={
+            coverage === null
+              ? `${role.capabilitiesCount}`
+              : `${role.capabilitiesCount} · ${coverage}%`
+          }
+          icon={ShieldCheck}
+        />
+        <Metric label={tHybrid('card.level')} value={role.level} />
+        <Metric label={tHybrid('card.scope')} value="—" hint={tHybrid('card.scopeGap')} />
+      </dl>
+
+      {role.memberCount === 0 ? (
+        <p className="inline-flex items-center gap-1 text-[11px] text-status-warning">
+          <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+          {tHybrid('card.noMembers')}
+        </p>
+      ) : null}
+
+      <footer className="flex flex-wrap items-center gap-2">
+        <Link
+          href={`/admin/roles/${role.id}`}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          {role.isSystem ? t('view') : t('edit')}
+        </Link>
+        <Link
+          href={`/admin/roles/${role.id}#members`}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+        >
+          <Users2 className="h-3.5 w-3.5" aria-hidden="true" />
+          {tHybrid('card.viewMembers')}
+        </Link>
+        <Link
+          href={`/admin/audit?entity=Role&entityId=${role.id}`}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-surface-border bg-surface-card px-3 text-xs font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+        >
+          <History className="h-3.5 w-3.5" aria-hidden="true" />
+          {tHybrid('card.audit')}
+        </Link>
+        {canWrite ? (
+          <Button variant="ghost" size="sm" onClick={onDuplicate}>
+            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('duplicate')}
+          </Button>
+        ) : null}
+        {canWrite && !role.isSystem ? (
+          <Button variant="ghost" size="sm" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            {tCommon('delete')}
+          </Button>
+        ) : null}
+      </footer>
+    </li>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone = 'neutral',
+  hint,
+  icon: Icon,
+}: {
+  label: string;
+  value: number | string;
+  tone?: 'neutral' | 'warning';
+  hint?: string;
+  icon?: typeof Users2;
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <dt className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-ink-tertiary">
+        {Icon ? <Icon className="h-3 w-3" aria-hidden="true" /> : null}
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          'text-sm font-semibold',
+          tone === 'warning' ? 'text-status-warning' : 'text-ink-primary',
+        )}
+        title={hint}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function AdvancedLink({
+  href,
+  label,
+  hint,
+  icon: Icon,
+}: {
+  href: string;
+  label: string;
+  hint?: string;
+  icon: typeof Table;
+}): JSX.Element {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="flex items-center gap-3 rounded-lg border border-surface-border bg-surface-card p-3 transition-colors hover:border-brand-200 hover:bg-brand-50"
+      >
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-brand-50 text-brand-700">
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div className="flex min-w-0 flex-col">
+          <span className="text-sm font-medium text-ink-primary">{label}</span>
+          {hint ? <span className="truncate text-[11px] text-ink-tertiary">{hint}</span> : null}
+        </div>
+        <ArrowRight className="ms-auto h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+      </Link>
+    </li>
   );
 }

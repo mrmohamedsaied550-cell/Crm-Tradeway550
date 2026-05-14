@@ -2262,6 +2262,14 @@
         "description": "Description"
       },
       "tabs": {
+        "overview": "Overview",
+        "moduleAccess": "Module Access",
+        "fieldAccess": "Field Access",
+        "scope": "Scope",
+        "members": "Members",
+        "riskPreview": "Risk & Preview",
+        "audit": "Audit",
+        "advanced": "Advanced",
         "info": "Basic info",
         "capabilities": "Capability matrix",
         "scopes": "Data scope",
@@ -2524,6 +2532,189 @@
           "fieldHint": "Case-sensitive. The button stays disabled until the phrase matches.",
           "cancel": "Cancel",
           "confirm": "Save with confirmation"
+        }
+      },
+      "hybrid": {
+        "subtitle": "Manage role access, scope, and field-level permissions. Advanced controls remain available below.",
+        "readOnly": "Read-only",
+        "noDescription": "No description.",
+        "toolbar": {
+          "label": "Search and filter roles",
+          "searchPlaceholder": "Search by name, code, or description",
+          "filterLabel": "Filter roles"
+        },
+        "filters": {
+          "all": "All ({n})",
+          "system": "System ({n})",
+          "custom": "Custom ({n})",
+          "admin": "Admin ({n})",
+          "sales": "Sales ({n})",
+          "tl": "Team leaders ({n})",
+          "highRisk": "High risk ({n})",
+          "noMembers": "No members ({n})"
+        },
+        "risk": {
+          "low": "Low risk",
+          "medium": "Medium risk",
+          "high": "High risk"
+        },
+        "card": {
+          "members": "Members",
+          "capabilities": "Caps",
+          "level": "Level",
+          "scope": "Scope",
+          "scopeGap": "Open the editor → Scope tab to see assigned scopes.",
+          "noMembers": "No users hold this role yet.",
+          "viewMembers": "Members",
+          "audit": "Audit"
+        },
+        "membersGap": {
+          "noUsersRead": "Member counts hidden — you do not have users.read. Counts will appear when an admin grants the capability.",
+          "truncated": "Member counts derived from the first {n} users. If your tenant has more users, the count for low-traffic roles may be understated."
+        },
+        "empty": {
+          "title": "No roles match the current filter.",
+          "body": "Try clearing the search or switching back to All."
+        },
+        "advanced": {
+          "title": "Advanced",
+          "body": "Power-user controls: matrix view + audit trail. Read-only unless you have the underlying capability.",
+          "matrix": "Permission matrix",
+          "matrixHint": "Compare capabilities across every role at once.",
+          "changeHistory": "Change history",
+          "changeHistoryHint": "Role create/update/delete events in the audit log."
+        }
+      },
+      "editorHybrid": {
+        "summary": {
+          "members": "Members",
+          "membersHint": "Real count lands in Sprint 7.E.",
+          "scopes": "Scopes",
+          "scopesHint": "Explicit scope rows on the Scope tab.",
+          "modules": "Modules",
+          "modulesHint": "Distinct capability prefixes (lead.*, captain.*, ...).",
+          "capabilities": "Capabilities",
+          "capabilitiesHint": "Active capabilities and % of catalogue.",
+          "level": "Level",
+          "levelHint": "0 (lowest) to 100 (highest). Drives risk heuristics.",
+          "fieldRules": "Field rules",
+          "fieldRulesHint": "Custom (non-default) field permissions.",
+          "type": "Type",
+          "system": "System (immutable)",
+          "systemHint": "Seeded role. Edits blocked by D5 server guard.",
+          "custom": "Custom",
+          "customHint": "Tenant-defined role. Fully editable subject to RBAC.",
+          "lastUpdated": "Last updated",
+          "lastUpdatedGap": "No updatedAt on RoleSummary yet — surfaced via Audit tab."
+        },
+        "warnings": {
+          "title": "Heads-up",
+          "noScope": "This role has no explicit scope rows — falls back to global on every resource.",
+          "manyCaps": "Role holds 40+ capabilities — review under Module Access.",
+          "highLevel": "Role level is 80+ — typically reserved for admin roles.",
+          "sensitiveField": "Role reads at least one sensitive field — confirm under Field Access."
+        },
+        "quickLinks": {
+          "title": "Where to go next",
+          "body": "Module Access for capability toggles, Field Access for masked/sensitive fields, Scope for tenant slicing, Members for assignments, Risk & Preview before saving big changes, Audit for history."
+        },
+        "members": {
+          "placeholderTitle": "Members tab — Sprint 7.E wires the real list.",
+          "placeholderBody": "Today the Members link from /admin/roles opens the editor; the assignment view ships next. The People table on /admin/organization can already filter by role indirectly via users.read.",
+          "loading": "Loading members…",
+          "count": "{n} of {total} members",
+          "openOrganization": "Open Organization",
+          "truncated": "Showing the first {n} of {total} users. Pagination ships when usersApi.list gets a roleId page-cursor; until then narrow the role pool or filter on /admin/users.",
+          "noAccess": {
+            "title": "Members list hidden",
+            "body": "You don't have users.read. Ask an admin to grant it if you need to audit who holds this role."
+          },
+          "empty": {
+            "title": "No users hold this role yet.",
+            "body": "Assign someone from the Users admin page or via the Organization people table."
+          },
+          "noTeam": "No team",
+          "viewOnly": "View only",
+          "edit": "Edit",
+          "columns": {
+            "user": "User",
+            "team": "Team",
+            "status": "Status",
+            "actions": "Actions"
+          }
+        },
+        "advanced": {
+          "title": "Advanced controls",
+          "body": "Power-user surfaces. Keep editing under Module Access / Field Access / Scope unless you need the cross-role comparison or raw view.",
+          "shortcutsTitle": "Shortcuts",
+          "matrix": "Permission matrix",
+          "matrixHint": "Compare capabilities across every role at once.",
+          "changeHistory": "Change history",
+          "changeHistoryHint": "Audit log filtered to this role.",
+          "dependenciesTitle": "Role dependencies",
+          "dependenciesBody": "Live analysis of the current capability set: missing prerequisites, high-risk combinations, and lockout warnings.",
+          "dependenciesLoading": "Analysing capability dependencies…",
+          "dependenciesSystem": "System roles are immutable. The dependency engine is skipped for them.",
+          "rawTitle": "Raw capability codes",
+          "rawBody": "Read-only list of every capability granted to this role. Sensitive caps are highlighted; tab into Module Access to edit.",
+          "rawSearchPlaceholder": "Filter raw codes",
+          "rawEmpty": "This role has no capabilities granted yet.",
+          "rawNoMatch": "No codes match the filter.",
+          "rawCounter": "Showing {shown} of {total} codes.",
+          "followUp": "Raw capability list and dependency resolver come in Sprint 7.F."
+        },
+        "accessLevel": {
+          "none": "No access",
+          "readOnly": "Read-only",
+          "limited": "Limited",
+          "full": "Full"
+        },
+        "moduleRisk": {
+          "hasSensitive": "Has sensitive caps",
+          "activeSensitive": "Sensitive cap active",
+          "sensitiveTag": "Sensitive"
+        },
+        "moduleCounts": {
+          "summary": "{on} / {total} caps"
+        },
+        "risk": {
+          "introTitle": "Risk & Preview",
+          "introBody": "Read-only simulation of this role's runtime permissions. Use it before approving big changes — the warnings list comes from the server, not from local heuristics.",
+          "noAccessTitle": "Preview hidden",
+          "noAccessBody": "You don't have permission.preview. Ask an admin to grant it if you need to inspect runtime permissions."
+        },
+        "audit": {
+          "introTitle": "Audit & history",
+          "introBody": "Every save on this role appears here. Older events sit in the full audit log.",
+          "openFullAudit": "Open full audit log",
+          "noAuditRead": "Full audit needs audit.read"
+        }
+      },
+      "fieldHybrid": {
+        "searchPlaceholder": "Search by field, label, or resource",
+        "filterLabel": "Filter field rows",
+        "filters": {
+          "all": "All ({n})",
+          "sensitive": "Sensitive ({n})",
+          "hidden": "Hidden ({n})",
+          "editable": "Editable ({n})",
+          "overrides": "Overrides ({n})"
+        },
+        "resourceCount": "{n} of {total}",
+        "emptyFiltered": {
+          "title": "No field rows match the current filter.",
+          "body": "Try clearing the search or switching back to All."
+        }
+      },
+      "scopeHybrid": {
+        "whereApplies": "Where does this role apply? Pick one scope per resource — broader scopes carry more risk.",
+        "openOrganization": "Open Organization & Headcount",
+        "description": {
+          "own": "Only rows owned by the user.",
+          "team": "Rows owned by anyone on the same team.",
+          "company": "Rows under the user's assigned company scope.",
+          "country": "Rows under the user's assigned country scope.",
+          "global": "Every row in the tenant. Use sparingly."
         }
       }
     },

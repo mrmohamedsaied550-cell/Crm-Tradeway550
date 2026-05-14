@@ -4,7 +4,19 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowLeft, Lock, Save } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  History,
+  Layers,
+  Lock,
+  Save,
+  ShieldCheck,
+  Table as TableIcon,
+  Users2,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,8 +28,9 @@ import { ReviewChangesModal } from '@/components/admin/roles/review-changes-moda
 import { RoleHistoryTab } from '@/components/admin/roles/role-history-tab';
 import { RolePreviewTab } from '@/components/admin/roles/role-preview-tab';
 import { TypedConfirmationModal } from '@/components/admin/roles/typed-confirmation-modal';
-import { ApiError, rolesApi } from '@/lib/api';
+import { ApiError, rolesApi, teamsApi, usersApi } from '@/lib/api';
 import type {
+  AdminUser,
   CapabilityCatalogueEntry,
   FieldCatalogueEntry,
   RoleChangePreviewResult,
@@ -25,6 +38,7 @@ import type {
   RoleDetail,
   RoleFieldPermissionRow,
   RoleScopeRow,
+  Team,
 } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -60,7 +74,38 @@ const SCOPE_VALUES: ReadonlyArray<RoleScopeRow['scope']> = [
   'global',
 ];
 
-type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields' | 'history' | 'preview';
+/**
+ * Sprint 7 — Hybrid editor tab framework. The legacy tabs map 1:1 to
+ * the new ones (info → overview, capabilities → moduleAccess,
+ * scopes → scope, fields → fieldAccess, history → audit,
+ * preview → riskPreview) plus two new tabs:
+ *   • members — users assigned to this role (real fetch from
+ *     usersApi.list({ roleId })).
+ *   • advanced — power-user surfaces: permission matrix link, raw
+ *     capability list, audit deep-link. The existing CapabilitiesTab
+ *     stays under Module Access; Advanced is the optional drill-down,
+ *     not the primary editing surface.
+ */
+type TabKey =
+  | 'overview'
+  | 'moduleAccess'
+  | 'fieldAccess'
+  | 'scope'
+  | 'members'
+  | 'riskPreview'
+  | 'audit'
+  | 'advanced';
+
+const TAB_ICONS: Record<TabKey, typeof ShieldCheck> = {
+  overview: Eye,
+  moduleAccess: Layers,
+  fieldAccess: ShieldCheck,
+  scope: TableIcon,
+  members: Users2,
+  riskPreview: AlertTriangle,
+  audit: History,
+  advanced: TableIcon,
+};
 
 export default function RoleEditorPage(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -77,7 +122,21 @@ export default function RoleEditorPage(): JSX.Element {
   const [fieldCatalogue, setFieldCatalogue] = useState<FieldCatalogueEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('info');
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+
+  // Sprint 7 — the Overview hub deep-links to #members; honour the
+  // hash on first load so the navigation feels continuous.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '');
+    if (hash === 'members') setActiveTab('members');
+    else if (hash === 'advanced') setActiveTab('advanced');
+    else if (hash === 'audit' || hash === 'history') setActiveTab('audit');
+    else if (hash === 'risk' || hash === 'preview') setActiveTab('riskPreview');
+    else if (hash === 'fields' || hash === 'fieldAccess') setActiveTab('fieldAccess');
+    else if (hash === 'capabilities' || hash === 'moduleAccess') setActiveTab('moduleAccess');
+    else if (hash === 'scope' || hash === 'scopes') setActiveTab('scope');
+  }, []);
 
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
@@ -172,34 +231,49 @@ export default function RoleEditorPage(): JSX.Element {
       <nav className="flex flex-wrap gap-1 border-b border-surface-border" aria-label="Tabs">
         {(
           [
-            'info',
-            'capabilities',
-            'scopes',
-            'fields',
-            'history',
-            ...(canPreview ? (['preview'] as const) : []),
+            'overview',
+            'moduleAccess',
+            'fieldAccess',
+            'scope',
+            'members',
+            ...(canPreview ? (['riskPreview'] as const) : []),
+            'audit',
+            'advanced',
           ] as const
-        ).map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setActiveTab(key)}
-            className={cn(
-              'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-              activeTab === key
-                ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-ink-secondary hover:text-ink-primary',
-            )}
-          >
-            {t(`tabs.${key}`)}
-          </button>
-        ))}
+        ).map((key) => {
+          const Icon = TAB_ICONS[key];
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              onClick={() => setActiveTab(key)}
+              aria-selected={activeTab === key}
+              className={cn(
+                'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+                activeTab === key
+                  ? 'border-brand-600 text-brand-700'
+                  : 'border-transparent text-ink-secondary hover:text-ink-primary',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              {t(`tabs.${key}` as 'tabs.overview')}
+            </button>
+          );
+        })}
       </nav>
 
-      {activeTab === 'info' ? (
-        <BasicInfoTab role={role} editable={editable} onSaved={reload} toast={toast} />
+      {activeTab === 'overview' ? (
+        <OverviewTab
+          role={role}
+          capabilities={capabilities}
+          fieldCatalogue={fieldCatalogue}
+          editable={editable}
+          onSaved={reload}
+          toast={toast}
+        />
       ) : null}
-      {activeTab === 'capabilities' ? (
+      {activeTab === 'moduleAccess' ? (
         <CapabilitiesTab
           role={role}
           capabilities={capabilities}
@@ -208,10 +282,7 @@ export default function RoleEditorPage(): JSX.Element {
           toast={toast}
         />
       ) : null}
-      {activeTab === 'scopes' ? (
-        <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
-      ) : null}
-      {activeTab === 'fields' ? (
+      {activeTab === 'fieldAccess' ? (
         <FieldPermissionsTab
           role={role}
           fieldCatalogue={fieldCatalogue}
@@ -220,11 +291,621 @@ export default function RoleEditorPage(): JSX.Element {
           toast={toast}
         />
       ) : null}
-      {activeTab === 'history' ? (
-        <RoleHistoryTab roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
+      {activeTab === 'scope' ? (
+        <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
       ) : null}
-      {activeTab === 'preview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
+      {activeTab === 'members' ? <MembersTab roleId={role.id} /> : null}
+      {activeTab === 'riskPreview' ? (
+        canPreview ? (
+          <RiskPreviewTabWrapper roleId={role.id} />
+        ) : (
+          <RiskPreviewNoAccess />
+        )
+      ) : null}
+      {activeTab === 'audit' ? (
+        <AuditTabWrapper roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
+      ) : null}
+      {activeTab === 'advanced' ? <AdvancedTab role={role} capabilities={capabilities} /> : null}
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.B — Overview tab: at-a-glance summary + Basic info form.
+// ────────────────────────────────────────────────────────────────────
+
+interface OverviewTabProps extends TabProps {
+  capabilities: CapabilityCatalogueEntry[];
+  fieldCatalogue: FieldCatalogueEntry[];
+}
+
+function OverviewTab({
+  role,
+  capabilities,
+  fieldCatalogue,
+  editable,
+  onSaved,
+  toast,
+}: OverviewTabProps): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  // Real, derived metrics — no fabrication.
+  const moduleFamilies = useMemo(() => {
+    const set = new Set<string>();
+    for (const cap of role.capabilities) {
+      const prefix = cap.split('.')[0] ?? 'misc';
+      set.add(prefix);
+    }
+    return set.size;
+  }, [role.capabilities]);
+
+  const customFieldRows = role.fieldPermissions.length;
+  const explicitScopeCount = role.scopes.length;
+  const capabilityCoverage =
+    capabilities.length > 0
+      ? Math.round((role.capabilities.length / capabilities.length) * 100)
+      : null;
+
+  // Inline warnings. These are derived from the role payload only —
+  // the authoritative risk warnings live in Risk & Preview (powered
+  // by `rolesApi.preview`). We surface a subset here so the operator
+  // sees the headline issues before navigating into the deeper tab.
+  const warnings: Array<{ key: string; tone: 'warning' | 'breach' }> = [];
+  if (role.scopes.length === 0) warnings.push({ key: 'noScope', tone: 'warning' });
+  if (role.capabilities.length >= 40) warnings.push({ key: 'manyCaps', tone: 'breach' });
+  if (role.level >= 80) warnings.push({ key: 'highLevel', tone: 'breach' });
+  if (
+    fieldCatalogue.some(
+      (f) =>
+        f.sensitive &&
+        role.fieldPermissions.find((p) => p.resource === f.resource && p.field === f.field)
+          ?.canRead,
+    )
+  ) {
+    warnings.push({ key: 'sensitiveField', tone: 'warning' });
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryTile
+          label={tHybrid('summary.members')}
+          value="—"
+          hint={tHybrid('summary.membersHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.scopes')}
+          value={explicitScopeCount}
+          hint={tHybrid('summary.scopesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.modules')}
+          value={moduleFamilies}
+          hint={tHybrid('summary.modulesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.capabilities')}
+          value={
+            capabilityCoverage === null
+              ? `${role.capabilities.length}`
+              : `${role.capabilities.length} · ${capabilityCoverage}%`
+          }
+          hint={tHybrid('summary.capabilitiesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.level')}
+          value={role.level}
+          hint={tHybrid('summary.levelHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.fieldRules')}
+          value={customFieldRows}
+          hint={tHybrid('summary.fieldRulesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.type')}
+          value={role.isSystem ? tHybrid('summary.system') : tHybrid('summary.custom')}
+          hint={role.isSystem ? tHybrid('summary.systemHint') : tHybrid('summary.customHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.lastUpdated')}
+          value="—"
+          hint={tHybrid('summary.lastUpdatedGap')}
+        />
+      </section>
+
+      {warnings.length > 0 ? (
+        <Notice tone={warnings.some((w) => w.tone === 'breach') ? 'error' : 'info'}>
+          <p className="text-sm font-medium">{tHybrid('warnings.title')}</p>
+          <ul className="mt-2 flex flex-col gap-1 text-xs">
+            {warnings.map((w) => (
+              <li key={w.key} className="flex items-center gap-2">
+                <AlertTriangle
+                  className={cn(
+                    'h-3.5 w-3.5',
+                    w.tone === 'breach' ? 'text-status-breach' : 'text-status-warning',
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="text-ink-primary">
+                  {tHybrid(`warnings.${w.key}` as 'warnings.noScope')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
+      <BasicInfoTab role={role} editable={editable} onSaved={onSaved} toast={toast} />
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 text-xs shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('quickLinks.title')}
+        </h3>
+        <p className="mt-1 text-[11px] text-ink-secondary">{tHybrid('quickLinks.body')}</p>
+      </section>
+
+      {/* Stable anchors so /admin/roles/:id#members deep-links work
+          without having to scroll-jump in the Overview body. */}
+      <span id="members" aria-hidden="true" />
+      <span id="audit" aria-hidden="true" />
+      <span id="advanced" aria-hidden="true" />
+    </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number | string;
+  hint?: string;
+}): JSX.Element {
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card"
+      title={hint}
+    >
+      <span className="text-[11px] uppercase tracking-wide text-ink-tertiary">{label}</span>
+      <span className="text-lg font-semibold text-ink-primary">{value}</span>
+      {hint ? <span className="text-[11px] leading-snug text-ink-tertiary">{hint}</span> : null}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.E — Members tab (real fetch via usersApi.list({ roleId })).
+// ────────────────────────────────────────────────────────────────────
+
+function MembersTab({ roleId }: { roleId: string }): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  const canReadUsers = hasCapability('users.read');
+  const canWriteUsers = hasCapability('users.write');
+
+  const [items, setItems] = useState<readonly AdminUser[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [teams, setTeams] = useState<readonly Team[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canReadUsers) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const safe = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+        const [page, teamList] = await Promise.all([
+          usersApi.list({ roleId, limit: 200 }),
+          safe(teamsApi.list(), [] as Team[]),
+        ]);
+        if (cancelled) return;
+        setItems(page.items);
+        setTotal(page.total);
+        setTeams(teamList);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roleId, canReadUsers]);
+
+  if (!canReadUsers) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('members.noAccess.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.noAccess.body')}</p>
+      </Notice>
+    );
+  }
+  if (loading) {
+    return (
+      <p className="rounded-lg border border-surface-border bg-surface-card px-4 py-10 text-center text-sm text-ink-secondary shadow-card">
+        {tHybrid('members.loading')}
+      </p>
+    );
+  }
+  if (error) {
+    return <Notice tone="error">{error}</Notice>;
+  }
+  if (items.length === 0) {
+    return (
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('members.empty.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.empty.body')}</p>
+      </Notice>
+    );
+  }
+
+  const teamsById = new Map<string, Team>(teams.map((t) => [t.id, t]));
+  const truncated = total > items.length;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-secondary">
+        <span>{tHybrid('members.count', { n: items.length, total })}</span>
+        <Link
+          href="/admin/organization"
+          className="inline-flex items-center gap-1 rounded-md border border-surface-border bg-surface-card px-2 py-1 font-medium text-ink-primary transition-colors hover:border-brand-200 hover:bg-brand-50"
+        >
+          <Users2 className="h-3.5 w-3.5" aria-hidden="true" />
+          {tHybrid('members.openOrganization')}
+        </Link>
+      </div>
+      {truncated ? (
+        <Notice tone="info">{tHybrid('members.truncated', { n: items.length, total })}</Notice>
+      ) : null}
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-surface-card shadow-card">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="border-b border-surface-border bg-surface text-xs uppercase tracking-wide text-ink-tertiary">
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.user')}
+                </th>
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.team')}
+                </th>
+                <th className="px-4 py-3 text-start font-semibold">
+                  {tHybrid('members.columns.status')}
+                </th>
+                <th className="px-4 py-3 text-end font-semibold">
+                  {tHybrid('members.columns.actions')}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((u) => {
+                const team = u.teamId ? teamsById.get(u.teamId) : null;
+                return (
+                  <tr
+                    key={u.id}
+                    className="border-b border-surface-border last:border-b-0 hover:bg-surface"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span
+                          aria-hidden="true"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-semibold text-brand-700"
+                        >
+                          {u.name
+                            .split(/\s+/u)
+                            .map((p) => p.charAt(0).toUpperCase())
+                            .slice(0, 2)
+                            .join('')}
+                        </span>
+                        <div className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium text-ink-primary">{u.name}</span>
+                          <span className="truncate text-[11px] text-ink-tertiary">{u.email}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top text-ink-secondary">
+                      {team ? (
+                        team.name
+                      ) : (
+                        <span className="text-status-warning">{tHybrid('members.noTeam')}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <Badge
+                        tone={
+                          u.status === 'active'
+                            ? 'healthy'
+                            : u.status === 'disabled'
+                              ? 'breach'
+                              : 'neutral'
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 align-top text-end">
+                      {canWriteUsers ? (
+                        <Link
+                          href={`/admin/users`}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                        >
+                          {tHybrid('members.edit')}
+                          <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                        </Link>
+                      ) : (
+                        <span className="text-[11px] text-ink-tertiary">
+                          {tHybrid('members.viewOnly')}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.F — Risk & Preview wrapper (intro + the existing
+// RolePreviewTab component; the preview engine itself is unchanged).
+// ────────────────────────────────────────────────────────────────────
+
+function RiskPreviewTabWrapper({ roleId }: { roleId: string }): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  return (
+    <div className="flex flex-col gap-3">
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('risk.introTitle')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('risk.introBody')}</p>
+      </Notice>
+      <RolePreviewTab roleId={roleId} />
+    </div>
+  );
+}
+
+function RiskPreviewNoAccess(): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  return (
+    <Notice tone="info">
+      <p className="text-sm font-medium">{tHybrid('risk.noAccessTitle')}</p>
+      <p className="mt-1 text-xs text-ink-secondary">{tHybrid('risk.noAccessBody')}</p>
+    </Notice>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.F — Audit wrapper (intro + Audit deep-link + the existing
+// RoleHistoryTab). No change to the underlying history endpoint or
+// revert flow.
+// ────────────────────────────────────────────────────────────────────
+
+function AuditTabWrapper({
+  roleId,
+  roleIsSystem,
+  onReverted,
+}: {
+  roleId: string;
+  roleIsSystem: boolean;
+  onReverted: () => Promise<void>;
+}): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  const canReadAudit = hasCapability('audit.read');
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+        <div className="flex flex-col">
+          <span className="text-sm font-medium text-ink-primary">
+            {tHybrid('audit.introTitle')}
+          </span>
+          <span className="text-[11px] text-ink-secondary">{tHybrid('audit.introBody')}</span>
+        </div>
+        {canReadAudit ? (
+          <Link
+            href={`/admin/audit?entity=Role&entityId=${roleId}`}
+            className="inline-flex items-center gap-1 rounded-md border border-surface-border bg-surface px-2 py-1 text-xs font-medium text-brand-700 transition-colors hover:border-brand-200 hover:bg-brand-50"
+          >
+            {tHybrid('audit.openFullAudit')}
+            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </Link>
+        ) : (
+          <span className="text-[11px] text-ink-tertiary">{tHybrid('audit.noAuditRead')}</span>
+        )}
+      </div>
+      <RoleHistoryTab roleId={roleId} roleIsSystem={roleIsSystem} onReverted={onReverted} />
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.F — Advanced tab. Power-user surfaces: matrix link,
+// audit deep-link, raw capability list, and live dependency
+// analysis. All read-only; the actual edit flow stays on the Module
+// Access / Field Access / Scope tabs.
+// ────────────────────────────────────────────────────────────────────
+
+function AdvancedTab({
+  role,
+  capabilities,
+}: {
+  role: RoleDetail;
+  capabilities: readonly CapabilityCatalogueEntry[];
+}): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  const [analysis, setAnalysis] = useState<RoleDependencyAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
+
+  // Surface the existing capability set's dependency analysis so the
+  // operator sees missing requirements / high-risk warnings without
+  // having to toggle anything. We don't fail silently — if the
+  // endpoint errors, we render an explicit notice.
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  useEffect(() => {
+    if (role.isSystem) {
+      setAnalysis(null);
+      return;
+    }
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    rolesApi
+      .dependencyCheck(role.id, [...role.capabilities].sort())
+      .then((res) => setAnalysis(res))
+      .catch((err) => setAnalysisError(err instanceof ApiError ? err.message : String(err)))
+      .finally(() => setAnalysisLoading(false));
+  }, [role.id, role.isSystem, role.capabilities]);
+
+  // Raw capability search — read-only filter over role.capabilities.
+  const [rawQuery, setRawQuery] = useState<string>('');
+  const capByCode = useMemo(() => {
+    const m = new Map<string, CapabilityCatalogueEntry>();
+    for (const c of capabilities) m.set(c.code, c);
+    return m;
+  }, [capabilities]);
+  const filteredRaw = useMemo(() => {
+    const q = rawQuery.trim().toLowerCase();
+    const all = [...role.capabilities].sort();
+    if (!q) return all;
+    return all.filter((code) => {
+      const cap = capByCode.get(code);
+      const hay = `${code} ${cap?.description ?? ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [role.capabilities, rawQuery, capByCode]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Notice tone="info">
+        <p className="text-sm font-medium">{tHybrid('advanced.title')}</p>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('advanced.body')}</p>
+      </Notice>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('advanced.shortcutsTitle')}
+        </h3>
+        <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+          <AdvancedRow
+            href="/admin/roles?view=matrix"
+            label={tHybrid('advanced.matrix')}
+            hint={tHybrid('advanced.matrixHint')}
+          />
+          <AdvancedRow
+            href={`/admin/audit?entity=Role&entityId=${role.id}`}
+            label={tHybrid('advanced.changeHistory')}
+            hint={tHybrid('advanced.changeHistoryHint')}
+          />
+        </ul>
+      </section>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('advanced.dependenciesTitle')}
+        </h3>
+        <p className="mt-1 text-[11px] text-ink-secondary">
+          {tHybrid('advanced.dependenciesBody')}
+        </p>
+        <div className="mt-2">
+          {role.isSystem ? (
+            <p className="text-xs text-ink-tertiary">{tHybrid('advanced.dependenciesSystem')}</p>
+          ) : analysisLoading ? (
+            <p className="text-xs text-ink-tertiary">{tHybrid('advanced.dependenciesLoading')}</p>
+          ) : analysisError ? (
+            <Notice tone="error">{analysisError}</Notice>
+          ) : (
+            <DependencyWarningsPanel analysis={analysis} />
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+              {tHybrid('advanced.rawTitle')}
+            </h3>
+            <p className="mt-1 text-[11px] text-ink-secondary">{tHybrid('advanced.rawBody')}</p>
+          </div>
+          <Input
+            type="search"
+            value={rawQuery}
+            onChange={(e) => setRawQuery(e.target.value)}
+            placeholder={tHybrid('advanced.rawSearchPlaceholder')}
+            aria-label={tHybrid('advanced.rawSearchPlaceholder')}
+            className="max-w-xs"
+          />
+        </header>
+        {role.capabilities.length === 0 ? (
+          <p className="mt-3 text-xs text-ink-tertiary">{tHybrid('advanced.rawEmpty')}</p>
+        ) : filteredRaw.length === 0 ? (
+          <p className="mt-3 text-xs text-ink-tertiary">{tHybrid('advanced.rawNoMatch')}</p>
+        ) : (
+          <ul className="mt-3 flex flex-wrap gap-1">
+            {filteredRaw.map((code) => {
+              const cap = capByCode.get(code);
+              const risky = isRiskyCap(code);
+              return (
+                <li key={code}>
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px]',
+                      risky
+                        ? 'border-status-warning/40 bg-status-warning/5 text-status-warning'
+                        : 'border-surface-border bg-surface text-ink-primary',
+                    )}
+                    title={cap?.description ?? code}
+                  >
+                    {code}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-3 text-[11px] text-ink-tertiary">
+          {tHybrid('advanced.rawCounter', {
+            shown: filteredRaw.length,
+            total: role.capabilities.length,
+          })}
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function AdvancedRow({
+  href,
+  label,
+  hint,
+}: {
+  href: string;
+  label: string;
+  hint: string;
+}): JSX.Element {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="flex items-center gap-3 rounded-lg border border-surface-border bg-surface p-3 transition-colors hover:border-brand-200 hover:bg-brand-50"
+      >
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="text-sm font-medium text-ink-primary">{label}</span>
+          <span className="truncate text-[11px] text-ink-tertiary">{hint}</span>
+        </div>
+        <ArrowRight className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+      </Link>
+    </li>
   );
 }
 
@@ -392,7 +1073,7 @@ function CapabilitiesTab({
     });
   }
 
-  function toggleModule(modCaps: CapabilityCatalogueEntry[], on: boolean): void {
+  function toggleModule(modCaps: readonly CapabilityCatalogueEntry[], on: boolean): void {
     if (!editable) return;
     setSelected((prev) => {
       const next = new Set(prev);
@@ -493,58 +1174,20 @@ function CapabilitiesTab({
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('capabilitiesIntro')}</p>
-      {grouped.map(([moduleKey, modCaps]) => {
-        const allOn = modCaps.every((c) => selected.has(c.code));
-        return (
-          <section
+      <ul className="flex flex-col gap-2">
+        {grouped.map(([moduleKey, modCaps]) => (
+          <ModuleAccessCard
             key={moduleKey}
-            className="rounded-md border border-surface-border bg-surface px-3 py-2"
-          >
-            <header className="mb-2 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-                {moduleKey}
-              </h3>
-              {editable ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => toggleModule(modCaps, !allOn)}
-                  disabled={submitting}
-                >
-                  {allOn ? t('deselectAll') : t('selectAll')}
-                </Button>
-              ) : null}
-            </header>
-            <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {modCaps.map((c) => {
-                const checked = selected.has(c.code);
-                return (
-                  <li key={c.code}>
-                    <label
-                      className={cn(
-                        'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-brand-50/40',
-                        editable ? '' : 'cursor-not-allowed opacity-80',
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggle(c.code)}
-                        disabled={!editable || submitting}
-                        className="mt-0.5"
-                      />
-                      <span className="flex flex-col leading-tight">
-                        <code className="font-mono text-xs text-ink-primary">{c.code}</code>
-                        <span className="text-xs text-ink-tertiary">{c.description}</span>
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        );
-      })}
+            moduleKey={moduleKey}
+            modCaps={modCaps}
+            selected={selected}
+            editable={editable}
+            submitting={submitting}
+            onToggle={toggle}
+            onToggleModule={toggleModule}
+          />
+        ))}
+      </ul>
       <DependencyWarningsPanel analysis={analysis} />
       {editable ? (
         <div className="flex items-center justify-end">
@@ -590,6 +1233,7 @@ function CapabilitiesTab({
 function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
   const t = useTranslations('admin.roles');
   const tCommon = useTranslations('admin.common');
+  const tHybridScope = useTranslations('admin.roles.scopeHybrid');
   const [scopes, setScopes] = useState<Map<string, RoleScopeRow['scope']>>(
     () => new Map(role.scopes.map((s) => [s.resource, s.scope])),
   );
@@ -623,10 +1267,25 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
     }
   }
 
+  // Sprint 7.E — surface scope semantics as a chip so the operator
+  // sees the impact of each value alongside the dropdown. The chip
+  // is a presentation aid; the dropdown remains the only writer.
+  const scopeTone: Record<
+    RoleScopeRow['scope'],
+    'healthy' | 'info' | 'warning' | 'breach' | 'neutral'
+  > = {
+    own: 'healthy',
+    team: 'info',
+    company: 'warning',
+    country: 'warning',
+    global: 'breach',
+  };
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('scopesIntro')}</p>
+      <p className="text-xs text-ink-tertiary">{tHybridScope('whereApplies')}</p>
       <ul className="flex flex-col gap-2">
         {SCOPE_RESOURCES.map((resource) => {
           const value = scopes.get(resource) ?? 'global';
@@ -635,9 +1294,17 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
               key={resource}
               className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-surface-border bg-surface px-3 py-2"
             >
-              <span className="text-sm font-medium text-ink-primary">
-                {t(`scopes.resources.${resource}` as 'scopes.resources.lead')}
-              </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-ink-primary">
+                  {t(`scopes.resources.${resource}` as 'scopes.resources.lead')}
+                </span>
+                <span className="text-[11px] text-ink-tertiary">
+                  {tHybridScope(`description.${value}` as 'description.global')}
+                </span>
+              </div>
+              <Badge tone={scopeTone[value]}>
+                {t(`scopes.values.${value}` as 'scopes.values.global')}
+              </Badge>
               <Select
                 value={value}
                 onChange={(e) => setScope(resource, e.target.value as RoleScopeRow['scope'])}
@@ -654,6 +1321,15 @@ function ScopesTab({ role, editable, onSaved, toast }: TabProps): JSX.Element {
           );
         })}
       </ul>
+      <div className="flex items-center justify-end">
+        <Link
+          href="/admin/organization"
+          className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+        >
+          {tHybridScope('openOrganization')}
+          <ArrowRight className="h-3 w-3" aria-hidden="true" />
+        </Link>
+      </div>
       {editable ? (
         <div className="flex items-center justify-end">
           <Button onClick={() => void onSubmit()} loading={submitting}>
@@ -683,6 +1359,7 @@ function FieldPermissionsTab({
 }: FieldPermissionsTabProps): JSX.Element {
   const t = useTranslations('admin.roles');
   const tCommon = useTranslations('admin.common');
+  const tFieldHybrid = useTranslations('admin.roles.fieldHybrid');
 
   /**
    * Build the working set: for every catalogue entry, find the
@@ -711,6 +1388,13 @@ function FieldPermissionsTab({
   }, [initialMap]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sprint 7.D — filters live alongside the existing table so an
+  // operator can narrow to the rows they care about. They are pure
+  // UI state — no impact on save behaviour or row inclusion.
+  type FieldFilter = 'all' | 'sensitive' | 'hidden' | 'editable' | 'overrides';
+  const [filter, setFilter] = useState<FieldFilter>('all');
+  const [query, setQuery] = useState<string>('');
 
   function setCell(
     resource: string,
@@ -772,74 +1456,187 @@ function FieldPermissionsTab({
     return Array.from(m.entries());
   }, [fieldCatalogue]);
 
+  // Sprint 7.D — search + filter applied to the catalogue. The
+  // working map keeps every row so a hidden filter doesn't lose
+  // unsaved toggles; we just hide the matching tr.
+  const matches = useCallback(
+    (entry: FieldCatalogueEntry): boolean => {
+      const q = query.trim().toLowerCase();
+      if (q) {
+        const hay =
+          `${entry.field} ${entry.labelEn} ${entry.labelAr ?? ''} ${entry.resource}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      const cur = working.get(`${entry.resource}::${entry.field}`) ?? {
+        canRead: entry.defaultRead,
+        canWrite: entry.defaultWrite,
+      };
+      switch (filter) {
+        case 'all':
+          return true;
+        case 'sensitive':
+          return entry.sensitive;
+        case 'hidden':
+          return !cur.canRead;
+        case 'editable':
+          return cur.canWrite;
+        case 'overrides':
+          return cur.canRead !== entry.defaultRead || cur.canWrite !== entry.defaultWrite;
+        default:
+          return true;
+      }
+    },
+    [query, filter, working],
+  );
+
+  // Counts shown on the filter chips (computed against the full
+  // catalogue, not the search query, so the chip totals stay stable
+  // as the operator types).
+  const counts = useMemo(() => {
+    let sensitive = 0;
+    let hidden = 0;
+    let editable = 0;
+    let overrides = 0;
+    for (const e of fieldCatalogue) {
+      const cur = working.get(`${e.resource}::${e.field}`) ?? {
+        canRead: e.defaultRead,
+        canWrite: e.defaultWrite,
+      };
+      if (e.sensitive) sensitive += 1;
+      if (!cur.canRead) hidden += 1;
+      if (cur.canWrite) editable += 1;
+      if (cur.canRead !== e.defaultRead || cur.canWrite !== e.defaultWrite) overrides += 1;
+    }
+    return { all: fieldCatalogue.length, sensitive, hidden, editable, overrides };
+  }, [fieldCatalogue, working]);
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
       {error ? <Notice tone="error">{error}</Notice> : null}
       <p className="text-sm text-ink-secondary">{t('fieldsIntro')}</p>
-      {byResource.map(([resource, entries]) => (
-        <section key={resource} className="overflow-hidden rounded-md border border-surface-border">
-          <header className="border-b border-surface-border bg-surface px-3 py-2 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-            {resource}
-          </header>
-          <table className="w-full text-sm">
-            <thead className="bg-surface-card text-xs text-ink-tertiary">
-              <tr>
-                <th className="px-3 py-2 text-start font-medium">{t('fields.field')}</th>
-                <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canRead')}</th>
-                <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canWrite')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {entries.map((entry) => {
-                const key = `${entry.resource}::${entry.field}`;
-                const cur = working.get(key) ?? {
-                  canRead: entry.defaultRead,
-                  canWrite: entry.defaultWrite,
-                };
-                return (
-                  <tr key={key} className="hover:bg-brand-50/30">
-                    <td className="px-3 py-2">
-                      <div className="flex flex-col leading-tight">
-                        <code className="font-mono text-xs text-ink-primary">{entry.field}</code>
-                        <span className="text-[11px] text-ink-tertiary">
-                          {entry.labelEn}
-                          {entry.sensitive ? (
-                            <span className="ms-1 inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
-                              {t('fields.sensitive')}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={cur.canRead}
-                        onChange={(e) =>
-                          setCell(entry.resource, entry.field, 'canRead', e.target.checked)
-                        }
-                        disabled={!editable || submitting}
-                        aria-label={t('fields.canRead')}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={cur.canWrite}
-                        onChange={(e) =>
-                          setCell(entry.resource, entry.field, 'canWrite', e.target.checked)
-                        }
-                        disabled={!editable || submitting}
-                        aria-label={t('fields.canWrite')}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      ))}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={tFieldHybrid('searchPlaceholder')}
+          aria-label={tFieldHybrid('searchPlaceholder')}
+          className="max-w-sm"
+        />
+        <div
+          role="tablist"
+          aria-label={tFieldHybrid('filterLabel')}
+          className="flex flex-wrap gap-1"
+        >
+          {(
+            [
+              ['all', counts.all],
+              ['sensitive', counts.sensitive],
+              ['hidden', counts.hidden],
+              ['editable', counts.editable],
+              ['overrides', counts.overrides],
+            ] as ReadonlyArray<[FieldFilter, number]>
+          ).map(([key, n]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              onClick={() => setFilter(key)}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                filter === key
+                  ? 'border-brand-200 bg-brand-50 text-brand-700'
+                  : 'border-surface-border bg-surface-card text-ink-secondary hover:border-brand-200 hover:bg-brand-50/40',
+              )}
+            >
+              {tFieldHybrid(`filters.${key}` as 'filters.all', { n })}
+            </button>
+          ))}
+        </div>
+      </div>
+      {byResource.map(([resource, entries]) => {
+        const visible = entries.filter(matches);
+        if (visible.length === 0) return null;
+        return (
+          <section
+            key={resource}
+            className="overflow-hidden rounded-md border border-surface-border"
+          >
+            <header className="flex items-center justify-between border-b border-surface-border bg-surface px-3 py-2 text-xs">
+              <span className="font-semibold uppercase tracking-wide text-ink-tertiary">
+                {resource}
+              </span>
+              <span className="text-[11px] text-ink-tertiary">
+                {tFieldHybrid('resourceCount', { n: visible.length, total: entries.length })}
+              </span>
+            </header>
+            <table className="w-full text-sm">
+              <thead className="bg-surface-card text-xs text-ink-tertiary">
+                <tr>
+                  <th className="px-3 py-2 text-start font-medium">{t('fields.field')}</th>
+                  <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canRead')}</th>
+                  <th className="w-24 px-3 py-2 text-center font-medium">{t('fields.canWrite')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {visible.map((entry) => {
+                  const key = `${entry.resource}::${entry.field}`;
+                  const cur = working.get(key) ?? {
+                    canRead: entry.defaultRead,
+                    canWrite: entry.defaultWrite,
+                  };
+                  return (
+                    <tr key={key} className="hover:bg-brand-50/30">
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col leading-tight">
+                          <code className="font-mono text-xs text-ink-primary">{entry.field}</code>
+                          <span className="text-[11px] text-ink-tertiary">
+                            {entry.labelEn}
+                            {entry.sensitive ? (
+                              <span className="ms-1 inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
+                                {t('fields.sensitive')}
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={cur.canRead}
+                          onChange={(e) =>
+                            setCell(entry.resource, entry.field, 'canRead', e.target.checked)
+                          }
+                          disabled={!editable || submitting}
+                          aria-label={t('fields.canRead')}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={cur.canWrite}
+                          onChange={(e) =>
+                            setCell(entry.resource, entry.field, 'canWrite', e.target.checked)
+                          }
+                          disabled={!editable || submitting}
+                          aria-label={t('fields.canWrite')}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </section>
+        );
+      })}
+      {byResource.every(([, entries]) => entries.filter(matches).length === 0) ? (
+        <Notice tone="info">
+          <p className="text-sm font-medium">{tFieldHybrid('emptyFiltered.title')}</p>
+          <p className="mt-1 text-xs text-ink-secondary">{tFieldHybrid('emptyFiltered.body')}</p>
+        </Notice>
+      ) : null}
       {editable ? (
         <div className="flex items-center justify-end">
           <Button onClick={() => void onSubmit()} loading={submitting}>
@@ -849,5 +1646,172 @@ function FieldPermissionsTab({
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.C — Module Access card. Wraps the existing capability
+// list with an access-level chip + risk flag + collapsible details.
+// The inner checkbox toggle logic is unchanged: every change still
+// re-runs the D5.14 dependency check via the parent's debounced
+// effect. The card is a visual reorganisation, not a behavioural one.
+// ────────────────────────────────────────────────────────────────────
+
+const RISK_KEYWORDS: readonly string[] = [
+  'export',
+  'delete',
+  'merge',
+  'reset',
+  'disable',
+  'override',
+  'audit',
+];
+
+function isRiskyCap(code: string): boolean {
+  const lower = code.toLowerCase();
+  return RISK_KEYWORDS.some((k) => lower.includes(k));
+}
+
+function isReadCap(code: string): boolean {
+  return code.toLowerCase().endsWith('.read');
+}
+
+type AccessLevel = 'none' | 'readOnly' | 'limited' | 'full';
+
+function accessLevelOf(
+  modCaps: readonly CapabilityCatalogueEntry[],
+  selected: ReadonlySet<string>,
+): AccessLevel {
+  const on = modCaps.filter((c) => selected.has(c.code));
+  if (on.length === 0) return 'none';
+  if (on.length === modCaps.length) return 'full';
+  if (on.every((c) => isReadCap(c.code))) return 'readOnly';
+  return 'limited';
+}
+
+function ModuleAccessCard({
+  moduleKey,
+  modCaps,
+  selected,
+  editable,
+  submitting,
+  onToggle,
+  onToggleModule,
+}: {
+  moduleKey: string;
+  modCaps: readonly CapabilityCatalogueEntry[];
+  selected: ReadonlySet<string>;
+  editable: boolean;
+  submitting: boolean;
+  onToggle: (code: string) => void;
+  onToggleModule: (modCaps: readonly CapabilityCatalogueEntry[], on: boolean) => void;
+}): JSX.Element {
+  const t = useTranslations('admin.roles');
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  const initiallyExpanded = useMemo(
+    () => modCaps.some((c) => selected.has(c.code)),
+    [modCaps, selected],
+  );
+  const [expanded, setExpanded] = useState<boolean>(initiallyExpanded);
+
+  const level = accessLevelOf(modCaps, selected);
+  const hasRiskyCap = modCaps.some((c) => isRiskyCap(c.code));
+  const hasActiveRisky = modCaps.some((c) => isRiskyCap(c.code) && selected.has(c.code));
+  const onCount = modCaps.filter((c) => selected.has(c.code)).length;
+
+  const levelTone: Record<AccessLevel, 'inactive' | 'info' | 'warning' | 'healthy'> = {
+    none: 'inactive',
+    readOnly: 'info',
+    limited: 'warning',
+    full: 'healthy',
+  };
+
+  return (
+    <li className="overflow-hidden rounded-md border border-surface-border bg-surface">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex w-full flex-wrap items-center gap-3 px-3 py-2 text-start transition-colors hover:bg-brand-50/40"
+      >
+        <Layers className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-ink-primary">{moduleKey}</h3>
+        <Badge tone={levelTone[level]}>
+          {tHybrid(`accessLevel.${level}` as 'accessLevel.none')}
+        </Badge>
+        {hasActiveRisky ? (
+          <Badge tone="breach">{tHybrid('moduleRisk.activeSensitive')}</Badge>
+        ) : hasRiskyCap ? (
+          <Badge tone="warning">{tHybrid('moduleRisk.hasSensitive')}</Badge>
+        ) : null}
+        <span className="ms-auto text-xs text-ink-tertiary">
+          {tHybrid('moduleCounts.summary', { on: onCount, total: modCaps.length })}
+        </span>
+        <ArrowRight
+          className={cn(
+            'h-3.5 w-3.5 text-ink-tertiary transition-transform',
+            expanded ? 'rotate-90' : '',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {expanded ? (
+        <div className="border-t border-surface-border bg-surface-card px-3 py-2">
+          {editable ? (
+            <div className="mb-2 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onToggleModule(modCaps, level !== 'full')}
+                disabled={submitting}
+              >
+                {level === 'full' ? t('deselectAll') : t('selectAll')}
+              </Button>
+            </div>
+          ) : null}
+          <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {modCaps.map((c) => {
+              const checked = selected.has(c.code);
+              const risky = isRiskyCap(c.code);
+              return (
+                <li key={c.code}>
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-brand-50/40',
+                      editable ? '' : 'cursor-not-allowed opacity-80',
+                      risky && checked
+                        ? 'border border-status-breach/20 bg-status-breach/5'
+                        : risky
+                          ? 'border border-status-warning/20'
+                          : '',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onToggle(c.code)}
+                      disabled={!editable || submitting}
+                      className="mt-0.5"
+                    />
+                    <span className="flex min-w-0 flex-col leading-tight">
+                      <span className="flex items-center gap-1">
+                        <code className="font-mono text-xs text-ink-primary">{c.code}</code>
+                        {risky ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-status-warning/10 px-1 text-[10px] uppercase text-status-warning">
+                            {tHybrid('moduleRisk.sensitiveTag')}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-xs text-ink-tertiary">{c.description}</span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </li>
   );
 }
