@@ -56,10 +56,14 @@ function makeRole(opts: {
     level: 30,
     isActive: true,
     isSystem: true,
+    isTeamLeader: false,
     description: null,
     capabilities: opts.capabilities ?? [],
     scopes: (opts.scopes ?? []) as RoleWithCapabilities['scopes'],
     fieldPermissions: (opts.fieldPermissions ?? []) as RoleWithCapabilities['fieldPermissions'],
+    memberCount: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   };
 }
 

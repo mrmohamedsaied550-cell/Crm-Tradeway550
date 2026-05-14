@@ -52,10 +52,17 @@ export interface RoleWithCapabilities {
   level: number;
   isActive: boolean;
   isSystem: boolean;
+  /** Sprint 8 (D8) — explicit TL flag from `roles.is_team_leader`. */
+  isTeamLeader: boolean;
   description: string | null;
   capabilities: readonly string[];
   scopes: readonly RoleScopeRow[];
   fieldPermissions: readonly RoleFieldPermissionRow[];
+  /** Sprint 8 (D8) — live user count for this role (real number, no truncation). */
+  memberCount: number;
+  /** Sprint 8 (D8) — ISO timestamps; `updatedAt` powers the "Last updated" tile. */
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -63,6 +70,12 @@ export interface RoleWithCapabilities {
  * Carries only what the admin UI's role picker needs — the full
  * capabilities list is not embedded so the response stays small for
  * tenants with many capabilities.
+ *
+ * Sprint 8 (D8): extended with `isTeamLeader`, `memberCount`,
+ * `scopes`, `createdAt`, `updatedAt`. Existing fields untouched so
+ * older web builds keep parsing the payload. Web depends on the API
+ * version that returns these fields, so deploy order is API first,
+ * then web.
  */
 export interface RoleSummary {
   id: string;
@@ -71,8 +84,13 @@ export interface RoleSummary {
   nameEn: string;
   level: number;
   isSystem: boolean;
+  isTeamLeader: boolean;
   description: string | null;
   capabilitiesCount: number;
+  memberCount: number;
+  scopes: readonly RoleScopeRow[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -162,6 +180,7 @@ export class RbacService {
         fieldPermissions: {
           select: { resource: true, field: true, canRead: true, canWrite: true },
         },
+        _count: { select: { users: true } },
       },
     });
     if (!reloaded) return;
@@ -191,6 +210,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       return rows.map((r) => this.shapeRole(r));
@@ -216,8 +236,15 @@ export class RbacService {
           nameEn: true,
           level: true,
           isSystem: true,
+          isTeamLeader: true,
           description: true,
-          _count: { select: { capabilities: true } },
+          createdAt: true,
+          updatedAt: true,
+          scopes: { select: { resource: true, scope: true } },
+          // Sprint 8 — single Postgres count rolled into the same
+          // SELECT so the overview no longer N+1s through
+          // usersApi.list({ limit: 200 }).
+          _count: { select: { capabilities: true, users: true } },
         },
       });
       return rows.map((r) => ({
@@ -227,8 +254,16 @@ export class RbacService {
         nameEn: r.nameEn,
         level: r.level,
         isSystem: r.isSystem,
+        isTeamLeader: r.isTeamLeader,
         description: r.description,
         capabilitiesCount: r._count.capabilities,
+        memberCount: r._count.users,
+        scopes: r.scopes.map((s) => ({
+          resource: s.resource as RoleScopeResource,
+          scope: s.scope as RoleScopeValue,
+        })),
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
       }));
     });
   }
@@ -244,6 +279,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       if (!r) return null;
@@ -262,6 +298,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       if (!r) return null;
@@ -407,6 +444,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       return this.shapeRole(reloaded!);
@@ -514,6 +552,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       // Phase D5 — D5.1: invalidate the resolver cache for this role
@@ -701,6 +740,7 @@ export class RbacService {
           fieldPermissions: {
             select: { resource: true, field: true, canRead: true, canWrite: true },
           },
+          _count: { select: { users: true } },
         },
       });
       return this.shapeRole(reloaded!);
@@ -918,7 +958,10 @@ export class RbacService {
     level: number;
     isActive: boolean;
     isSystem: boolean;
+    isTeamLeader: boolean;
     description: string | null;
+    createdAt: Date;
+    updatedAt: Date;
     capabilities: Array<{ capability: { code: string } }>;
     scopes: Array<{ resource: string; scope: string }>;
     fieldPermissions: Array<{
@@ -927,6 +970,7 @@ export class RbacService {
       canRead: boolean;
       canWrite: boolean;
     }>;
+    _count: { users: number };
   }): RoleWithCapabilities {
     return {
       id: r.id,
@@ -936,6 +980,7 @@ export class RbacService {
       level: r.level,
       isActive: r.isActive,
       isSystem: r.isSystem,
+      isTeamLeader: r.isTeamLeader,
       description: r.description,
       capabilities: r.capabilities.map((rc) => rc.capability.code),
       scopes: r.scopes.map((s) => ({
@@ -948,6 +993,9 @@ export class RbacService {
         canRead: p.canRead,
         canWrite: p.canWrite,
       })),
+      memberCount: r._count.users,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     };
   }
 }
