@@ -21,13 +21,11 @@
   },
   "login": {
     "title": "Sign in",
-    "subtitle": "Sign-in flow lands in C9 (auth foundation). This page is a placeholder.",
     "subtitleActive": "Sign in with your tenant code, email and password.",
     "tenantLabel": "Tenant code",
     "emailLabel": "Email",
     "passwordLabel": "Password",
     "submit": "Sign in",
-    "disabled": "Disabled in C4",
     "failed": "Sign-in failed"
   },
   "admin": {
@@ -908,8 +906,6 @@
                 "status": "PATCH /leads/:id/documents/:docId — operator transitions status; emits lead.document.{accepted|rejected} audit.",
                 "capabilities": "Capabilities: lead.document.read / .write / .accept / .reject; respected by the field-level access chain."
               },
-              "uploadGapTitle": "File upload storage not configured",
-              "uploadGapBody": "Sprint 12 tracks documents as metadata only. You can record a file name to log \"we have the document via WhatsApp / email\" but the binary storage backend ships in a follow-up sprint.",
               "privacyTitle": "Files are stored privately",
               "privacyBody": "Uploaded files are saved outside any public folder and require the lead.document.read capability to view or download. Allowed types: JPEG, PNG, WebP, PDF — up to 10 MB.",
               "listHeading": "Documents",
@@ -979,8 +975,8 @@
             "partnerData": {
               "title": "Partner data",
               "description": "Match, link, or review imported partner records against this contact.",
-              "gapTitle": "Partner data — read-only today",
-              "gapDescription": "The D4.4 projection (matched / mismatch / last sync) renders below. Write paths (apply / link to a different contact / mark as review) need POST /leads/:id/partner-data/{apply|link|review} endpoints + the partner.data.* capabilities. Sprint 4 owns the per-partner journey matrix."
+              "gapTitle": "Partner data — partial write support",
+              "gapDescription": "Partner targets can be added and edited from here (see the Add target action below); apply / link to a different contact / mark as review against the imported partner projection are still pending."
             },
             "note": {
               "title": "Note only",
@@ -2237,6 +2233,10 @@
         "emptyMineBody": "New inbound messages routed to you will appear here automatically.",
         "emptyAllTitle": "No conversations in your scope",
         "emptyAllBody": "Once your tenant starts receiving WhatsApp messages, they'll show up here.",
+        "emptyFilteredTitle": "No conversations match your filters",
+        "emptyFilteredBody": "Nothing matched \"{query}\". Try a different search, or clear filters to see every conversation in your scope.",
+        "emptyFilteredNoQueryBody": "No conversation matched the active account or queue filter. Clear filters to see every conversation in your scope.",
+        "clearFilters": "Clear filters",
         "switchToAll": "Switch to All in scope",
         "time": {
           "now": "now",

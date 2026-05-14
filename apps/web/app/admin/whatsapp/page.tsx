@@ -599,19 +599,51 @@ export default function WhatsAppInboxPage(): JSX.Element {
             {loading && rows.length === 0 ? (
               <p className="p-6 text-center text-sm text-ink-secondary">{tCommon('loading')}</p>
             ) : rows.length === 0 ? (
+              // Sprint 19 (D19) — when the operator is actively
+              // searching (or has narrowed by account / queue), the
+              // generic "no conversations" message reads as if the
+              // tenant has zero conversations. Show a search-aware
+              // empty state that names what's filtering and gives a
+              // one-click "Clear filters" escape hatch.
               <div className="p-3">
-                <EmptyState
-                  icon={<MessagesSquare className="h-7 w-7" aria-hidden="true" />}
-                  title={filter === 'mine' ? t('list.emptyMineTitle') : t('list.emptyAllTitle')}
-                  body={filter === 'mine' ? t('list.emptyMineBody') : t('list.emptyAllBody')}
-                  action={
-                    filter === 'mine' ? (
-                      <Button variant="secondary" size="sm" onClick={() => setFilter('all')}>
-                        {t('list.switchToAll')}
+                {search || accountFilter || queue ? (
+                  <EmptyState
+                    icon={<Search className="h-7 w-7" aria-hidden="true" />}
+                    title={t('list.emptyFilteredTitle')}
+                    body={
+                      search
+                        ? t('list.emptyFilteredBody', { query: search })
+                        : t('list.emptyFilteredNoQueryBody')
+                    }
+                    action={
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSearchInput('');
+                          setSearch('');
+                          setAccountFilter('');
+                          setQueue(null);
+                        }}
+                      >
+                        {t('list.clearFilters')}
                       </Button>
-                    ) : null
-                  }
-                />
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<MessagesSquare className="h-7 w-7" aria-hidden="true" />}
+                    title={filter === 'mine' ? t('list.emptyMineTitle') : t('list.emptyAllTitle')}
+                    body={filter === 'mine' ? t('list.emptyMineBody') : t('list.emptyAllBody')}
+                    action={
+                      filter === 'mine' ? (
+                        <Button variant="secondary" size="sm" onClick={() => setFilter('all')}>
+                          {t('list.switchToAll')}
+                        </Button>
+                      ) : null
+                    }
+                  />
+                )}
               </div>
             ) : (
               <ul className="divide-y divide-surface-border">

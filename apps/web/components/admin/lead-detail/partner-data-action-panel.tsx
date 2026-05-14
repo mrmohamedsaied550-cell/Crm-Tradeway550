@@ -15,21 +15,21 @@ import { PartnerDataCard } from './partner-data-card';
  * Sprint 2.F — Partner Data action panel.
  *
  * Originally a scaffold around the D4.4 read-only PartnerDataCard.
- * Sprint 13 (D13) bolts on the real "Add partner target" CTA so an
- * operator can open the Add Action drawer → Partner Data area and
- * register a new partner target on the same lead without leaving
- * the drawer. The CTA reuses the same `AddPartnerTargetModal` mounted
- * by the Partner Presence panel, so the dedupe contract, validation,
- * and audit/activity wiring are identical.
+ * Sprint 13 (D13) added the "Add partner target" CTA so an operator
+ * can open the Add Action drawer → Partner Data area and register a
+ * new partner target on the same lead without leaving the drawer.
+ * Sprint 17 (D17) added status / owner / note transitions for those
+ * targets (the Edit affordance lives on the Partner Presence panel).
  *
  * Capability gates (client-side hint only — server is source of truth):
- *   • `partner.target.write` — required to see the CTA.
+ *   • `partner.target.write` — required to see the Add target CTA.
  *   • `partner.verification.read` — controls whether the D4.4 card
  *     renders any rows; the component itself handles the empty state.
  *
- * Write paths still missing (Sprint 4 scope):
- *   • Apply / link / review-as-mismatch against the imported partner
- *     projection. The gap Notice below names them for the implementer.
+ * Remaining write paths (not in current sprint scope):
+ *   • Apply / link-to-different-contact / mark-as-review against the
+ *     imported partner projection (D4 matrix). The gap Notice below
+ *     calls them out so operators know what's still missing.
  */
 
 interface PartnerDataActionPanelProps {
