@@ -118,6 +118,8 @@ import type {
   SendConversationMessageResult,
   TenantSettingsRow,
   UserScopeAssignments,
+  UserScopeAssignmentsBulkResponse,
+  UserScopeCountsResponse,
   WhatsAppAccount,
   WhatsAppTemplateRow,
   Team,
@@ -480,6 +482,31 @@ export const usersApi = {
     apiFetch<UserScopeAssignments>(`/users/${id}/scope-assignments`, {
       method: 'PUT',
       body,
+    }),
+  /**
+   * Sprint 8 (D8) — bulk scope counts for the Organization KPI
+   * and People-table scope chips. Omit `ids` to count everyone the
+   * caller can see (RLS-scoped). Users with zero assignments are
+   * still returned (`hasAnyScope=false`) so a UI can render
+   * "Users without scope" without inferring missing rows. Caller-side
+   * id cap of 200 mirrors the API.
+   */
+  listScopeCounts: (query: { ids?: readonly string[] } = {}): Promise<UserScopeCountsResponse> =>
+    apiFetch<UserScopeCountsResponse>('/users/scope-counts', {
+      query: query.ids && query.ids.length > 0 ? { ids: query.ids.join(',') } : {},
+    }),
+  /**
+   * Sprint 8 (D8) — bulk scope assignments for a known user-id list
+   * (max 200). Returns one entry per user, with company + country
+   * arrays in the same shape as `listScopeAssignments`. Used by the
+   * Organization People table to render a scope chip without N
+   * per-user round-trips.
+   */
+  listScopeAssignmentsBulk: (query: {
+    ids: readonly string[];
+  }): Promise<UserScopeAssignmentsBulkResponse> =>
+    apiFetch<UserScopeAssignmentsBulkResponse>('/users/scope-assignments', {
+      query: { ids: query.ids.join(',') },
     }),
 };
 

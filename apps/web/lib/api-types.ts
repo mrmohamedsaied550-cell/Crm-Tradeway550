@@ -468,6 +468,26 @@ export interface UserScopeAssignments {
   countries: readonly UserScopeCountryRef[];
 }
 
+/** Sprint 8 (D8) — bulk scope-count response shapes. */
+export interface UserScopeCount {
+  userId: string;
+  companyCount: number;
+  countryCount: number;
+  hasAnyScope: boolean;
+}
+export interface UserScopeCountsResponse {
+  items: readonly UserScopeCount[];
+}
+
+export interface UserScopeAssignmentsForUser {
+  userId: string;
+  companies: readonly UserScopeCompanyRef[];
+  countries: readonly UserScopeCountryRef[];
+}
+export interface UserScopeAssignmentsBulkResponse {
+  items: readonly UserScopeAssignmentsForUser[];
+}
+
 export interface PipelineStage {
   id: string;
   code: string;

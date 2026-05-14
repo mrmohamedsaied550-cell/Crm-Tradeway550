@@ -185,3 +185,42 @@ export const PutUserScopeAssignmentsSchema = z
   })
   .strict();
 export type PutUserScopeAssignmentsDto = z.input<typeof PutUserScopeAssignmentsSchema>;
+
+// ───────── Bulk scope reads (Sprint 8 / D8) ─────────
+
+/**
+ * Comma-separated UUID list passed as a single `ids` query parameter.
+ * The transform splits, trims, and de-duplicates the values so the
+ * downstream service receives a clean `string[]`. The cap of 200
+ * matches `SCOPE_BULK_MAX_IDS` in the service layer.
+ */
+const bulkIdsParam = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200 * 38) // 36-char uuid + comma + a bit of slack
+  .transform((s) => {
+    const parts = s
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    return Array.from(new Set(parts));
+  })
+  .pipe(z.array(z.string().uuid()).max(200));
+
+export const ListUserScopeCountsQuerySchema = z
+  .object({
+    ids: bulkIdsParam.optional(),
+  })
+  .strict();
+export type ListUserScopeCountsQueryDto = z.infer<typeof ListUserScopeCountsQuerySchema>;
+
+export const ListUserScopeAssignmentsBulkQuerySchema = z
+  .object({
+    /** Required: bulk fetch without an `ids` filter would be huge. */
+    ids: bulkIdsParam,
+  })
+  .strict();
+export type ListUserScopeAssignmentsBulkQueryDto = z.infer<
+  typeof ListUserScopeAssignmentsBulkQuerySchema
+>;

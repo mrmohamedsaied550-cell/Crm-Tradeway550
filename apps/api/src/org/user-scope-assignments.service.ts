@@ -28,6 +28,34 @@ export interface PutUserScopeAssignmentsInput {
   countryIds?: readonly string[];
 }
 
+/** Sprint 8 (D8) — bulk endpoint shapes. */
+export interface UserScopeCount {
+  userId: string;
+  companyCount: number;
+  countryCount: number;
+  hasAnyScope: boolean;
+}
+
+export interface UserScopeCountsResponse {
+  items: UserScopeCount[];
+}
+
+export interface UserScopeAssignmentsForUser extends UserScopeAssignments {
+  userId: string;
+}
+
+export interface UserScopeAssignmentsBulkResponse {
+  items: UserScopeAssignmentsForUser[];
+}
+
+/**
+ * Sprint 8 (D8) — caller-side ids cap. Mirrors the plan; protects
+ * the API from a runaway query and the audit reviewer from a 10k-row
+ * stack-trace. The cap is enforced on the parsed DTO so the
+ * controller doesn't have to re-validate.
+ */
+export const SCOPE_BULK_MAX_IDS = 200;
+
 /**
  * Phase C — C9: read + replace `user_scope_assignments` for a single
  * user in the active tenant.
@@ -323,6 +351,148 @@ export class UserScopeAssignmentsService {
         message: `Country ${countryId} is not active`,
       });
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // Sprint 8 (D8) — Bulk read endpoints (capability-gated by users.read
+  // at the controller level; tenant + RLS enforced by withTenant).
+  // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Return per-user scope counts for the visible user population.
+   *
+   * If `ids` is omitted the response covers every user the active
+   * tenant can see (filtered down by RLS to the caller's scope).
+   * Users with zero assignments are included with `hasAnyScope=false`
+   * — the whole point of this endpoint is the Organization KPI
+   * "Users without scope", which requires the zero-rows case to be
+   * a real row, not a missing one.
+   *
+   * One Postgres trip: a single SELECT against `users` LEFT JOINs
+   * `user_scope_assignments` and groups by user_id. Prisma can't
+   * model the left-join-with-aggregation directly, so we issue two
+   * cheap queries inside the same `withTenant` block:
+   *   1. fetch the visible user ids (respects RLS / caller scope);
+   *   2. fetch the per-user counts from user_scope_assignments;
+   * then merge on the server. Both queries are O(N) in the visible
+   * user count; no per-user round-trip.
+   */
+  async listScopeCounts(input: { ids?: readonly string[] }): Promise<UserScopeCountsResponse> {
+    const tenantId = requireTenantId();
+    const filterIds = input.ids ? uniq(input.ids) : null;
+    if (filterIds && filterIds.length > SCOPE_BULK_MAX_IDS) {
+      throw new BadRequestException({
+        code: 'scope.bulk.too_many_ids',
+        message: `At most ${SCOPE_BULK_MAX_IDS} ids per request`,
+      });
+    }
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const users = await tx.user.findMany({
+        where: filterIds ? { id: { in: [...filterIds] } } : {},
+        select: { id: true },
+      });
+
+      const userIds = users.map((u) => u.id);
+      if (userIds.length === 0) return { items: [] };
+
+      const assignments = await tx.userScopeAssignment.findMany({
+        where: { userId: { in: userIds } },
+        select: { userId: true, companyId: true, countryId: true },
+      });
+
+      const countsByUser = new Map<string, { companyCount: number; countryCount: number }>();
+      for (const a of assignments) {
+        const cur = countsByUser.get(a.userId) ?? { companyCount: 0, countryCount: 0 };
+        if (a.companyId !== null) cur.companyCount += 1;
+        if (a.countryId !== null) cur.countryCount += 1;
+        countsByUser.set(a.userId, cur);
+      }
+
+      const items: UserScopeCount[] = userIds.map((userId) => {
+        const c = countsByUser.get(userId);
+        const companyCount = c?.companyCount ?? 0;
+        const countryCount = c?.countryCount ?? 0;
+        return {
+          userId,
+          companyCount,
+          countryCount,
+          hasAnyScope: companyCount > 0 || countryCount > 0,
+        };
+      });
+      return { items };
+    });
+  }
+
+  /**
+   * Return full scope assignments grouped per user for a given id
+   * list. Bulk variant of `listForUser` used by the Organization
+   * People table to render a scope chip without making N requests.
+   *
+   * `ids` is required for this endpoint — a bulk fetch without a
+   * filter would risk a huge payload. The cap is enforced; the
+   * caller must page if they need more.
+   */
+  async listAssignmentsBulk(input: {
+    ids: readonly string[];
+  }): Promise<UserScopeAssignmentsBulkResponse> {
+    const tenantId = requireTenantId();
+    const filterIds = uniq(input.ids);
+    if (filterIds.length === 0) return { items: [] };
+    if (filterIds.length > SCOPE_BULK_MAX_IDS) {
+      throw new BadRequestException({
+        code: 'scope.bulk.too_many_ids',
+        message: `At most ${SCOPE_BULK_MAX_IDS} ids per request`,
+      });
+    }
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      // Confirm every requested id belongs to the active tenant
+      // before fetching assignments — RLS would filter foreign rows
+      // anyway, but this lets us return a clean response that
+      // contains exactly the visible subset (silently dropping
+      // unknown ids rather than 404ing the whole batch).
+      const visible = await tx.user.findMany({
+        where: { id: { in: [...filterIds] } },
+        select: { id: true },
+      });
+      const visibleIds = visible.map((u) => u.id);
+      if (visibleIds.length === 0) return { items: [] };
+
+      const rows = await tx.userScopeAssignment.findMany({
+        where: { userId: { in: visibleIds } },
+        select: {
+          userId: true,
+          company: { select: { id: true, code: true, name: true } },
+          country: { select: { id: true, code: true, name: true, companyId: true } },
+        },
+      });
+
+      const byUser = new Map<string, UserScopeAssignmentsForUser>();
+      for (const id of visibleIds) {
+        byUser.set(id, { userId: id, companies: [], countries: [] });
+      }
+      for (const r of rows) {
+        const bucket = byUser.get(r.userId);
+        if (!bucket) continue;
+        if (r.company) {
+          bucket.companies.push({ id: r.company.id, code: r.company.code, name: r.company.name });
+        }
+        if (r.country) {
+          bucket.countries.push({
+            id: r.country.id,
+            code: r.country.code,
+            name: r.country.name,
+            companyId: r.country.companyId,
+          });
+        }
+      }
+      for (const bucket of byUser.values()) {
+        bucket.companies.sort((a, b) => a.name.localeCompare(b.name));
+        bucket.countries.sort((a, b) => a.name.localeCompare(b.name));
+      }
+      return { items: [...byUser.values()] };
+    });
   }
 }
 
