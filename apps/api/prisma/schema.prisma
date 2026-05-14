@@ -140,6 +140,12 @@ model Role {
   /// Phase C — C1: TRUE for the 11 seeded role templates. Service-
   /// layer guards block all mutations + deletion when set.
   isSystem    Boolean  @default(false) @map("is_system")
+  /// Sprint 8 — D8: explicit team-leader flag. Replaces the heuristic
+  /// (`code LIKE 'tl_%' OR level >= 70`) the UI used in Sprints 6 + 7.
+  /// Persisted so distribution, dashboard, and audit surfaces can rely
+  /// on a single authoritative signal. Read/use only in Sprint 8 — no
+  /// editor UI for it yet; D5 risk preview will gain it later.
+  isTeamLeader Boolean @default(false) @map("is_team_leader")
   /// Phase C — C1: optional admin-supplied description for the role
   /// builder UI. Free text; rendered as helper copy under the role
   /// name.
