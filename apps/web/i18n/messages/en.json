@@ -2262,6 +2262,14 @@
         "description": "Description"
       },
       "tabs": {
+        "overview": "Overview",
+        "moduleAccess": "Module Access",
+        "fieldAccess": "Field Access",
+        "scope": "Scope",
+        "members": "Members",
+        "riskPreview": "Risk & Preview",
+        "audit": "Audit",
+        "advanced": "Advanced",
         "info": "Basic info",
         "capabilities": "Capability matrix",
         "scopes": "Data scope",
@@ -2575,6 +2583,53 @@
           "matrixHint": "Compare capabilities across every role at once.",
           "changeHistory": "Change history",
           "changeHistoryHint": "Role create/update/delete events in the audit log."
+        }
+      },
+      "editorHybrid": {
+        "summary": {
+          "members": "Members",
+          "membersHint": "Real count lands in Sprint 7.E.",
+          "scopes": "Scopes",
+          "scopesHint": "Explicit scope rows on the Scope tab.",
+          "modules": "Modules",
+          "modulesHint": "Distinct capability prefixes (lead.*, captain.*, ...).",
+          "capabilities": "Capabilities",
+          "capabilitiesHint": "Active capabilities and % of catalogue.",
+          "level": "Level",
+          "levelHint": "0 (lowest) to 100 (highest). Drives risk heuristics.",
+          "fieldRules": "Field rules",
+          "fieldRulesHint": "Custom (non-default) field permissions.",
+          "type": "Type",
+          "system": "System (immutable)",
+          "systemHint": "Seeded role. Edits blocked by D5 server guard.",
+          "custom": "Custom",
+          "customHint": "Tenant-defined role. Fully editable subject to RBAC.",
+          "lastUpdated": "Last updated",
+          "lastUpdatedGap": "No updatedAt on RoleSummary yet — surfaced via Audit tab."
+        },
+        "warnings": {
+          "title": "Heads-up",
+          "noScope": "This role has no explicit scope rows — falls back to global on every resource.",
+          "manyCaps": "Role holds 40+ capabilities — review under Module Access.",
+          "highLevel": "Role level is 80+ — typically reserved for admin roles.",
+          "sensitiveField": "Role reads at least one sensitive field — confirm under Field Access."
+        },
+        "quickLinks": {
+          "title": "Where to go next",
+          "body": "Module Access for capability toggles, Field Access for masked/sensitive fields, Scope for tenant slicing, Members for assignments, Risk & Preview before saving big changes, Audit for history."
+        },
+        "members": {
+          "placeholderTitle": "Members tab — Sprint 7.E wires the real list.",
+          "placeholderBody": "Today the Members link from /admin/roles opens the editor; the assignment view ships next. The People table on /admin/organization can already filter by role indirectly via users.read."
+        },
+        "advanced": {
+          "title": "Advanced controls",
+          "body": "Power-user surfaces. Keep editing under Module Access / Field Access / Scope unless you need the cross-role comparison or raw view.",
+          "matrix": "Permission matrix",
+          "matrixHint": "Compare capabilities across every role at once.",
+          "changeHistory": "Change history",
+          "changeHistoryHint": "Audit log filtered to this role.",
+          "followUp": "Raw capability list and dependency resolver come in Sprint 7.F."
         }
       }
     },

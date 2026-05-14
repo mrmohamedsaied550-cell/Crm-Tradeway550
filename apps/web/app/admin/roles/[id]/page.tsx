@@ -4,7 +4,19 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowLeft, Lock, Save } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Eye,
+  History,
+  Layers,
+  Lock,
+  Save,
+  ShieldCheck,
+  Table as TableIcon,
+  Users2,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -60,7 +72,38 @@ const SCOPE_VALUES: ReadonlyArray<RoleScopeRow['scope']> = [
   'global',
 ];
 
-type TabKey = 'info' | 'capabilities' | 'scopes' | 'fields' | 'history' | 'preview';
+/**
+ * Sprint 7 — Hybrid editor tab framework. The legacy tabs map 1:1 to
+ * the new ones (info → overview, capabilities → moduleAccess,
+ * scopes → scope, fields → fieldAccess, history → audit,
+ * preview → riskPreview) plus two new tabs:
+ *   • members — users assigned to this role (real fetch from
+ *     usersApi.list({ roleId })).
+ *   • advanced — power-user surfaces: permission matrix link, raw
+ *     capability list, audit deep-link. The existing CapabilitiesTab
+ *     stays under Module Access; Advanced is the optional drill-down,
+ *     not the primary editing surface.
+ */
+type TabKey =
+  | 'overview'
+  | 'moduleAccess'
+  | 'fieldAccess'
+  | 'scope'
+  | 'members'
+  | 'riskPreview'
+  | 'audit'
+  | 'advanced';
+
+const TAB_ICONS: Record<TabKey, typeof ShieldCheck> = {
+  overview: Eye,
+  moduleAccess: Layers,
+  fieldAccess: ShieldCheck,
+  scope: TableIcon,
+  members: Users2,
+  riskPreview: AlertTriangle,
+  audit: History,
+  advanced: TableIcon,
+};
 
 export default function RoleEditorPage(): JSX.Element {
   const params = useParams<{ id: string }>();
@@ -77,7 +120,21 @@ export default function RoleEditorPage(): JSX.Element {
   const [fieldCatalogue, setFieldCatalogue] = useState<FieldCatalogueEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('info');
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+
+  // Sprint 7 — the Overview hub deep-links to #members; honour the
+  // hash on first load so the navigation feels continuous.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '');
+    if (hash === 'members') setActiveTab('members');
+    else if (hash === 'advanced') setActiveTab('advanced');
+    else if (hash === 'audit' || hash === 'history') setActiveTab('audit');
+    else if (hash === 'risk' || hash === 'preview') setActiveTab('riskPreview');
+    else if (hash === 'fields' || hash === 'fieldAccess') setActiveTab('fieldAccess');
+    else if (hash === 'capabilities' || hash === 'moduleAccess') setActiveTab('moduleAccess');
+    else if (hash === 'scope' || hash === 'scopes') setActiveTab('scope');
+  }, []);
 
   const reload = useCallback(async (): Promise<void> => {
     if (!id) return;
@@ -172,34 +229,49 @@ export default function RoleEditorPage(): JSX.Element {
       <nav className="flex flex-wrap gap-1 border-b border-surface-border" aria-label="Tabs">
         {(
           [
-            'info',
-            'capabilities',
-            'scopes',
-            'fields',
-            'history',
-            ...(canPreview ? (['preview'] as const) : []),
+            'overview',
+            'moduleAccess',
+            'fieldAccess',
+            'scope',
+            'members',
+            ...(canPreview ? (['riskPreview'] as const) : []),
+            'audit',
+            'advanced',
           ] as const
-        ).map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setActiveTab(key)}
-            className={cn(
-              'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-              activeTab === key
-                ? 'border-brand-600 text-brand-700'
-                : 'border-transparent text-ink-secondary hover:text-ink-primary',
-            )}
-          >
-            {t(`tabs.${key}`)}
-          </button>
-        ))}
+        ).map((key) => {
+          const Icon = TAB_ICONS[key];
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              onClick={() => setActiveTab(key)}
+              aria-selected={activeTab === key}
+              className={cn(
+                'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+                activeTab === key
+                  ? 'border-brand-600 text-brand-700'
+                  : 'border-transparent text-ink-secondary hover:text-ink-primary',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              {t(`tabs.${key}` as 'tabs.overview')}
+            </button>
+          );
+        })}
       </nav>
 
-      {activeTab === 'info' ? (
-        <BasicInfoTab role={role} editable={editable} onSaved={reload} toast={toast} />
+      {activeTab === 'overview' ? (
+        <OverviewTab
+          role={role}
+          capabilities={capabilities}
+          fieldCatalogue={fieldCatalogue}
+          editable={editable}
+          onSaved={reload}
+          toast={toast}
+        />
       ) : null}
-      {activeTab === 'capabilities' ? (
+      {activeTab === 'moduleAccess' ? (
         <CapabilitiesTab
           role={role}
           capabilities={capabilities}
@@ -208,10 +280,7 @@ export default function RoleEditorPage(): JSX.Element {
           toast={toast}
         />
       ) : null}
-      {activeTab === 'scopes' ? (
-        <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
-      ) : null}
-      {activeTab === 'fields' ? (
+      {activeTab === 'fieldAccess' ? (
         <FieldPermissionsTab
           role={role}
           fieldCatalogue={fieldCatalogue}
@@ -220,11 +289,249 @@ export default function RoleEditorPage(): JSX.Element {
           toast={toast}
         />
       ) : null}
-      {activeTab === 'history' ? (
+      {activeTab === 'scope' ? (
+        <ScopesTab role={role} editable={editable} onSaved={reload} toast={toast} />
+      ) : null}
+      {activeTab === 'members' ? <MembersTabPlaceholder /> : null}
+      {activeTab === 'riskPreview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
+      {activeTab === 'audit' ? (
         <RoleHistoryTab roleId={role.id} roleIsSystem={role.isSystem} onReverted={reload} />
       ) : null}
-      {activeTab === 'preview' && canPreview ? <RolePreviewTab roleId={role.id} /> : null}
+      {activeTab === 'advanced' ? <AdvancedTabPlaceholder roleId={role.id} /> : null}
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.B — Overview tab: at-a-glance summary + Basic info form.
+// ────────────────────────────────────────────────────────────────────
+
+interface OverviewTabProps extends TabProps {
+  capabilities: CapabilityCatalogueEntry[];
+  fieldCatalogue: FieldCatalogueEntry[];
+}
+
+function OverviewTab({
+  role,
+  capabilities,
+  fieldCatalogue,
+  editable,
+  onSaved,
+  toast,
+}: OverviewTabProps): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+
+  // Real, derived metrics — no fabrication.
+  const moduleFamilies = useMemo(() => {
+    const set = new Set<string>();
+    for (const cap of role.capabilities) {
+      const prefix = cap.split('.')[0] ?? 'misc';
+      set.add(prefix);
+    }
+    return set.size;
+  }, [role.capabilities]);
+
+  const customFieldRows = role.fieldPermissions.length;
+  const explicitScopeCount = role.scopes.length;
+  const capabilityCoverage =
+    capabilities.length > 0
+      ? Math.round((role.capabilities.length / capabilities.length) * 100)
+      : null;
+
+  // Inline warnings. These are derived from the role payload only —
+  // the authoritative risk warnings live in Risk & Preview (powered
+  // by `rolesApi.preview`). We surface a subset here so the operator
+  // sees the headline issues before navigating into the deeper tab.
+  const warnings: Array<{ key: string; tone: 'warning' | 'breach' }> = [];
+  if (role.scopes.length === 0) warnings.push({ key: 'noScope', tone: 'warning' });
+  if (role.capabilities.length >= 40) warnings.push({ key: 'manyCaps', tone: 'breach' });
+  if (role.level >= 80) warnings.push({ key: 'highLevel', tone: 'breach' });
+  if (
+    fieldCatalogue.some(
+      (f) =>
+        f.sensitive &&
+        role.fieldPermissions.find((p) => p.resource === f.resource && p.field === f.field)
+          ?.canRead,
+    )
+  ) {
+    warnings.push({ key: 'sensitiveField', tone: 'warning' });
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryTile
+          label={tHybrid('summary.members')}
+          value="—"
+          hint={tHybrid('summary.membersHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.scopes')}
+          value={explicitScopeCount}
+          hint={tHybrid('summary.scopesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.modules')}
+          value={moduleFamilies}
+          hint={tHybrid('summary.modulesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.capabilities')}
+          value={
+            capabilityCoverage === null
+              ? `${role.capabilities.length}`
+              : `${role.capabilities.length} · ${capabilityCoverage}%`
+          }
+          hint={tHybrid('summary.capabilitiesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.level')}
+          value={role.level}
+          hint={tHybrid('summary.levelHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.fieldRules')}
+          value={customFieldRows}
+          hint={tHybrid('summary.fieldRulesHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.type')}
+          value={role.isSystem ? tHybrid('summary.system') : tHybrid('summary.custom')}
+          hint={role.isSystem ? tHybrid('summary.systemHint') : tHybrid('summary.customHint')}
+        />
+        <SummaryTile
+          label={tHybrid('summary.lastUpdated')}
+          value="—"
+          hint={tHybrid('summary.lastUpdatedGap')}
+        />
+      </section>
+
+      {warnings.length > 0 ? (
+        <Notice tone={warnings.some((w) => w.tone === 'breach') ? 'error' : 'info'}>
+          <p className="text-sm font-medium">{tHybrid('warnings.title')}</p>
+          <ul className="mt-2 flex flex-col gap-1 text-xs">
+            {warnings.map((w) => (
+              <li key={w.key} className="flex items-center gap-2">
+                <AlertTriangle
+                  className={cn(
+                    'h-3.5 w-3.5',
+                    w.tone === 'breach' ? 'text-status-breach' : 'text-status-warning',
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="text-ink-primary">
+                  {tHybrid(`warnings.${w.key}` as 'warnings.noScope')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
+      <BasicInfoTab role={role} editable={editable} onSaved={onSaved} toast={toast} />
+
+      <section className="rounded-lg border border-surface-border bg-surface-card p-4 text-xs shadow-card">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+          {tHybrid('quickLinks.title')}
+        </h3>
+        <p className="mt-1 text-[11px] text-ink-secondary">{tHybrid('quickLinks.body')}</p>
+      </section>
+
+      {/* Stable anchors so /admin/roles/:id#members deep-links work
+          without having to scroll-jump in the Overview body. */}
+      <span id="members" aria-hidden="true" />
+      <span id="audit" aria-hidden="true" />
+      <span id="advanced" aria-hidden="true" />
+    </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number | string;
+  hint?: string;
+}): JSX.Element {
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card"
+      title={hint}
+    >
+      <span className="text-[11px] uppercase tracking-wide text-ink-tertiary">{label}</span>
+      <span className="text-lg font-semibold text-ink-primary">{value}</span>
+      {hint ? <span className="text-[11px] leading-snug text-ink-tertiary">{hint}</span> : null}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.B — Members tab (placeholder until Sprint 7.E wires it).
+// ────────────────────────────────────────────────────────────────────
+
+function MembersTabPlaceholder(): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  return (
+    <Notice tone="info">
+      <p className="text-sm font-medium">{tHybrid('members.placeholderTitle')}</p>
+      <p className="mt-1 text-xs text-ink-secondary">{tHybrid('members.placeholderBody')}</p>
+    </Notice>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Sprint 7.B — Advanced tab (container; Sprint 7.F fills it in).
+// ────────────────────────────────────────────────────────────────────
+
+function AdvancedTabPlaceholder({ roleId }: { roleId: string }): JSX.Element {
+  const tHybrid = useTranslations('admin.roles.editorHybrid');
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
+      <header>
+        <h3 className="text-sm font-semibold text-ink-primary">{tHybrid('advanced.title')}</h3>
+        <p className="mt-1 text-xs text-ink-secondary">{tHybrid('advanced.body')}</p>
+      </header>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        <AdvancedRow
+          href="/admin/roles?view=matrix"
+          label={tHybrid('advanced.matrix')}
+          hint={tHybrid('advanced.matrixHint')}
+        />
+        <AdvancedRow
+          href={`/admin/audit?entity=Role&entityId=${roleId}`}
+          label={tHybrid('advanced.changeHistory')}
+          hint={tHybrid('advanced.changeHistoryHint')}
+        />
+      </ul>
+      <p className="text-[11px] text-ink-tertiary">{tHybrid('advanced.followUp')}</p>
+    </section>
+  );
+}
+
+function AdvancedRow({
+  href,
+  label,
+  hint,
+}: {
+  href: string;
+  label: string;
+  hint: string;
+}): JSX.Element {
+  return (
+    <li>
+      <Link
+        href={href}
+        className="flex items-center gap-3 rounded-lg border border-surface-border bg-surface p-3 transition-colors hover:border-brand-200 hover:bg-brand-50"
+      >
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="text-sm font-medium text-ink-primary">{label}</span>
+          <span className="truncate text-[11px] text-ink-tertiary">{hint}</span>
+        </div>
+        <ArrowRight className="h-4 w-4 text-ink-tertiary" aria-hidden="true" />
+      </Link>
+    </li>
   );
 }
 
