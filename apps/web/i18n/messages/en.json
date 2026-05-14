@@ -2525,6 +2525,57 @@
           "cancel": "Cancel",
           "confirm": "Save with confirmation"
         }
+      },
+      "hybrid": {
+        "subtitle": "Manage role access, scope, and field-level permissions. Advanced controls remain available below.",
+        "readOnly": "Read-only",
+        "noDescription": "No description.",
+        "toolbar": {
+          "label": "Search and filter roles",
+          "searchPlaceholder": "Search by name, code, or description",
+          "filterLabel": "Filter roles"
+        },
+        "filters": {
+          "all": "All ({n})",
+          "system": "System ({n})",
+          "custom": "Custom ({n})",
+          "admin": "Admin ({n})",
+          "sales": "Sales ({n})",
+          "tl": "Team leaders ({n})",
+          "highRisk": "High risk ({n})",
+          "noMembers": "No members ({n})"
+        },
+        "risk": {
+          "low": "Low risk",
+          "medium": "Medium risk",
+          "high": "High risk"
+        },
+        "card": {
+          "members": "Members",
+          "capabilities": "Caps",
+          "level": "Level",
+          "scope": "Scope",
+          "scopeGap": "Open the editor → Scope tab to see assigned scopes.",
+          "noMembers": "No users hold this role yet.",
+          "viewMembers": "Members",
+          "audit": "Audit"
+        },
+        "membersGap": {
+          "noUsersRead": "Member counts hidden — you do not have users.read. Counts will appear when an admin grants the capability.",
+          "truncated": "Member counts derived from the first {n} users. If your tenant has more users, the count for low-traffic roles may be understated."
+        },
+        "empty": {
+          "title": "No roles match the current filter.",
+          "body": "Try clearing the search or switching back to All."
+        },
+        "advanced": {
+          "title": "Advanced",
+          "body": "Power-user controls: matrix view + audit trail. Read-only unless you have the underlying capability.",
+          "matrix": "Permission matrix",
+          "matrixHint": "Compare capabilities across every role at once.",
+          "changeHistory": "Change history",
+          "changeHistoryHint": "Role create/update/delete events in the audit log."
+        }
       }
     },
     "duplicateRules": {
