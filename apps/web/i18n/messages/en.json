@@ -3407,6 +3407,15 @@
         "invalidWindowDays": "Window days must be a positive integer.",
         "partnerSourceRequired": "Pick a partner source first."
       }
+    },
+    "notifications": {
+      "title": "Notifications",
+      "bell": "Notifications",
+      "bellWithCount": "Notifications ({n} unread)",
+      "markRead": "Mark read",
+      "markAllRead": "Mark all read",
+      "loading": "Loading…",
+      "empty": "No notifications."
     }
   },
   "agent": {

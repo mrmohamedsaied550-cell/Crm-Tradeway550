@@ -1525,13 +1525,22 @@ export interface LeaderboardEntry {
 // Notifications (P2-02)
 // ───────────────────────────────────────────────────────────────────────
 
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'danger';
+
 export interface NotificationRow {
   id: string;
   tenantId: string;
-  recipientUserId: string;
+  /** Sprint 9 (D9) — nullable when the row is team-targeted. */
+  recipientUserId: string | null;
+  /** Sprint 9 (D9) — set when the notification targets a whole team. */
+  recipientTeamId: string | null;
   kind: string;
   title: string;
   body: string | null;
+  /** Sprint 9 (D9) — info/success/warning/danger. Drives the dot colour. */
+  severity: NotificationSeverity | null;
+  /** Sprint 9 (D9) — relative path the bell click navigates to. */
+  actionUrl: string | null;
   payload: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
