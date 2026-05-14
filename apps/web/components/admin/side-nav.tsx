@@ -40,6 +40,7 @@ interface NavItem {
   href: string;
   labelKey:
     | 'dashboard'
+    | 'organization'
     | 'companies'
     | 'countries'
     | 'teams'
@@ -83,14 +84,16 @@ interface NavItem {
  */
 const PRIMARY_ITEMS: readonly NavItem[] = [
   { href: '/admin', labelKey: 'dashboard', icon: LayoutDashboard },
-  { href: '/admin/companies', labelKey: 'companies', icon: Building2, cap: 'org.company.read' },
-  { href: '/admin/countries', labelKey: 'countries', icon: Globe, cap: 'org.country.read' },
-  { href: '/admin/teams', labelKey: 'teams', icon: Users2, cap: 'org.team.read' },
-  { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
-  // Phase C — C8: dynamic permission system role manager. Visible to
-  // anyone with `roles.read` (super_admin / ops_manager / account_manager
-  // by default). System roles render read-only with a Duplicate action.
-  { href: '/admin/roles', labelKey: 'roles', icon: ShieldCheck, cap: 'roles.read' },
+  // Sprint 6 — Organization / Headcount is the unified control
+  // center for Company → Country → Team → Users. Individual
+  // org pages (Companies, Countries, Teams, Users, Roles) are
+  // now demoted to the Advanced group below.
+  {
+    href: '/admin/organization',
+    labelKey: 'organization',
+    icon: Users2,
+    cap: 'org.company.read',
+  },
   { href: '/admin/leads', labelKey: 'leads', icon: Contact, cap: 'lead.read' },
   { href: '/admin/captains', labelKey: 'captains', icon: Trophy, cap: 'captain.read' },
   { href: '/admin/bonuses', labelKey: 'bonuses', icon: Award, cap: 'bonus.read' },
@@ -210,6 +213,20 @@ const PRIMARY_ITEMS: readonly NavItem[] = [
  * navigation. Add new "infrequent but important" pages here.
  */
 const ADVANCED_ITEMS: readonly NavItem[] = [
+  // Sprint 6 — Org-structure admin pages demoted from primary
+  // nav. Organization / Headcount is the unified control
+  // center; these pages remain reachable for power users (super
+  // admin / ops) but stop competing with day-to-day operational
+  // navigation. Same routes / same RBAC gates as before.
+  { href: '/admin/companies', labelKey: 'companies', icon: Building2, cap: 'org.company.read' },
+  { href: '/admin/countries', labelKey: 'countries', icon: Globe, cap: 'org.country.read' },
+  { href: '/admin/teams', labelKey: 'teams', icon: Users2, cap: 'org.team.read' },
+  { href: '/admin/users', labelKey: 'users', icon: UserCog, cap: 'users.read' },
+  // Phase C — C8: dynamic permission system role manager. Sprint 7
+  // will rebuild the role UX; until then the existing matrix-style
+  // role editor stays reachable from Advanced.
+  { href: '/admin/roles', labelKey: 'roles', icon: ShieldCheck, cap: 'roles.read' },
+
   // Pipeline Builder moved from primary nav (Sprint 0). Stage/status
   // configuration is an infrequent admin task; agents and TLs don't
   // need it in their daily flow.

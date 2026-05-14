@@ -35,6 +35,7 @@
     "subtitle": "Insight Mode workspace for Super Admin, Operations, Account Manager, and Team Leader roles.",
     "sideNav": {
       "dashboard": "Dashboard",
+      "organization": "Organization",
       "companies": "Companies",
       "countries": "Countries",
       "teams": "Teams",
@@ -146,6 +147,94 @@
       "select": "Select…",
       "refresh": "Refresh",
       "close": "Close"
+    },
+    "organization": {
+      "title": "Organization",
+      "subtitle": "Single view of company structure, headcount, and setup gaps.",
+      "presenceGap": "Live presence ships with the agent activity feed.",
+      "scopeGap": "Per-user scope counts roll up when the bulk scope endpoint ships.",
+      "quickActions": {
+        "addCompany": "Add company",
+        "addCountry": "Add country",
+        "addTeam": "Add team",
+        "addUser": "Add user"
+      },
+      "sections": {
+        "kpis": "Overview",
+        "issues": "Setup issues",
+        "tree": "Organization tree",
+        "people": "People",
+        "advanced": "Advanced admin"
+      },
+      "kpis": {
+        "companies": "Companies",
+        "countries": "Countries",
+        "teams": "Teams",
+        "users": "Users",
+        "activeUsers": "Active users",
+        "onlineUsers": "Online now",
+        "usersWithoutTeam": "Users without a team",
+        "usersWithoutScope": "Users without scope"
+      },
+      "issues": {
+        "allClear": "Setup looks clean — every user has a team and a role, every team has a leader, every country has teams, and every company has countries.",
+        "usersWithoutTeam": "{n, plural, one {# user without a team} other {# users without a team}}",
+        "usersWithoutRole": "{n, plural, one {# user without a role} other {# users without a role}}",
+        "teamsWithoutTl": "{n, plural, one {# team without a team leader} other {# teams without a team leader}}",
+        "teamsWithoutUsers": "{n, plural, one {# team with no members} other {# teams with no members}}",
+        "countriesWithoutTeams": "{n, plural, one {# country with no teams} other {# countries with no teams}}",
+        "companiesWithoutCountries": "{n, plural, one {# company with no countries} other {# companies with no countries}}",
+        "noCountries": "No countries",
+        "noTeams": "No teams",
+        "noTl": "No team leader",
+        "noUsers": "No members"
+      },
+      "tree": {
+        "empty": {
+          "title": "No companies yet",
+          "body": "Add the first partner company to start building the organization structure."
+        },
+        "countriesCount": "{n, plural, one {# country} other {# countries}}",
+        "teamsCount": "{n, plural, one {# team} other {# teams}}",
+        "usersCount": "{n, plural, one {# user} other {# users}}",
+        "noCountries": "This company has no countries yet.",
+        "noTeams": "This country has no teams yet.",
+        "edit": "Manage",
+        "readOnly": "View only"
+      },
+      "people": {
+        "empty": "No users to show.",
+        "edit": "Edit",
+        "noAccess": {
+          "title": "People list hidden",
+          "body": "You don't have permission to view the user directory. Ask an admin for the users.read capability."
+        },
+        "columns": {
+          "user": "User",
+          "role": "Role",
+          "team": "Team",
+          "status": "Status",
+          "issues": "Issues",
+          "actions": "Actions"
+        },
+        "issueChips": {
+          "noTeam": "No team",
+          "noRole": "No role"
+        },
+        "filters": {
+          "label": "Filter people",
+          "all": "All ({n})",
+          "noTeam": "No team ({n})",
+          "noRole": "No role ({n})"
+        },
+        "allHaveTeam": "Every visible user has a team.",
+        "allHaveRole": "Every visible user has a role.",
+        "readOnly": "View only"
+      },
+      "readOnly": "Read-only",
+      "advanced": {
+        "noAccess": "You don't have permission to open the underlying admin matrix pages. Ask an admin for the relevant *.read capability."
+      }
     },
     "companies": {
       "title": "Companies",
