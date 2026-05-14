@@ -940,6 +940,9 @@ export class WhatsAppService {
           // D1.1 — surface assignee name + contact identity so the
           // inbox list can render owner/contact badges without an
           // N+1 user lookup.
+          // D14 — additionally pull the optional review join so the
+          // triage row can show a "Needs review" pill without a
+          // second round-trip.
           include: {
             assignedTo: { select: { id: true, name: true, email: true, teamId: true } },
             contact: {
@@ -952,6 +955,7 @@ export class WhatsAppService {
                 hasOpenLead: true,
               },
             },
+            review: { select: { id: true, resolvedAt: true } },
           },
         }),
         tx.whatsAppConversation.count({ where }),

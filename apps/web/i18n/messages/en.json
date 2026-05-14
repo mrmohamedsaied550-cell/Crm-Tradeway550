@@ -2215,6 +2215,11 @@
       },
       "sidePanel": {
         "title": "Conversation details",
+        "reviewCta": {
+          "title": "Conversation needs review",
+          "body": "This thread is in the WhatsApp review queue. Resolve it to choose how it connects to a lead or captain.",
+          "action": "Open in Reviews →"
+        },
         "contact": {
           "title": "Contact",
           "language": "Language: {language}",
