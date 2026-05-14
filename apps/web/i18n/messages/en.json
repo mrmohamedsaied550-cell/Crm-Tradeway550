@@ -681,6 +681,26 @@
               "description": "Register another partner journey on this person without creating a new lead or contact."
             }
           },
+          "editTarget": {
+            "action": "Edit",
+            "modalTitle": "Update partner target",
+            "preview": "Update the status or note for the {partner} target. The partner source can't change — create a new target for a different partner.",
+            "unknownPartner": "this partner",
+            "form": {
+              "status": "Status",
+              "note": "Note (optional)",
+              "notePlaceholder": "Why is this target being updated?"
+            },
+            "toast": {
+              "saved": "Partner target updated."
+            },
+            "errors": {
+              "notFound": "Partner target no longer exists for this lead.",
+              "ownerInvalid": "Selected owner is not available in this tenant.",
+              "teamInvalid": "Selected team is not available in this tenant.",
+              "countryInvalid": "Selected country is not available in this tenant."
+            }
+          },
           "sharedPhone": {
             "title": "One contact, multiple partner journeys",
             "body": "This phone appears across {n} partner sources. Each row above is a separate partner journey for the same person — they are not duplicated as separate captains."

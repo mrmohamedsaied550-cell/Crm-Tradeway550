@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -23,24 +24,28 @@ import type { ScopeUserClaims } from '../rbac/scope-context.service';
 import {
   CreateLeadPartnerTargetSchema,
   ListLeadPartnerTargetsQuerySchema,
+  UpdateLeadPartnerTargetSchema,
 } from './lead-partner-targets.dto';
 import { LeadPartnerTargetsService } from './lead-partner-targets.service';
 
 class CreateLeadPartnerTargetBody extends createZodDto(CreateLeadPartnerTargetSchema) {}
 class ListLeadPartnerTargetsQuery extends createZodDto(ListLeadPartnerTargetsQuerySchema) {}
+class UpdateLeadPartnerTargetBody extends createZodDto(UpdateLeadPartnerTargetSchema) {}
 
 /**
- * /api/v1/leads/:leadId/partner-targets — Sprint 13 (D13).
+ * /api/v1/leads/:leadId/partner-targets — Sprint 13 (D13) + Sprint 17 (D17).
  *
- *   GET   /  — list targets for a lead. Requires `partner.target.read`.
- *              Lead scope gates visibility.
- *   POST  /  — create a new target. Requires `partner.target.write`.
- *              Dedupe via DB unique index; service returns
- *              `lead.partner_target.duplicate` on conflict so the
- *              UI can render a clean error.
- *
- * PATCH is deferred to a follow-up sprint per the Sprint 13 spec
- * ("Only if safe and quick"). Sprint 13 ships read + create.
+ *   GET   /            — list targets for a lead. Requires `partner.target.read`.
+ *                        Lead scope gates visibility.
+ *   POST  /            — create a new target. Requires `partner.target.write`.
+ *                        Dedupe via DB unique index; service returns
+ *                        `lead.partner_target.duplicate` on conflict so the
+ *                        UI can render a clean error.
+ *   PATCH /:targetId   — Sprint 17: update status, owner, team, country, or note.
+ *                        Requires `partner.target.write` (same capability as create —
+ *                        no separate "transition" gate, matches Sprint 13's locked
+ *                        permission contract). `partnerSourceId` stays immutable
+ *                        so the unique-index dedupe key holds.
  */
 @ApiTags('lead-partner-targets')
 @Controller('leads/:leadId/partner-targets')
@@ -78,5 +83,20 @@ export class LeadPartnerTargetsController {
     @CurrentUser() user: AccessTokenClaims,
   ) {
     return this.targets.create(leadId, body, this.claimsToScope(user));
+  }
+
+  @Patch(':targetId')
+  @RequireCapability('partner.target.write')
+  @ApiOperation({
+    summary:
+      'Sprint 17 — partial update of an existing partner target (status, owner, team, country, note).',
+  })
+  update(
+    @Param('leadId', new ParseUUIDPipe()) leadId: string,
+    @Param('targetId', new ParseUUIDPipe()) targetId: string,
+    @Body() body: UpdateLeadPartnerTargetBody,
+    @CurrentUser() user: AccessTokenClaims,
+  ) {
+    return this.targets.update(leadId, targetId, body, this.claimsToScope(user));
   }
 }

@@ -19,6 +19,7 @@ import { hasCapability } from '@/lib/auth';
 import type { PartnerVerificationProjection, PartnerVerificationResult } from '@/lib/api-types';
 
 import { AddPartnerTargetModal } from './add-partner-target-modal';
+import { EditPartnerTargetModal } from './edit-partner-target-modal';
 import { toneForVerification } from './partner-presence-summary';
 
 /**
@@ -85,6 +86,9 @@ export function PartnerPresenceTable({
   const [targets, setTargets] = useState<readonly LeadPartnerTargetRow[]>([]);
   const [targetsForbidden, setTargetsForbidden] = useState<boolean>(false);
   const [addOpen, setAddOpen] = useState<boolean>(false);
+  // Sprint 17 (D17) — null when the edit modal is closed; the row
+  // itself when open, so the modal can pre-seed status + note.
+  const [editTarget, setEditTarget] = useState<LeadPartnerTargetRow | null>(null);
   const canReadTargets = hasCapability('partner.target.read');
   const canWriteTargets = hasCapability('partner.target.write');
 
@@ -241,6 +245,20 @@ export function PartnerPresenceTable({
                     {t('addTarget.ownedBy', { name: row.owner.name })}
                   </span>
                 ) : null}
+                {/* Sprint 17 (D17) — per-row Edit affordance. Same
+                    write capability as Add; clicking opens the edit
+                    modal pre-seeded with this row. */}
+                {canWriteTargets ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ms-auto"
+                    onClick={() => setEditTarget(row)}
+                    aria-label={t('editTarget.action')}
+                  >
+                    {t('editTarget.action')}
+                  </Button>
+                ) : null}
                 {row.note ? (
                   <p className="basis-full text-xs text-ink-secondary">{row.note}</p>
                 ) : null}
@@ -255,6 +273,16 @@ export function PartnerPresenceTable({
         leadId={leadId}
         onClose={() => setAddOpen(false)}
         onAdded={() => {
+          void refreshTargets();
+        }}
+      />
+
+      <EditPartnerTargetModal
+        open={editTarget !== null}
+        leadId={leadId}
+        target={editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={() => {
           void refreshTargets();
         }}
       />

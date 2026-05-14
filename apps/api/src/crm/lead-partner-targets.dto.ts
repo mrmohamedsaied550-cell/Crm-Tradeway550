@@ -51,3 +51,38 @@ export const ListLeadPartnerTargetsQuerySchema = z
   })
   .strict();
 export type ListLeadPartnerTargetsQueryDto = z.infer<typeof ListLeadPartnerTargetsQuerySchema>;
+
+/**
+ * Sprint 17 (D17) — partial update for an existing partner target.
+ *
+ * Closes the explicit Sprint 13 PATCH deferral so a target can move
+ * from `target` → `contacted` → `signup_started` → `matched` (or
+ * `rejected` / `inactive`). The caller can also reassign the owner
+ * / team / country and edit the note without re-creating the row.
+ *
+ * Three-way null semantics:
+ *   - undefined → field unchanged.
+ *   - null      → field cleared (owner / team / country / note only).
+ *   - value     → field set.
+ *
+ * `partnerSourceId` is intentionally NOT settable — the unique-index
+ * dedupe key would have to be revalidated and the row would no longer
+ * match the audit history. Operators who want a different partner
+ * journey create a new target instead.
+ *
+ * Strict so any unknown field is rejected at the controller
+ * boundary — auditable surface area.
+ */
+export const UpdateLeadPartnerTargetSchema = z
+  .object({
+    status: statusSchema.optional(),
+    countryId: z.string().uuid().nullable().optional(),
+    teamId: z.string().uuid().nullable().optional(),
+    ownerUserId: z.string().uuid().nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Pass at least one field to update',
+  });
+export type UpdateLeadPartnerTargetDto = z.infer<typeof UpdateLeadPartnerTargetSchema>;
