@@ -584,6 +584,18 @@ model PipelineStage {
   allowedStatuses      Json?    @map("allowed_statuses")
   requireStatusOnExit  Boolean  @default(false) @map("require_status_on_exit")
 
+  /// Sprint 1 (D6.1) — Captain Masr lifecycle classifier.
+  /// Buckets the stage into one of the four canonical journey
+  /// steps: 'fresh_lead' | 'signup' | 'active' | 'dft'. NULL means
+  /// the stage is not part of the captain-acquisition journey
+  /// (e.g. a pipeline reused for a different workflow). The Journey
+  /// Bar in Lead Detail derives the active step from this column;
+  /// reports and dashboards in later sprints (Sales / Team Leader)
+  /// will roll up counts by category. Inert at the engine level —
+  /// no service writes it automatically; admins set it via Pipeline
+  /// Builder.
+  lifecycleCategory    String?  @map("lifecycle_category")
+
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -596,6 +608,7 @@ model PipelineStage {
   @@unique([pipelineId, order])
   @@index([tenantId])
   @@index([pipelineId])
+  @@index([tenantId, lifecycleCategory])
   @@map("pipeline_stages")
 }
 

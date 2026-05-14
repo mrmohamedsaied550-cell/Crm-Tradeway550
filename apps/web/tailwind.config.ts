@@ -70,6 +70,22 @@ const config: Config = {
           textMuted: '#94A3B8', // slate-400 — section headers / disabled
           textActive: '#FFFFFF', // active route + section header on hover
         },
+        // Sprint 1 — Captain Masr lifecycle journey palette. One pair
+        // per canonical step: `*Fg` for the foreground (dot, text,
+        // ring) and `*Bg` for the soft fill. Mirrors the approved
+        // visual direction so the Journey Bar, future stage chips,
+        // and dashboard counters all read from the same source of
+        // truth.
+        lifecycle: {
+          freshLeadFg: '#3B82F6',
+          freshLeadBg: '#DBEAFE',
+          signupFg: '#F59E0B',
+          signupBg: '#FEF3C7',
+          activeFg: '#10B981',
+          activeBg: '#D1FAE5',
+          dftFg: '#8B5CF6',
+          dftBg: '#EDE9FE',
+        },
       },
       fontFamily: {
         sans: [
