@@ -38,12 +38,23 @@ interface PendingTransitionRequestCardProps {
   refreshKey?: string | number;
   /** Caller-side callback after a successful approve / reject. */
   onChanged: () => void;
+  /**
+   * Sprint 11 (D11) — request-again hook for rejected rows. When
+   * passed, the rejected row gets a "Request again" button that
+   * opens the parent's Add Action drawer pre-routed to Lifecycle
+   * + (optionally) the original target stage. The card itself
+   * never bypasses the approval engine — the drawer's normal
+   * save flow handles requiresApproval. When omitted the button
+   * is hidden (today's behaviour).
+   */
+  onRequestAgain?: (row: LeadTransitionRequestRow) => void;
 }
 
 export function PendingTransitionRequestCard({
   leadId,
   refreshKey,
   onChanged,
+  onRequestAgain,
 }: PendingTransitionRequestCardProps): JSX.Element | null {
   const t = useTranslations('admin.leads.detail.pendingTransition');
   const tCommon = useTranslations('admin.common');
@@ -273,6 +284,14 @@ export function PendingTransitionRequestCard({
                   ) : (
                     <span className="text-xs italic text-ink-tertiary">{t('readOnlyHint')}</span>
                   )}
+                </div>
+              ) : null}
+
+              {isRejected && onRequestAgain ? (
+                <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                  <Button variant="primary" size="sm" onClick={() => onRequestAgain(row)}>
+                    {t('requestAgain')}
+                  </Button>
                 </div>
               ) : null}
             </li>

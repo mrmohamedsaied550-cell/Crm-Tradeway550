@@ -691,7 +691,8 @@
             "correctiveActionPlaceholder": "e.g. Confirm vehicle type before requesting Signup again",
             "correctiveActionHint": "If omitted, a generic \"Resolve before re-requesting\" follow-up is created due in 24 hours.",
             "confirm": "Reject + create follow-up"
-          }
+          },
+          "requestAgain": "Request again"
         },
         "tabs": {
           "ariaLabel": "Lead detail sections",

@@ -886,6 +886,17 @@ export default function LeadDetailPage(): JSX.Element {
         leadId={lead.id}
         refreshKey={lead.updatedAt}
         onChanged={() => void reload()}
+        onRequestAgain={(row) => {
+          // Sprint 11 (D11) — "Request again" on a rejected
+          // transition prefills the Add Action drawer's Lifecycle
+          // panel with the original target stage. The drawer's
+          // normal save flow still runs the smart-status rule
+          // chain, so requiresApproval / handoff are honoured
+          // exactly the same way as a brand-new request.
+          setAddActionInitialArea('lifecycle');
+          setAddActionInitialStageId(row.toStage.id);
+          setAddActionOpen(true);
+        }}
       />
 
       {/* ───── Sprint 4 — Partner Presence compact summary ─────
