@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { Notice } from '@/components/ui/notice';
-import { ApiError, leadsApi } from '@/lib/api';
+import { ApiError, leadsApi, presenceApi } from '@/lib/api';
 import type { Lead } from '@/lib/api-types';
 import { LifecycleActionPanel } from './lifecycle-action-panel';
 import { ProfileActionPanel } from './profile-action-panel';
@@ -142,9 +142,24 @@ export function AddActionDrawer({
   useEffect(() => {
     if (open) {
       setArea(initialArea ?? null);
+      // Sprint 11 — flip the operator into "in action" presence so
+      // other viewers see the busy chip while the drawer is open.
+      // Best-effort; failure must never break Add Action.
+      if (lead) {
+        void presenceApi
+          .activity({
+            context: 'add_action',
+            entityType: 'lead',
+            entityId: lead.id,
+            busy: true,
+          })
+          .catch(() => {
+            /* swallow */
+          });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialArea]);
+  }, [open, initialArea, lead?.id]);
 
   // ─────── Note Only state (Sprint 2.G) ───────
   const [noteBody, setNoteBody] = useState<string>('');
@@ -155,6 +170,21 @@ export function AddActionDrawer({
     setArea(null);
     setNoteBody('');
     setError(null);
+    // Sprint 11 — release the busy window when the drawer closes
+    // (busy=false). The natural busyUntil expiry would also clear
+    // it but explicit feedback keeps the chip honest.
+    if (lead) {
+      void presenceApi
+        .activity({
+          context: 'lead_detail',
+          entityType: 'lead',
+          entityId: lead.id,
+          busy: false,
+        })
+        .catch(() => {
+          /* swallow */
+        });
+    }
     onClose();
   }
 

@@ -63,6 +63,7 @@ import {
   partnerVerificationApi,
   pipelineApi,
   pipelinesApi,
+  presenceApi,
   teamsApi,
   usersApi,
 } from '@/lib/api';
@@ -237,6 +238,19 @@ export default function LeadDetailPage(): JSX.Element {
   const [navigatorPos, setNavigatorPos] = useState<NavigatorPosition | null>(null);
   useEffect(() => {
     setNavigatorPos(readListContext(id));
+  }, [id]);
+
+  // Sprint 11 — Sprint 10 carry-forward: ship a presence activity
+  // ping when the operator opens Lead Detail so the chip's
+  // `currentContext` reads "lead" for other viewers. Best-effort
+  // (presence outage must never break Lead Detail).
+  useEffect(() => {
+    if (!id) return;
+    void presenceApi
+      .activity({ context: 'lead_detail', entityType: 'lead', entityId: id })
+      .catch(() => {
+        /* swallow */
+      });
   }, [id]);
 
   // Keyboard shortcuts: Alt+←/→ + j/k. Active only when no input,
