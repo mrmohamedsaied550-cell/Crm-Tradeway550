@@ -996,6 +996,19 @@
         "timeline": {
           "today": "اليوم",
           "yesterday": "أمس",
+          "filter": {
+            "label": "تصفية السجل",
+            "all": "الكل",
+            "mine": "إجراءاتي",
+            "stage": "المرحلة",
+            "system": "النظام",
+            "emptyTitle": "لا توجد أحداث بهذا التصفية",
+            "emptyBody": "عُد إلى \"الكل\" لعرض كل أحداث العميل المحتمل."
+          },
+          "group": {
+            "headline": "{count} حدث {type} مجمَّعة",
+            "expandHint": "اضغط لعرض التفاصيل"
+          },
           "followUp": {
             "created": "تمت جدولة متابعة",
             "completed": "تمت المتابعة",
