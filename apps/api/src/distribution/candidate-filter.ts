@@ -9,10 +9,13 @@
  *   1. inactive_user           — status !== 'active'
  *   2. not_eligible_role       — role.code not in ELIGIBLE_ROLE_CODES
  *   3. excluded_by_caller      — id in excludeUserIds (e.g. current assignee)
- *   4. wrong_team              — rule.targetTeamId set AND user.teamId !== it
- *   5. unavailable             — capacity.isAvailable === false
- *   6. out_of_office           — capacity.outOfOfficeUntil > now
- *   7. at_capacity             — capacity.maxActiveLeads != null AND
+ *   4. prior_sla_breach_on_lead — id in priorSlaBreachUserIds (anti-loop:
+ *                                this agent already breached SLA on the
+ *                                same lead within the lookback window).
+ *   5. wrong_team              — rule.targetTeamId set AND user.teamId !== it
+ *   6. unavailable             — capacity.isAvailable === false
+ *   7. out_of_office           — capacity.outOfOfficeUntil > now
+ *   8. at_capacity             — capacity.maxActiveLeads != null AND
  *                                activeLeadCount >= max
  *
  * Working-hours filter is intentionally NOT in A4 — it requires
@@ -43,6 +46,16 @@ export interface FilterOptions {
   ruleTargetTeamId: string | null;
   /** Caller-driven exclusions (e.g. current assignee on rotation). */
   excludeUserIds: readonly string[];
+  /**
+   * Phase 2 — anti-loop guard. Users who already triggered an
+   * `sla_breach` on THIS lead within the orchestrator's lookback
+   * window. Distinct from `excludeUserIds` so the routing log can
+   * tell a reviewer *why* a candidate was dropped (just being the
+   * current assignee vs. having actively failed this lead before).
+   * Empty / omitted = filter is a no-op. Optional so existing
+   * callers keep compiling.
+   */
+  priorSlaBreachUserIds?: readonly string[];
   /** Reference time for OOF / working-hours checks. */
   now: Date;
 }
@@ -57,11 +70,12 @@ export function filterCandidates(
   opts: FilterOptions,
 ): FilterResult {
   const exclude = new Set(opts.excludeUserIds);
+  const priorBreach = new Set(opts.priorSlaBreachUserIds ?? []);
   const surviving: RoutingCandidate[] = [];
   const excluded: Record<string, ExclusionReason> = {};
 
   for (const c of candidates) {
-    const reason = classify(c, opts, exclude);
+    const reason = classify(c, opts, exclude, priorBreach);
     if (reason) {
       excluded[c.id] = reason;
       continue;
@@ -84,10 +98,12 @@ function classify(
   c: RawCandidate,
   opts: FilterOptions,
   excludeSet: Set<string>,
+  priorBreachSet: Set<string>,
 ): ExclusionReason | null {
   if (c.status !== 'active') return 'inactive_user';
   if (!ELIGIBLE_ROLE_CODES.has(c.roleCode)) return 'not_eligible_role';
   if (excludeSet.has(c.id)) return 'excluded_by_caller';
+  if (priorBreachSet.has(c.id)) return 'prior_sla_breach_on_lead';
   if (opts.ruleTargetTeamId !== null && c.teamId !== opts.ruleTargetTeamId) {
     return 'wrong_team';
   }

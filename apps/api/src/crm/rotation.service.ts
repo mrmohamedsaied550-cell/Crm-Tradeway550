@@ -161,7 +161,13 @@ export class RotationService {
         toUserId = target.id;
         resolvedVia = 'explicit';
       } else {
-        toUserId = await this.routeViaDistribution(tx, tenantId, lead, fromUserId);
+        toUserId = await this.routeViaDistribution(
+          tx,
+          tenantId,
+          lead,
+          fromUserId,
+          input.trigger,
+        );
         resolvedVia = 'route_engine';
         if (!toUserId) {
           throw new BadRequestException({
@@ -449,8 +455,19 @@ export class RotationService {
     tenantId: string,
     lead: { id: string; companyId: string | null; countryId: string | null; source: string },
     fromUserId: string | null,
+    trigger: RotationTrigger,
   ): Promise<string | null> {
     if (!this.distribution) return null;
+    // Phase 2 — only collect prior breach exclusions for SLA-driven
+    // rotations. Manual / capacity / agent-unavailable rotations
+    // intentionally keep the door open for past-breach agents:
+    // an Ops manager rebalancing load shouldn't be silently
+    // forbidden from reassigning to an agent who once breached the
+    // lead a few hours earlier.
+    const priorSlaBreachUserIds =
+      trigger === 'sla_breach'
+        ? await this.distribution.collectPriorSlaBreachUserIds(lead.id, tx)
+        : [];
     const decision = await this.distribution.route(
       {
         tenantId,
@@ -460,6 +477,7 @@ export class RotationService {
         countryId: lead.countryId,
         currentAssigneeId: fromUserId,
         bypassRules: true,
+        priorSlaBreachUserIds,
       },
       tx,
     );
