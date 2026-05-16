@@ -207,6 +207,48 @@ export class SlaService {
   }
 
   /**
+   * Phase 2 — SLA breach anti-loop helper for the LEGACY
+   * (DistributionService-unwired) reassignment path.
+   *
+   * Mirrors `DistributionService.collectPriorSlaBreachUserIds` but
+   * lives here so a deployment without the routing engine still
+   * gets the anti-loop guard. Both implementations read from the
+   * same source of truth (the `lead_activities` rows of type
+   * `sla_breach`) and use the same 24h lookback window, so they
+   * always agree on which agents to fence out for a given lead.
+   */
+  private static readonly PRIOR_SLA_BREACH_LOOKBACK_HOURS = 24;
+
+  private async collectLegacyPriorSlaBreachUserIds(
+    tx: Prisma.TransactionClient,
+    leadId: string,
+    now: Date,
+  ): Promise<readonly string[]> {
+    const since = new Date(
+      now.getTime() -
+        SlaService.PRIOR_SLA_BREACH_LOOKBACK_HOURS * 60 * 60 * 1000,
+    );
+    const rows = await tx.leadActivity.findMany({
+      where: {
+        leadId,
+        type: 'sla_breach',
+        createdAt: { gte: since },
+      },
+      select: { payload: true },
+    });
+    const ids = new Set<string>();
+    for (const r of rows) {
+      const p = (r.payload ?? {}) as Record<string, unknown>;
+      const candidate =
+        (typeof p.priorAssigneeId === 'string' && p.priorAssigneeId) ||
+        (typeof p.fromUserId === 'string' && p.fromUserId) ||
+        null;
+      if (candidate) ids.add(candidate);
+    }
+    return [...ids];
+  }
+
+  /**
    * Set sla_due_at = now + window, sla_status = 'active'. Optionally also
    * stamps `last_response_at` (callers pass `markResponse: true` only for
    * agent-driven activity types — see SLA_RESETTING_ACTIVITY_TYPES).
@@ -602,6 +644,14 @@ export class SlaService {
         // harnesses that don't wire it green.
         let pickedId: string | null;
         if (this.distribution) {
+          // Phase 2 — anti-loop: collect users who already breached
+          // SLA on this lead within the lookback window so the
+          // distribution engine drops them from the candidate pool
+          // (reason `prior_sla_breach_on_lead`). Without this guard
+          // the rotation would happily cycle the same lead through
+          // an agent who has already failed it twice.
+          const priorSlaBreachUserIds =
+            await this.distribution.collectPriorSlaBreachUserIds(fresh.id, tx);
           const decision = await this.distribution.route(
             {
               tenantId,
@@ -611,6 +661,7 @@ export class SlaService {
               countryId: null,
               currentAssigneeId: fromUserId,
               bypassRules: true,
+              priorSlaBreachUserIds,
             },
             tx,
           );
@@ -648,11 +699,28 @@ export class SlaService {
         } else {
           // Legacy fallback path — same as pre-A5.5 behaviour. Tests
           // that don't wire DistributionService take this branch.
+          //
+          // Phase 2 — even on the legacy path we still want the
+          // anti-loop guard. We assemble the same prior-breach set
+          // inline (DistributionService is the canonical home but is
+          // unavailable here) and union it with the standard
+          // `[fromUserId]` exclusion. The assignment service treats
+          // every id in the list identically; only the
+          // distribution-engine routing-log distinguishes the
+          // sub-reasons.
+          const priorSlaBreachUserIds = await this.collectLegacyPriorSlaBreachUserIds(
+            tx,
+            fresh.id,
+            now,
+          );
+          const excludeUserIds = Array.from(
+            new Set<string>([fromUserId, ...priorSlaBreachUserIds]),
+          );
           pickedId = await this.assignment.assignLeadViaRoundRobin({
             tx,
             leadId: fresh.id,
             tenantId,
-            excludeUserIds: [fromUserId],
+            excludeUserIds,
             activityType: 'sla_breach',
             actorUserId,
             body: `Auto-reassigned after SLA breach`,

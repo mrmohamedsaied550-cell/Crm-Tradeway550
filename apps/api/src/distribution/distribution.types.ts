@@ -69,6 +69,23 @@ export interface RoutingContext {
    * (candidate filter, strategy pick, log write) is identical.
    */
   bypassRules?: boolean;
+  /**
+   * Phase 2 — anti-loop guard for SLA-breach driven rotations.
+   *
+   * When the orchestrator is rotating a lead AFTER an SLA breach,
+   * the caller passes the set of users who have already triggered
+   * an `sla_breach` activity on this same lead within a recent
+   * window (default lookback = 24h, see
+   * `DistributionService.collectPriorSlaBreachUserIds`). The
+   * filter pipeline drops them with reason
+   * `prior_sla_breach_on_lead` so the rotation never circles
+   * back to an agent who has already failed this lead.
+   *
+   * Optional / undefined / empty array = no anti-loop filtering.
+   * Always orthogonal to `currentAssigneeId` (which the
+   * orchestrator still excludes via `excluded_by_caller`).
+   */
+  priorSlaBreachUserIds?: readonly string[];
 }
 
 /**
@@ -142,7 +159,16 @@ export type ExclusionReason =
   | 'unavailable'
   | 'out_of_office'
   | 'outside_working_hours'
-  | 'at_capacity';
+  | 'at_capacity'
+  /**
+   * Phase 2 — anti-loop guard: this user already breached SLA on
+   * THIS lead within the configured lookback window, so re-routing
+   * the same lead back to them would just repeat the breach. The
+   * lookback window is bounded by the orchestrator (default 24h)
+   * to keep the rule actionable while still letting the agent see
+   * the lead again on a future, unrelated rotation.
+   */
+  | 'prior_sla_breach_on_lead';
 
 export const ALL_EXCLUSION_REASONS: readonly ExclusionReason[] = [
   'not_eligible_role',
@@ -153,6 +179,7 @@ export const ALL_EXCLUSION_REASONS: readonly ExclusionReason[] = [
   'out_of_office',
   'outside_working_hours',
   'at_capacity',
+  'prior_sla_breach_on_lead',
 ] as const;
 
 /** Routing log row — what the orchestrator returns + persists. */
