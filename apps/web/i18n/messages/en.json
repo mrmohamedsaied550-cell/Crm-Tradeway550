@@ -996,6 +996,19 @@
         "timeline": {
           "today": "Today",
           "yesterday": "Yesterday",
+          "filter": {
+            "label": "Filter timeline",
+            "all": "All",
+            "mine": "Mine",
+            "stage": "Stage",
+            "system": "System",
+            "emptyTitle": "Nothing to show with this filter",
+            "emptyBody": "Switch back to All to see every event on this lead."
+          },
+          "group": {
+            "headline": "{count} {type} events grouped",
+            "expandHint": "Click to expand"
+          },
           "followUp": {
             "created": "Follow-up scheduled",
             "completed": "Follow-up completed",
