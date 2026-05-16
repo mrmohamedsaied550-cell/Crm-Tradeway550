@@ -80,6 +80,7 @@ import type {
 } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { readListContext, type NavigatorPosition } from '@/lib/lead-list-context';
+import { useRealtime } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
@@ -340,6 +341,29 @@ export default function LeadDetailPage(): JSX.Element {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Phase 2 — SLA / rotation auto-reassign cache invalidation.
+  //
+  // Background: when a lead breaches SLA, the API runs an automatic
+  // re-rotation on the server (see SlaService / RotationService).
+  // Without a refresh signal, the lead detail page still shows the
+  // old assignee chip until the operator manually navigates away
+  // and back. We subscribe to the existing `lead.assigned` SSE
+  // event (already broadcast on every server-side reassignment,
+  // including SLA-driven ones) and trigger a `reload()` whenever
+  // the event targets THIS lead. Other leads' assignment events
+  // are deliberately ignored — they don't change anything visible
+  // on this page.
+  //
+  // The realtime channel is best-effort: when SSE is blocked by
+  // the browser / proxy / firewall, the page still works — the
+  // operator just sees the old chip until they refetch via any
+  // existing path (manual reload, navigator next/prev, opening a
+  // modal that calls `reload()`).
+  useRealtime('lead.assigned', (event) => {
+    if (event.leadId !== id) return;
+    void reload();
+  });
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const teamById = useMemo(() => new Map(teams.map((tm) => [tm.id, tm])), [teams]);

@@ -332,9 +332,23 @@ export class DistributionService {
       capacity: capacities.get(u.id)!, // synthesised default if missing
       activeLeadCount: countByUser.get(u.id) ?? 0,
     }));
+    // Phase 2 — anti-loop guard. When the caller provides an
+    // explicit `priorSlaBreachUserIds` list (the SLA / rotation path
+    // does this), we use it as-is. Otherwise, when `bypassRules`
+    // signals an SLA-driven rotation but the caller didn't compute
+    // the list, we lazily collect it here so older callers benefit
+    // automatically without coordinated changes.
+    const priorSlaBreachUserIds: readonly string[] =
+      ctx.priorSlaBreachUserIds && ctx.priorSlaBreachUserIds.length > 0
+        ? ctx.priorSlaBreachUserIds
+        : ctx.bypassRules
+          ? await this.collectPriorSlaBreachUserIds(ctx.leadId, tx)
+          : [];
+
     const { surviving, excluded } = filterCandidates(raw, {
       ruleTargetTeamId: rule?.targetTeamId ?? null,
       excludeUserIds: ctx.currentAssigneeId ? [ctx.currentAssigneeId] : [],
+      priorSlaBreachUserIds,
       now: new Date(),
     });
 
@@ -375,5 +389,64 @@ export class DistributionService {
     if (!this.tenantSettings) return 'capacity';
     const settings = await this.tenantSettings.getInTx(tx, tenantId);
     return settings.defaultStrategy;
+  }
+
+  /**
+   * Phase 2 — SLA breach anti-loop helper.
+   *
+   * Returns the distinct user ids that have already triggered an
+   * `sla_breach` activity on the given lead within the lookback
+   * window. The activity row is written by SlaService whenever a
+   * lead's SLA expires while still assigned to that user, so this
+   * is the authoritative "who has failed this lead" list.
+   *
+   * Window default = 24 hours. The intent is short-term: keep the
+   * rotation moving forward through fresh agents, but don't
+   * permanently fence an agent from a lead they bumped into a week
+   * ago. The window is intentionally a constant for now — if the
+   * tenant ever needs it tunable we can promote it to
+   * `tenant_settings.sla_loop_lookback_hours` without changing the
+   * filter contract.
+   *
+   * Performance: indexed lookup on `(leadId, type, createdAt)`. The
+   * `lead_activities` table already has
+   * `(leadId, createdAt DESC)` covering this query plan; the `type`
+   * filter is a cheap predicate on top.
+   */
+  private static readonly PRIOR_SLA_BREACH_LOOKBACK_HOURS = 24;
+
+  async collectPriorSlaBreachUserIds(
+    leadId: string,
+    tx: Prisma.TransactionClient,
+    now: Date = new Date(),
+  ): Promise<readonly string[]> {
+    const since = new Date(
+      now.getTime() -
+        DistributionService.PRIOR_SLA_BREACH_LOOKBACK_HOURS * 60 * 60 * 1000,
+    );
+    const rows = await tx.leadActivity.findMany({
+      where: {
+        leadId,
+        type: 'sla_breach',
+        createdAt: { gte: since },
+      },
+      select: { payload: true },
+    });
+    const ids = new Set<string>();
+    for (const r of rows) {
+      // The SLA-breach activity payload always carries
+      // `priorAssigneeId` (set in SlaService when the breach is
+      // first detected). Older rows from before that field was
+      // introduced may carry `fromUserId` on the auto-reassign
+      // sibling activity — we accept either to stay backwards
+      // compatible with historical data.
+      const p = (r.payload ?? {}) as Record<string, unknown>;
+      const candidate =
+        (typeof p.priorAssigneeId === 'string' && p.priorAssigneeId) ||
+        (typeof p.fromUserId === 'string' && p.fromUserId) ||
+        null;
+      if (candidate) ids.add(candidate);
+    }
+    return [...ids];
   }
 }
