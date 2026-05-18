@@ -23,6 +23,7 @@ import { AuditModule } from './audit/audit.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PresenceModule } from './presence/presence.module';
 import { IngestionModule } from './ingestion/ingestion.module';
+import { MetaModule } from './meta/meta.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { BackupModule } from './backup/backup.module';
 import { DistributionModule } from './distribution/distribution.module';
@@ -72,6 +73,7 @@ import { buildLoggerConfig } from './common/logger';
     NotificationsModule,
     PresenceModule,
     IngestionModule,
+    MetaModule,
     RealtimeModule,
     BackupModule,
     DistributionModule,
