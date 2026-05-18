@@ -16,11 +16,20 @@ import type { Request } from 'express';
 
 import { isProduction } from '../common/env';
 import { LEAD_SOURCES, type LeadSource } from '../crm/pipeline.registry';
+import {
+  applyMappingV2,
+  normaliseFieldMapping,
+  type AppliedMapping,
+} from '../meta/meta-field-mapping.helper';
+import type { MetaFieldMappingV2 } from '../meta/meta-field-mapping.types';
+import { MetaGraphService } from '../meta/meta-graph.service';
+import { getMetaConfig } from '../meta/meta.config';
 import { LeadIngestionService } from './lead-ingestion.service';
 import { MetaLeadSourcesService } from './meta-lead-sources.service';
 
 /**
- * /api/v1/webhooks/meta/leadgen (P2-06) — public Meta Lead Ads webhook.
+ * /api/v1/webhooks/meta/leadgen (P2-06 + Sprint M2) — public Meta
+ * Lead Ads webhook.
  *
  * INTENTIONALLY PUBLIC: no JwtAuthGuard, no tenant header. Meta's
  * platform delivers lead-gen events here. We:
@@ -28,20 +37,22 @@ import { MetaLeadSourcesService } from './meta-lead-sources.service';
  *      `meta_lead_sources` row and echo `hub.challenge`.
  *   2. POST inbound — match the payload's `page_id` (+ optional
  *      `form_id`) to a `meta_lead_sources` row, verify the HMAC
- *      signature against the source's `app_secret`, then for each
- *      lead in the payload run the `field_mapping` against the
- *      delivered `field_data`, hand the mapped values to
- *      `LeadIngestionService.ingestMetaPayload`, and tally the
- *      result. Production requires every source row to have an
- *      `app_secret` set; dev / test allow unsigned payloads.
+ *      signature against the source's `app_secret` (or, when the row
+ *      has no per-source secret, the `META_APP_SECRET` env fallback),
+ *      then for each lead in the payload either
+ *        a) fetch the lead via Graph API when the source carries an
+ *           `oauth_connection_id` (Sprint M2 path), enriching with
+ *           campaign / ad-set / ad names, or
+ *        b) consume the inline `field_data` from the verbose webhook
+ *           payload (legacy P2-06 path),
+ *      apply the V2-normalised `field_mapping`, and hand the mapped
+ *      values to `LeadIngestionService.ingestMetaPayload`. Production
+ *      requires every signature path to have at least one secret
+ *      (per-source or env) — dev/test allow unsigned payloads.
  *
- * Per Meta's docs the verbose webhook delivers `field_data` inline
- * (when Lead Notification's "include_form_data" is enabled). In the
- * absence of that flag the webhook only carries `leadgen_id` and
- * we'd need a Page access token to fetch the form from the Graph
- * API — that fetcher is out of scope for P2-06; rows without
- * `field_data` are reported as `errors` in the response envelope so
- * operators can spot the misconfiguration.
+ * The V1/V2 mapping split is invisible to operators: rows still on
+ * the legacy flat `{ metaKey: leadField }` shape go through
+ * `normaliseFieldMapping` and behave identically to V2 rows.
  */
 @ApiTags('crm')
 @Controller('webhooks/meta/leadgen')
@@ -51,6 +62,7 @@ export class MetaLeadgenController {
   constructor(
     private readonly sources: MetaLeadSourcesService,
     private readonly ingestion: LeadIngestionService,
+    private readonly graph: MetaGraphService,
   ) {}
 
   // ─── GET handshake ───
@@ -119,6 +131,7 @@ export class MetaLeadgenController {
     const raw = req.rawBody?.toString('utf8') ?? JSON.stringify(body);
     const signature = req.header('x-hub-signature-256') ?? undefined;
     const requireSigned = isProduction();
+    const envAppSecret = getMetaConfig().appSecret;
 
     let ingested = 0;
     let duplicates = 0;
@@ -137,67 +150,204 @@ export class MetaLeadgenController {
         continue;
       }
 
-      if (!verifyMetaSignature(raw, signature, source.appSecret, requireSigned)) {
+      // Sprint M2 — signature secret resolution: per-source override
+      // first (back-compat with hand-configured webhooks from P2-06),
+      // env fallback otherwise (`META_APP_SECRET`).
+      const effectiveSecret =
+        source.appSecret !== null && source.appSecret.length > 0
+          ? source.appSecret
+          : envAppSecret.length > 0
+            ? envAppSecret
+            : null;
+
+      if (!verifyMetaSignature(raw, signature, effectiveSecret, requireSigned)) {
         throw new BadRequestException({
           code: 'meta.leadgen.invalid_signature',
           message: 'Webhook signature does not match',
         });
       }
 
-      const mapping = source.fieldMapping as Record<string, string>;
+      const mappingV2 = normaliseFieldMapping(source.fieldMapping);
       const defaultSource = isLeadSource(source.defaultSource) ? source.defaultSource : 'meta';
+      const useOAuthPath =
+        typeof source.oauthConnectionId === 'string' && source.oauthConnectionId.length > 0;
 
       for (const ev of group.events) {
-        if (!ev.fieldData) {
-          // Ingest endpoint requires field_data inline (verbose mode).
-          // Without it we'd have to fetch from Graph API — out of scope.
+        try {
+          const outcome = useOAuthPath
+            ? await this.processViaGraph({
+                ev,
+                source,
+                mappingV2,
+                defaultSource,
+                connectionId: source.oauthConnectionId as string,
+              })
+            : await this.processInline({ ev, source, mappingV2, defaultSource });
+
+          if (outcome === 'created') ingested += 1;
+          else if (outcome === 'duplicate') duplicates += 1;
+          else errors += 1;
+        } catch (err) {
+          // Per-event Graph / ingest failures must not abort the batch
+          // — Meta would retry the whole envelope and re-ingest the
+          // ones that succeeded. Log and count as error so the
+          // response envelope stays accurate.
           this.logger.warn(
-            `meta leadgen event ${ev.leadgenId ?? '∅'} dropped: no field_data (verbose mode disabled?)`,
+            `meta leadgen event ${ev.leadgenId ?? '∅'} failed: ${(err as Error).message}`,
           );
           errors += 1;
-          continue;
         }
-
-        const mapped = applyMapping(ev.fieldData, mapping);
-        const result = await this.ingestion.ingestMetaPayload({
-          tenantId: source.tenantId,
-          name: mapped.name ?? '',
-          phoneRaw: mapped.phone ?? '',
-          email: mapped.email ?? null,
-          source: defaultSource,
-          actorUserId: null,
-          metadata: {
-            leadgenId: ev.leadgenId,
-            pageId: ev.pageId,
-            formId: ev.formId,
-            sourceId: source.id,
-          },
-          // Phase A — A4: structured attribution. `pageId` lands on
-          // `subSource` so distribution rules can later filter by
-          // page (e.g. "leads from this page → that team"). The
-          // ad_id and adgroup_id from Meta map to attribution.ad
-          // and attribution.adSet respectively.
-          attribution: {
-            subSource: 'meta_lead_form',
-            ...(ev.campaignId && { campaign: { id: ev.campaignId } }),
-            ...(ev.adgroupId && { adSet: { id: ev.adgroupId } }),
-            ...(ev.adId && { ad: { id: ev.adId } }),
-            ...((ev.pageId || ev.formId || ev.leadgenId) && {
-              custom: {
-                ...(ev.pageId && { pageId: ev.pageId }),
-                ...(ev.formId && { formId: ev.formId }),
-                ...(ev.leadgenId && { leadgenId: ev.leadgenId }),
-              },
-            }),
-          },
-        });
-        if (result.kind === 'created') ingested += 1;
-        else if (result.kind === 'duplicate') duplicates += 1;
-        else errors += 1;
       }
     }
 
     return { ok: true, ingested, duplicates, errors };
+  }
+
+  // ─── per-event paths ────────────────────────────────────────────────
+
+  /**
+   * Sprint M2 OAuth path — fetches the lead via Graph (authoritative
+   * `field_data`) and the ad → ad-set → campaign names so the lead
+   * row can persist the six flat attribution columns alongside the
+   * existing `attribution` JSON.
+   */
+  private async processViaGraph(input: {
+    ev: LeadgenEvent;
+    source: SourceRow;
+    mappingV2: MetaFieldMappingV2;
+    defaultSource: LeadSource;
+    connectionId: string;
+  }): Promise<'created' | 'duplicate' | 'error'> {
+    const { ev, source, mappingV2, defaultSource, connectionId } = input;
+
+    if (!ev.leadgenId) {
+      this.logger.warn(`meta leadgen OAuth-path event dropped: no leadgen_id (page ${ev.pageId})`);
+      return 'error';
+    }
+
+    const leadData = await this.graph.getLeadData(connectionId, ev.leadgenId, ev.pageId);
+    const adId = leadData.adId ?? ev.adId ?? null;
+    const attribution =
+      adId !== null ? await this.graph.getAttributionNames(connectionId, adId) : null;
+
+    const applied = applyMappingV2(leadData.fieldData, mappingV2);
+    return this.dispatch({
+      ev,
+      source,
+      defaultSource,
+      applied,
+      attributionPayload: {
+        subSource: 'meta_lead_form',
+        ...(attribution
+          ? {
+              campaign: { id: attribution.campaignId, name: attribution.campaignName },
+              adSet: { id: attribution.adsetId, name: attribution.adsetName },
+              ad: { id: attribution.adId, name: attribution.adName },
+            }
+          : {
+              ...(ev.campaignId && { campaign: { id: ev.campaignId } }),
+              ...(ev.adgroupId && { adSet: { id: ev.adgroupId } }),
+              ...(adId && { ad: { id: adId } }),
+            }),
+        ...((ev.pageId || ev.formId || ev.leadgenId) && {
+          custom: {
+            ...(ev.pageId && { pageId: ev.pageId }),
+            ...(ev.formId && { formId: ev.formId }),
+            ...(ev.leadgenId && { leadgenId: ev.leadgenId }),
+          },
+        }),
+      },
+      metaAttribution: attribution
+        ? {
+            campaignId: attribution.campaignId,
+            campaignName: attribution.campaignName,
+            adsetId: attribution.adsetId,
+            adsetName: attribution.adsetName,
+            adId: attribution.adId,
+            adName: attribution.adName,
+          }
+        : null,
+    });
+  }
+
+  /**
+   * Legacy P2-06 inline path — the webhook delivers `field_data`
+   * when Lead Notification's "include_form_data" is on. Used when
+   * the source has no OAuth connection. No Graph calls; attribution
+   * stays at id-only inside the JSON column (no flat-column names).
+   */
+  private async processInline(input: {
+    ev: LeadgenEvent;
+    source: SourceRow;
+    mappingV2: MetaFieldMappingV2;
+    defaultSource: LeadSource;
+  }): Promise<'created' | 'duplicate' | 'error'> {
+    const { ev, source, mappingV2, defaultSource } = input;
+    if (!ev.fieldData) {
+      this.logger.warn(
+        `meta leadgen inline-path event ${ev.leadgenId ?? '∅'} dropped: no field_data (verbose mode disabled?)`,
+      );
+      return 'error';
+    }
+    const applied = applyMappingV2(ev.fieldData, mappingV2);
+    return this.dispatch({
+      ev,
+      source,
+      defaultSource,
+      applied,
+      attributionPayload: {
+        subSource: 'meta_lead_form',
+        ...(ev.campaignId && { campaign: { id: ev.campaignId } }),
+        ...(ev.adgroupId && { adSet: { id: ev.adgroupId } }),
+        ...(ev.adId && { ad: { id: ev.adId } }),
+        ...((ev.pageId || ev.formId || ev.leadgenId) && {
+          custom: {
+            ...(ev.pageId && { pageId: ev.pageId }),
+            ...(ev.formId && { formId: ev.formId }),
+            ...(ev.leadgenId && { leadgenId: ev.leadgenId }),
+          },
+        }),
+      },
+      metaAttribution: null,
+    });
+  }
+
+  private async dispatch(input: {
+    ev: LeadgenEvent;
+    source: SourceRow;
+    defaultSource: LeadSource;
+    applied: AppliedMapping;
+    attributionPayload: Record<string, unknown>;
+    metaAttribution: {
+      campaignId: string;
+      campaignName: string;
+      adsetId: string;
+      adsetName: string;
+      adId: string;
+      adName: string;
+    } | null;
+  }): Promise<'created' | 'duplicate' | 'error'> {
+    const { ev, source, defaultSource, applied, attributionPayload, metaAttribution } = input;
+    const result = await this.ingestion.ingestMetaPayload({
+      tenantId: source.tenantId,
+      name: applied.leadFields.name ?? '',
+      phoneRaw: applied.leadFields.phone ?? '',
+      email: applied.leadFields.email ?? null,
+      source: defaultSource,
+      actorUserId: null,
+      metadata: {
+        leadgenId: ev.leadgenId,
+        pageId: ev.pageId,
+        formId: ev.formId,
+        sourceId: source.id,
+        ...(source.oauthConnectionId && { oauthConnectionId: source.oauthConnectionId }),
+      },
+      attribution: attributionPayload as AttributionForwardingShape,
+      metaAttribution,
+    });
+    if (result.kind === 'created' || result.kind === 'reactivated') return 'created';
+    if (result.kind === 'duplicate') return 'duplicate';
+    return 'error';
   }
 }
 
@@ -213,8 +363,9 @@ interface LeadgenEvent {
    * Phase A — A4: campaign-level identifiers from the Meta payload.
    * `ad_id` and `adgroup_id` (Meta's term for ad-set) are populated
    * by Meta on every lead-gen event. `campaign_id` is not part of
-   * the standard webhook envelope — it must be looked up via Graph
-   * API later if needed; null today.
+   * the standard webhook envelope — when the source has an OAuth
+   * connection we call Graph to resolve it (Sprint M2); without a
+   * connection it stays null.
    */
   adId: string | null;
   adgroupId: string | null;
@@ -252,11 +403,6 @@ function parseLeadgenEvents(body: unknown): LeadgenEvent[] {
       const pageId = stringOrNull(value['page_id']);
       const formId = stringOrNull(value['form_id']);
       const leadgenId = stringOrNull(value['leadgen_id']);
-      // Phase A — A4: campaign-level ids. Meta sends `ad_id` and
-      // `adgroup_id` (= ad set) on the leadgen value object. Both
-      // optional; missing on organic / non-ads forms. `campaign_id`
-      // is NOT in the webhook envelope — null until a Graph API
-      // lookup ships in a follow-up.
       const adId = stringOrNull(value['ad_id']);
       const adgroupId = stringOrNull(value['adgroup_id']);
       const campaignId = stringOrNull(value['campaign_id']);
@@ -279,32 +425,6 @@ function parseLeadgenEvents(body: unknown): LeadgenEvent[] {
       }
 
       out.push({ pageId, formId, leadgenId, adId, adgroupId, campaignId, fieldData });
-    }
-  }
-  return out;
-}
-
-/**
- * Apply a `field_mapping` JSON object against the parsed `field_data`.
- * Returns an object keyed by the CRM field names (`name`, `phone`,
- * `email`, ...). Missing source fields → undefined; multi-value fields
- * (Meta returns `values: [...]`) take the first value.
- */
-function applyMapping(
-  fieldData: { name: string; values: string[] }[],
-  mapping: Record<string, string>,
-): Record<string, string | undefined> {
-  const incoming: Record<string, string> = {};
-  for (const f of fieldData) {
-    if (f.values.length > 0 && typeof f.values[0] === 'string') {
-      incoming[f.name] = f.values[0] ?? '';
-    }
-  }
-  const out: Record<string, string | undefined> = {};
-  for (const [src, dst] of Object.entries(mapping)) {
-    const v = incoming[src];
-    if (typeof v === 'string' && v.length > 0) {
-      out[dst] = v;
     }
   }
   return out;
@@ -353,3 +473,27 @@ function stringOrNull(v: unknown): string | null {
 function isLeadSource(v: unknown): v is LeadSource {
   return typeof v === 'string' && (LEAD_SOURCES as readonly string[]).includes(v);
 }
+
+// ───────────────────────────────────────────────────────────────────
+// Local types
+// ───────────────────────────────────────────────────────────────────
+
+/** Shape returned by `MetaLeadSourcesService.findRoutingByPageId`. */
+type SourceRow = {
+  id: string;
+  tenantId: string;
+  appSecret: string | null;
+  defaultSource: string;
+  fieldMapping: unknown;
+  oauthConnectionId: string | null;
+};
+
+/**
+ * Loose forwarding shape for `LeadIngestionService.ingestMetaPayload`'s
+ * `attribution` parameter — it accepts a structured `AttributionInput`
+ * but the controller's payload is assembled dynamically from optional
+ * keys, so this widens the type without re-exporting it.
+ */
+type AttributionForwardingShape = Parameters<
+  LeadIngestionService['ingestMetaPayload']
+>[0]['attribution'];
