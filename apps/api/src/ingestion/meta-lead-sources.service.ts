@@ -64,6 +64,13 @@ export class MetaLeadSourcesService {
           defaultSource: dto.defaultSource,
           fieldMapping: dto.fieldMapping as Prisma.InputJsonValue,
           isActive: dto.isActive,
+          // Sprint M2 — optional OAuth wiring + Graph snapshots + taxonomy.
+          oauthConnectionId: dto.oauthConnectionId ?? null,
+          pageName: dto.pageName ?? null,
+          formName: dto.formName ?? null,
+          project: dto.project ?? null,
+          channel: dto.channel ?? null,
+          campaign: dto.campaign ?? null,
         },
         select: PUBLIC_SELECT,
       });
@@ -109,6 +116,14 @@ export class MetaLeadSourcesService {
             fieldMapping: dto.fieldMapping as Prisma.InputJsonValue,
           }),
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+          // Sprint M2 — let the new admin UI patch the OAuth wiring and
+          // taxonomy without re-sending the unchanged fields.
+          ...(dto.oauthConnectionId !== undefined && { oauthConnectionId: dto.oauthConnectionId }),
+          ...(dto.pageName !== undefined && { pageName: dto.pageName }),
+          ...(dto.formName !== undefined && { formName: dto.formName }),
+          ...(dto.project !== undefined && { project: dto.project }),
+          ...(dto.channel !== undefined && { channel: dto.channel }),
+          ...(dto.campaign !== undefined && { campaign: dto.campaign }),
         },
         select: PUBLIC_SELECT,
       });
@@ -186,6 +201,15 @@ const PUBLIC_SELECT = {
   defaultSource: true,
   fieldMapping: true,
   isActive: true,
+  // Sprint M2 — OAuth wiring + Graph snapshots + operator taxonomy.
+  // `oauthConnectionId` IS safe to return: it's a uuid, not a secret;
+  // the actual token lives encrypted on MetaOAuthConnection.
+  oauthConnectionId: true,
+  pageName: true,
+  formName: true,
+  project: true,
+  channel: true,
+  campaign: true,
   createdAt: true,
   updatedAt: true,
 } as const satisfies Prisma.MetaLeadSourceSelect;

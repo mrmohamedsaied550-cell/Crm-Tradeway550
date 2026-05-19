@@ -19,12 +19,13 @@
 
 import { Module } from '@nestjs/common';
 
+import { MetaAdminController } from './meta-admin.controller';
 import { MetaGraphService } from './meta-graph.service';
 import { MetaOAuthController } from './meta-oauth.controller';
 import { MetaOAuthService } from './meta-oauth.service';
 
 @Module({
-  controllers: [MetaOAuthController],
+  controllers: [MetaOAuthController, MetaAdminController],
   providers: [MetaOAuthService, MetaGraphService],
   exports: [MetaOAuthService, MetaGraphService],
 })
