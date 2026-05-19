@@ -104,6 +104,8 @@ model Tenant {
   leadDocuments               LeadDocument[]
   /// Sprint 13 (D13) — per-lead partner-target rows.
   leadPartnerTargets          LeadPartnerTarget[]
+  /// Sprint M1 — Meta OAuth connections owned by this tenant.
+  metaOAuthConnections        MetaOAuthConnection[]
 
   @@map("tenants")
 }
@@ -937,6 +939,18 @@ model Lead {
   /// partner snapshot. D4.1 only reserves the column.
   partnerVerificationCache Json? @map("partner_verification_cache")
 
+  /// Sprint M1 — Meta-side attribution snapshot, captured from the webhook
+  /// payload at ingest time. Names are denormalised so reports stay
+  /// readable even after a campaign / adset / ad is later renamed or
+  /// archived on Meta's side. All nullable: legacy leads and non-Meta
+  /// sources leave them blank.
+  metaCampaignId   String? @map("meta_campaign_id")
+  metaCampaignName String? @map("meta_campaign_name")
+  metaAdsetId      String? @map("meta_adset_id")
+  metaAdsetName    String? @map("meta_adset_name")
+  metaAdId         String? @map("meta_ad_id")
+  metaAdName       String? @map("meta_ad_name")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1000,6 +1014,9 @@ model Lead {
   // chip-filter "leads at t150 or worse" return without a sort.
   // Inert in D3.1 — no scanner reads it yet.
   @@index([tenantId, slaThreshold, slaDueAt])
+  // Sprint M1 — Meta attribution rollups by campaign and adset.
+  @@index([tenantId, metaCampaignId])
+  @@index([tenantId, metaAdsetId])
   @@map("leads")
 }
 
@@ -2575,19 +2592,45 @@ model MetaLeadSource {
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /// Sprint M1 — optional OAuth connection that fetched this source.
+  /// Null = legacy manual source (kept for back-compat). When set, the
+  /// page id / form id were chosen from a Graph API dropdown, not typed
+  /// by hand; refresh paths can re-fetch page name + form name via the
+  /// connection's token.
+  oauthConnectionId String?              @map("oauth_connection_id") @db.Uuid
+  oauthConnection   MetaOAuthConnection? @relation(fields: [oauthConnectionId], references: [id], onDelete: SetNull)
+
   /// Friendly label shown in admin (e.g. "Cairo — Uber driver page").
   displayName   String  @map("display_name")
   /// Meta Page id receiving the webhook delivery.
   pageId        String  @map("page_id")
+  /// Sprint M1 — fetched-and-cached page name (kept fresh by the
+  /// refresh worker; nullable on legacy manual rows).
+  pageName      String? @map("page_name")
   /// Optional form id (when the same page runs multiple lead forms).
   formId        String? @map("form_id")
+  /// Sprint M1 — fetched-and-cached form name (nullable on legacy rows).
+  formName      String? @map("form_name")
+
+  /// Sprint M1 — operator-facing taxonomy (dropdowns in the new UI).
+  /// `project` groups sources by business line ("Uber Scooter").
+  /// `channel` names the acquisition channel ("Facebook", "Instagram").
+  /// `campaign` is a free-text campaign label (operator-typed; distinct
+  /// from the Meta-side `campaign_id` on each lead — that lives on Lead).
+  project  String? @map("project")
+  channel  String? @map("channel")
+  campaign String? @map("campaign")
+
   /// GET handshake verify token (unique-per-tenant by convention).
   verifyToken   String  @map("verify_token")
   /// Meta App secret for HMAC signature verification.
   appSecret     String? @map("app_secret")
   /// Lead source value written on every ingested lead. Defaults to "meta".
   defaultSource String  @default("meta") @map("default_source")
-  /// Field mapping (Meta form field name → CRM lead field). JSON.
+  /// Field mapping. JSON shape evolved in Sprint M1 — see
+  /// `MetaFieldMappingV2` in apps/api/src/meta/meta-field-mapping.types.ts.
+  /// Old rows with the flat `{ metaKey: leadField }` shape are read via a
+  /// migration helper that normalises to V2 at fetch time.
   fieldMapping  Json    @map("field_mapping")
   isActive      Boolean @default(true) @map("is_active")
 
@@ -2596,6 +2639,11 @@ model MetaLeadSource {
 
   @@unique([tenantId, pageId, formId])
   @@index([tenantId, isActive])
+  @@index([tenantId, oauthConnectionId])
+  @@index([tenantId, project, channel])
+  // Cross-tenant routing indexes (webhook handler queries without tenant context).
+  @@index([pageId, isActive])
+  @@index([verifyToken])
   @@map("meta_lead_sources")
 }
 
@@ -3100,4 +3148,49 @@ model PartnerMilestoneConfig {
   @@unique([partnerSourceId, code])
   @@index([tenantId, partnerSourceId, isActive])
   @@map("partner_milestone_configs")
+}
+
+/// Sprint M1 — long-lived Facebook User Access Token for the OAuth-driven
+/// Meta Lead Ads integration. One row per (tenant, facebookUserId) so a
+/// tenant can have multiple Facebook accounts connected (rare but possible).
+///
+/// Security:
+///   - `accessToken` is the encrypted ciphertext blob, NOT plaintext.
+///     Persist via the same helper used by WhatsAppAccount.accessToken
+///     (`encryptSecret` / `decryptSecret`); never log or return it from
+///     a controller. The service layer decrypts only when making the
+///     outbound call to Graph API.
+///   - `appSecret` is NOT stored here — it's app-level config, kept in
+///     env / secret store, not per-connection.
+///
+/// Lifecycle:
+///   - Long-lived tokens expire after ~60 days; the scheduler should
+///     refresh proactively when `expiresAt` is within 7 days.
+///   - `revokedAt` lets ops disable a connection without deleting it;
+///     the row stays for audit + the relation back from MetaLeadSource.
+model MetaOAuthConnection {
+  id        String @id @default(uuid()) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Facebook user id ("act_...") — stable identifier from Graph API.
+  facebookUserId String  @map("facebook_user_id")
+  /// Snapshotted Facebook display name (refreshed on each /me call).
+  facebookName   String  @map("facebook_name")
+  /// Encrypted long-lived User Access Token. NEVER returned to the UI.
+  accessToken    String  @map("access_token")
+  /// Token expiry from the long-lived exchange response; null = unknown.
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  /// Operator-driven disable without deleting the row (preserves audit).
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  /// Back-relation — the MetaLeadSources wired to this connection.
+  leadSources MetaLeadSource[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, facebookUserId])
+  @@index([tenantId, revokedAt])
+  @@map("meta_oauth_connections")
 }
