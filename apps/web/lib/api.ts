@@ -112,7 +112,12 @@ import type {
   FollowUpActionType,
   FollowUpSummary,
   LeadFollowUp,
+  MetaFieldMappingAny,
+  MetaGraphForm,
+  MetaGraphFormQuestion,
+  MetaGraphPage,
   MetaLeadSource,
+  MetaOAuthConnectionSummary,
   Pipeline,
   PipelineStageRow,
   SendConversationMessageResult,
@@ -2118,8 +2123,16 @@ export interface CreateMetaLeadSourceInput {
   verifyToken: string;
   appSecret?: string | null;
   defaultSource?: LeadSource;
-  fieldMapping: Record<string, string>;
+  /** V1 flat or V2 versioned envelope — the new admin UI emits V2. */
+  fieldMapping: MetaFieldMappingAny;
   isActive?: boolean;
+  // Sprint M2 — OAuth wiring + Graph snapshots + operator taxonomy.
+  oauthConnectionId?: string | null;
+  pageName?: string | null;
+  formName?: string | null;
+  project?: string | null;
+  channel?: string | null;
+  campaign?: string | null;
 }
 
 export const metaLeadSourcesApi = {
@@ -2132,6 +2145,40 @@ export const metaLeadSourcesApi = {
     apiFetch<MetaLeadSource>(`/meta-lead-sources/${id}`, { method: 'PATCH', body: input }),
   remove: (id: string): Promise<void> =>
     apiFetch<void>(`/meta-lead-sources/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Sprint M2 / Phase 3 — Meta OAuth + Graph admin proxy.
+//
+// The OAuth dance itself is a server-side redirect chain
+// (/api/v1/meta/auth/initiate -> Facebook -> /callback). The frontend
+// only needs typed read access for the modal's cascading dropdowns
+// (pages -> forms -> form questions) and the connection picker.
+// ───────────────────────────────────────────────────────────────────────
+
+export const metaAdminApi = {
+  /**
+   * Authorize-URL flavour of /meta/auth/initiate (Phase 2). Returns
+   * the Facebook OAuth dialog URL as JSON so the admin SPA can open
+   * it in a popup with `window.open` — a top-level redirect through
+   * /initiate would also work but couldn't carry the Bearer token.
+   */
+  getAuthorizeUrl: (returnTo: string): Promise<{ authorizeUrl: string }> =>
+    apiFetch<{ authorizeUrl: string }>(
+      `/meta/auth/authorize-url?returnTo=${encodeURIComponent(returnTo)}`,
+    ),
+  listConnections: (): Promise<MetaOAuthConnectionSummary[]> =>
+    apiFetch<MetaOAuthConnectionSummary[]>('/meta/connections'),
+  getPages: (connectionId: string): Promise<MetaGraphPage[]> =>
+    apiFetch<MetaGraphPage[]>(`/meta/pages?connectionId=${encodeURIComponent(connectionId)}`),
+  getForms: (connectionId: string, pageId: string): Promise<MetaGraphForm[]> =>
+    apiFetch<MetaGraphForm[]>(
+      `/meta/forms?connectionId=${encodeURIComponent(connectionId)}&pageId=${encodeURIComponent(pageId)}`,
+    ),
+  getFormQuestions: (connectionId: string, formId: string): Promise<MetaGraphFormQuestion[]> =>
+    apiFetch<MetaGraphFormQuestion[]>(
+      `/meta/form-questions?connectionId=${encodeURIComponent(connectionId)}&formId=${encodeURIComponent(formId)}`,
+    ),
 };
 
 // ───────────────────────────────────────────────────────────────────────

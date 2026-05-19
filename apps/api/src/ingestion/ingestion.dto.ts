@@ -61,11 +61,13 @@ export type CsvImportDto = z.infer<typeof CsvImportSchema>;
 
 // ─── Meta lead-source admin DTOs ───
 
-const FieldMappingSchema = z.record(z.string().min(1)).superRefine((map, ctx) => {
-  // Required: the mapping must produce a "name" and a "phone" field.
-  // We enforce it on the source row, not the incoming Meta payload, so
-  // the admin can configure the mapping ahead of time without knowing
-  // the runtime payload shape.
+/**
+ * V1 — the legacy flat `{ metaKey: leadField }` shape persisted by the
+ * pre-Sprint-M2 admin UI. Kept as an accepted input so old admin
+ * scripts and the legacy editor still POST cleanly; the ingest path
+ * normalises V1 to V2 at read time (see meta-field-mapping.helper).
+ */
+const FieldMappingV1Schema = z.record(z.string().min(1)).superRefine((map, ctx) => {
   const targets = new Set(Object.values(map));
   if (!targets.has('name')) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mapping must define a target "name"' });
@@ -74,6 +76,75 @@ const FieldMappingSchema = z.record(z.string().min(1)).superRefine((map, ctx) =>
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'mapping must define a target "phone"' });
   }
 });
+
+const META_LEAD_FIELD_KEYS = [
+  'name',
+  'phone',
+  'email',
+  'source',
+  'companyId',
+  'countryId',
+] as const;
+const META_CONTACT_FIELD_KEYS = ['displayName', 'language'] as const;
+
+const MetaMappingTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('lead_field'), field: z.enum(META_LEAD_FIELD_KEYS) }),
+  z.object({ kind: z.literal('contact_field'), field: z.enum(META_CONTACT_FIELD_KEYS) }),
+  z.object({ kind: z.literal('custom_field'), customFieldId: z.string().uuid() }),
+  z.object({ kind: z.literal('ignore'), reason: z.string().max(255).optional() }),
+]);
+
+const MetaMappingEntrySchema = z.object({
+  metaKey: z.string().min(1).max(255),
+  metaLabel: z.string().max(255).optional(),
+  target: MetaMappingTargetSchema,
+  transform: z
+    .object({
+      trim: z.boolean().optional(),
+      lowercase: z.boolean().optional(),
+      normaliseE164: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Sprint M2 — versioned mapping shape. Save path for the new
+ * admin UI; carries discriminated targets so the operator can pick
+ * `lead_field`, `contact_field`, `custom_field`, or `ignore` without
+ * the JSON-textarea quirks of V1.
+ *
+ * Same required-target rule as V1: at least one entry must land on
+ * `lead_field.name` and one on `lead_field.phone`. The ingest path
+ * drops events that produce neither, so accepting a mapping that
+ * can't possibly succeed would just shift the failure to runtime.
+ */
+const FieldMappingV2Schema = z
+  .object({
+    version: z.literal(2),
+    entries: z.array(MetaMappingEntrySchema).max(200),
+    strict: z.boolean().optional(),
+  })
+  .superRefine((map, ctx) => {
+    const leadTargets = map.entries
+      .filter((e) => e.target.kind === 'lead_field')
+      .map((e) => (e.target as { kind: 'lead_field'; field: string }).field);
+    if (!leadTargets.includes('name')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'mapping must define a lead_field target "name"',
+        path: ['entries'],
+      });
+    }
+    if (!leadTargets.includes('phone')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'mapping must define a lead_field target "phone"',
+        path: ['entries'],
+      });
+    }
+  });
+
+const FieldMappingSchema = z.union([FieldMappingV2Schema, FieldMappingV1Schema]);
 
 export const CreateMetaLeadSourceSchema = z
   .object({
@@ -85,6 +156,14 @@ export const CreateMetaLeadSourceSchema = z
     defaultSource: z.enum(LEAD_SOURCES).default('meta'),
     fieldMapping: FieldMappingSchema,
     isActive: z.boolean().default(true),
+    // Sprint M2 — optional OAuth wiring + Graph-snapshotted metadata.
+    oauthConnectionId: z.string().uuid().nullable().optional(),
+    pageName: z.string().trim().min(1).max(255).nullable().optional(),
+    formName: z.string().trim().min(1).max(255).nullable().optional(),
+    // Sprint M2 — operator-facing taxonomy (dropdowns in the new UI).
+    project: z.string().trim().min(1).max(120).nullable().optional(),
+    channel: z.string().trim().min(1).max(60).nullable().optional(),
+    campaign: z.string().trim().min(1).max(255).nullable().optional(),
   })
   .strict();
 export type CreateMetaLeadSourceDto = z.infer<typeof CreateMetaLeadSourceSchema>;

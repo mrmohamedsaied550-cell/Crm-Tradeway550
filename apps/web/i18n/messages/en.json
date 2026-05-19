@@ -1034,6 +1034,13 @@
           "label": "Attribution",
           "empty": "No attribution data"
         },
+        "metaAttribution": {
+          "label": "Meta attribution",
+          "campaign": "Campaign",
+          "adSet": "Ad set",
+          "ad": "Ad",
+          "idLabel": "ID"
+        },
         "adminActions": {
           "title": "Admin actions"
         },
@@ -1273,20 +1280,25 @@
     },
     "metaLeadSources": {
       "title": "Meta lead sources",
-      "subtitle": "Map Meta lead-ad pages and forms onto CRM lead fields. The public webhook reads this list at ingest time.",
-      "webhookHint": "Point the Meta lead-gen webhook at /api/v1/webhooks/meta/leadgen — each Page must use the verify token configured below.",
-      "newButton": "New source",
+      "subtitle": "OAuth-connected Meta Lead Ads integrations. Connect a Facebook account, pick the Page and Form, and map fields once — new leads arrive automatically.",
+      "webhookHint": "The public webhook at /api/v1/webhooks/meta/leadgen is auto-wired; no per-Page verify token is required for OAuth-driven sources.",
+      "newButton": "Add new",
       "newTitle": "New Meta lead source",
       "editTitle": "Edit Meta lead source",
       "edit": "Edit",
       "empty": "No Meta lead sources yet",
-      "emptyHint": "Add one for each Meta Page (and optionally a single form) so inbound leads land in the CRM.",
+      "emptyHint": "Connect a Facebook account and pick a Page + Form to start ingesting leads automatically.",
       "created": "Meta lead source created.",
       "updated": "Meta lead source updated.",
       "deleted": "Meta lead source deleted.",
       "confirmDelete": "Delete \"{name}\"? Inbound leads from this Page will stop ingesting.",
       "cols": {
         "name": "Name",
+        "title": "Title",
+        "channel": "Channel",
+        "project": "Project",
+        "formId": "Form ID",
+        "lastActivity": "Last activity",
         "pageIdLabel": "Page",
         "formIdLabel": "Form",
         "source": "Lead source",
@@ -1318,6 +1330,69 @@
         "mappingInvalid": "Field mapping must be valid JSON: an object of string → string.",
         "mappingMissingTargets": "Field mapping must define at least one entry pointing to \"name\" and one to \"phone\".",
         "verifyTokenRequired": "Verify token is required when creating a new source."
+      }
+    },
+    "metaIntegration": {
+      "newTitle": "New Facebook integration",
+      "created": "Meta lead source created.",
+      "connectButton": "Connect with Facebook",
+      "reconnectButton": "Connect a different account",
+      "connectedAs": "Connected as {name}",
+      "steps": {
+        "connect": "Step 1 — Connect with Facebook",
+        "mapping": "Field mapping"
+      },
+      "fields": {
+        "project": "Project",
+        "channel": "Channel",
+        "campaign": "Campaign",
+        "campaignHint": "Operator-facing label. Distinct from Meta's runtime campaign id, which is captured automatically on each ingested lead.",
+        "page": "Page",
+        "form": "Form"
+      },
+      "placeholders": {
+        "project": "Pick a project…",
+        "channel": "Pick a channel…",
+        "campaign": "e.g. Cairo Q2 acquisition",
+        "page": "Pick a Page…",
+        "form": "Pick a form…",
+        "loadingPages": "Loading pages…",
+        "loadingForms": "Loading forms…"
+      },
+      "hints": {
+        "completeStepsAbove": "Finish the steps above to start mapping fields."
+      },
+      "mapping": {
+        "subtitle": "Map each Meta question to a CRM field.",
+        "loading": "Loading form questions…",
+        "empty": "This form has no questions yet.",
+        "metaQuestion": "Meta question",
+        "crmField": "CRM field",
+        "mapToLabel": "Map to",
+        "requiredTargetsHint": "At least one question must map to lead name and one to lead phone.",
+        "targets": {
+          "ignore": "(ignore)",
+          "lead_field_name": "Lead: Name",
+          "lead_field_phone": "Lead: Phone",
+          "lead_field_email": "Lead: Email",
+          "lead_field_source": "Lead: Source",
+          "lead_field_companyId": "Lead: Company",
+          "lead_field_countryId": "Lead: Country",
+          "contact_field_displayName": "Contact: Display name",
+          "contact_field_language": "Contact: Language"
+        }
+      },
+      "oauthCallback": {
+        "successTitle": "Connected to Facebook",
+        "successBody": "You can close this window — the CRM has your connection.",
+        "autoClose": "This window will close automatically.",
+        "errorTitle": "Connection failed",
+        "errorBody": "No connection id was returned. Please try again from the CRM.",
+        "errorBodyWith": "Facebook returned an error: {error}",
+        "closeButton": "Close"
+      },
+      "errors": {
+        "popupBlocked": "Your browser blocked the Facebook popup. Allow popups for this site and try again."
       }
     },
     "distributionPage": {

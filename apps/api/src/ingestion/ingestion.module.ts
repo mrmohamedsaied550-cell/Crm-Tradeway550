@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { MetaModule } from '../meta/meta.module';
 import { LeadImportController } from './lead-import.controller';
 import { LeadIngestionService } from './lead-ingestion.service';
 import { MetaLeadSourcesController } from './meta-lead-sources.controller';
@@ -24,6 +25,7 @@ import { MetaLeadgenController } from './meta-leadgen.controller';
  * provided tenant-wide via @Global() so no explicit imports here.
  */
 @Module({
+  imports: [MetaModule],
   controllers: [LeadImportController, MetaLeadSourcesController, MetaLeadgenController],
   providers: [LeadIngestionService, MetaLeadSourcesService],
   exports: [LeadIngestionService, MetaLeadSourcesService],
