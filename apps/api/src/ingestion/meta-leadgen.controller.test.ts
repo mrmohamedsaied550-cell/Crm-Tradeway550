@@ -19,6 +19,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { Request } from 'express';
 
 import type { LeadSource } from '../crm/pipeline.registry';
+import type { MetaGraphService } from '../meta/meta-graph.service';
 import type { LeadIngestionService } from './lead-ingestion.service';
 import type { MetaLeadSourcesService } from './meta-lead-sources.service';
 import { MetaLeadgenController } from './meta-leadgen.controller';
@@ -33,6 +34,8 @@ interface FakeSource {
   defaultSource: string;
   fieldMapping: Record<string, string>;
   isActive: boolean;
+  /** Sprint M2 — when null, the controller takes the legacy inline path. */
+  oauthConnectionId: string | null;
 }
 
 function makeSource(overrides: Partial<FakeSource> = {}): FakeSource {
@@ -46,6 +49,7 @@ function makeSource(overrides: Partial<FakeSource> = {}): FakeSource {
     defaultSource: 'meta',
     fieldMapping: { full_name: 'name', phone_number: 'phone', email: 'email' },
     isActive: true,
+    oauthConnectionId: null,
     ...overrides,
   };
 }
@@ -90,8 +94,20 @@ function buildController(opts: {
     },
   } as unknown as LeadIngestionService;
 
+  // The legacy inline-path tests never call into Graph (oauthConnectionId
+  // is null on the fixtures), so a throwing stub is enough to assert that
+  // the controller does not take the OAuth branch when it shouldn't.
+  const graphStub = {
+    getLeadData: () => {
+      throw new Error('unexpected MetaGraphService.getLeadData call');
+    },
+    getAttributionNames: () => {
+      throw new Error('unexpected MetaGraphService.getAttributionNames call');
+    },
+  } as unknown as MetaGraphService;
+
   return {
-    controller: new MetaLeadgenController(sourcesStub, ingestionStub),
+    controller: new MetaLeadgenController(sourcesStub, ingestionStub, graphStub),
     ingestCalls,
   };
 }

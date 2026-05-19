@@ -19,6 +19,21 @@ import { CsvParseError, parseCsv } from './csv.util';
 import type { CsvImportDto } from './ingestion.dto';
 
 /**
+ * Sprint M2 — flat Meta attribution inputs persisted to the
+ * `leads.meta_*` columns. Names are snapshotted at ingest from the
+ * Graph API (campaign / adset / ad), so reports stay readable after
+ * a later rename or archival on Meta's side.
+ */
+export interface MetaAttributionInput {
+  campaignId: string;
+  campaignName: string;
+  adsetId: string;
+  adsetName: string;
+  adId: string;
+  adName: string;
+}
+
+/**
  * P2-06 — bulk + single lead ingestion.
  *
  * Two callers:
@@ -279,6 +294,15 @@ export class LeadIngestionService {
      * audit payload.
      */
     attribution?: AttributionInput | null;
+    /**
+     * Sprint M2 — flat Meta attribution snapshot (six new columns on
+     * `leads`). Populated only by the OAuth-driven webhook path,
+     * which fetches names via Graph at ingest time. Null for legacy
+     * inline-payload sources (no OAuth connection) and for non-Meta
+     * triggers. Stored alongside the JSON `attribution` (both
+     * coexist for backward compat).
+     */
+    metaAttribution?: MetaAttributionInput | null;
   }): Promise<
     | { kind: 'created'; id: string }
     | { kind: 'reactivated'; id: string }
@@ -339,6 +363,8 @@ export class LeadIngestionService {
         actorUserId: input.actorUserId ?? null,
         // Phase A — A4: structured attribution from the Meta event.
         attribution: input.attribution ?? null,
+        // Sprint M2 — six flat Meta attribution columns (OAuth path only).
+        metaAttribution: input.metaAttribution ?? null,
       });
       // D2.3 — keep the audit verb stable for the happy path
       // (`lead.ingest.meta` for both created + reactivated since
@@ -411,6 +437,12 @@ export class LeadIngestionService {
        * repeating the source-mirroring logic.
        */
       attribution?: AttributionInput | null;
+      /**
+       * Sprint M2 — flat Meta attribution columns. Only the Meta
+       * webhook OAuth path supplies this; CSV imports and the legacy
+       * inline path leave it null.
+       */
+      metaAttribution?: MetaAttributionInput | null;
     },
   ): Promise<
     | { kind: 'created'; id: string }
@@ -608,6 +640,18 @@ export class LeadIngestionService {
         slaDueAt,
         slaStatus,
         ...attemptFields,
+        // Sprint M2 — six flat Meta attribution columns. Populated
+        // only on the OAuth webhook path; otherwise null so the JSON
+        // `attribution` field above remains the single source of
+        // truth for legacy / inline ingest.
+        ...(input.metaAttribution && {
+          metaCampaignId: input.metaAttribution.campaignId,
+          metaCampaignName: input.metaAttribution.campaignName,
+          metaAdsetId: input.metaAttribution.adsetId,
+          metaAdsetName: input.metaAttribution.adsetName,
+          metaAdId: input.metaAttribution.adId,
+          metaAdName: input.metaAttribution.adName,
+        }),
       },
       select: { id: true, attemptIndex: true },
     });
