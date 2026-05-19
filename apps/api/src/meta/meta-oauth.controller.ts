@@ -58,6 +58,27 @@ export class MetaOAuthController {
     res.redirect(302, url);
   }
 
+  /**
+   * Sprint M2 / Phase 3 — same URL builder as /initiate, but returns
+   * JSON so the admin SPA can fetch it with a Bearer token and then
+   * `window.open` the result in a popup. A top-level navigation to
+   * /initiate would work too, but the Bearer token can't ride along
+   * on a `window.open` navigation (cookies aren't used by this CRM),
+   * so the popup flow needs this JSON variant.
+   */
+  @Get('authorize-url')
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability('meta.leadsource.write')
+  @ApiOperation({ summary: 'Return the Meta OAuth dialog URL as JSON' })
+  getAuthorizeUrl(@Query('returnTo') returnTo?: string): { authorizeUrl: string } {
+    const tenantId = requireTenantId();
+    const authorizeUrl = this.oauth.buildAuthorizeUrl({
+      tenantId,
+      ...(typeof returnTo === 'string' && returnTo.length > 0 && { returnTo }),
+    });
+    return { authorizeUrl };
+  }
+
   @Get('callback')
   @ApiOperation({ summary: 'Meta OAuth callback — exchanges the code for a long-lived token' })
   async callback(

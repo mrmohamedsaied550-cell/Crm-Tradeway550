@@ -54,6 +54,7 @@ import {
   LastActivityCard,
   SlaCard,
 } from '@/components/admin/lead-detail/sidebar-cards';
+import { LeadAttributionCard } from '@/components/admin/lead-detail/lead-attribution-card';
 import { SnoozeModal } from '@/components/agent/snooze-modal';
 import {
   ApiError,
@@ -1051,6 +1052,21 @@ export default function LeadDetailPage(): JSX.Element {
               fallbackSource={lead.source}
               label={tDetail('attribution.label')}
               emptyLabel={tDetail('attribution.empty')}
+            />
+
+            {/* Sprint M2 / Phase 3 — Meta attribution snapshot (six flat
+              columns). Renders null when none of the six are populated
+              so non-Meta leads (and legacy Meta leads from the inline
+              webhook path) don't get an empty card. */}
+            <LeadAttributionCard
+              lead={lead}
+              label={tDetail('metaAttribution.label')}
+              labels={{
+                campaign: tDetail('metaAttribution.campaign'),
+                adSet: tDetail('metaAttribution.adSet'),
+                ad: tDetail('metaAttribution.ad'),
+                idLabel: tDetail('metaAttribution.idLabel'),
+              }}
             />
 
             {/* Phase D2 — D2.5: returning-lead context. Renders nothing

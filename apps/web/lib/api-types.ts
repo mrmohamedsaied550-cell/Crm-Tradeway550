@@ -760,6 +760,18 @@ export interface Lead {
   previousLeadId?: string | null;
   reactivatedAt?: string | null;
   reactivationRule?: string | null;
+  /**
+   * Sprint M2 — flat Meta attribution columns. Populated only when the
+   * lead arrived via an OAuth-configured Meta Lead Ads source; the
+   * names are snapshotted at ingest so reports stay readable after a
+   * later rename or archival on Meta's side. Null otherwise.
+   */
+  metaCampaignId?: string | null;
+  metaCampaignName?: string | null;
+  metaAdsetId?: string | null;
+  metaAdsetName?: string | null;
+  metaAdId?: string | null;
+  metaAdName?: string | null;
 }
 
 export interface LeadActivity {
@@ -1345,12 +1357,13 @@ export const LIFECYCLE_CATEGORIES: ReadonlyArray<LifecycleCategory> = [
   'dft',
 ];
 
-// ───── Meta lead-ad sources (P2-06) ─────
+// ───── Meta lead-ad sources (P2-06 + Sprint M2) ─────
 
 /**
  * Routing config for a Facebook Page (or Page+Form) the tenant runs
  * lead ads on. `appSecret` is intentionally never returned to the
- * client — the API exposes only the public-facing fields.
+ * client — the API exposes only the public-facing fields. Sprint M2
+ * added OAuth wiring + Graph snapshots + an operator taxonomy.
  */
 export interface MetaLeadSource {
   id: string;
@@ -1360,10 +1373,79 @@ export interface MetaLeadSource {
   formId: string | null;
   verifyToken: string;
   defaultSource: LeadSource;
-  fieldMapping: Record<string, string>;
+  /** V1 flat (`{ metaKey: leadField }`) or V2 versioned envelope. */
+  fieldMapping: MetaFieldMappingAny;
   isActive: boolean;
+  /** Sprint M2 — null on legacy hand-configured rows. */
+  oauthConnectionId: string | null;
+  pageName: string | null;
+  formName: string | null;
+  project: string | null;
+  channel: string | null;
+  campaign: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ───── Field mapping shapes ─────────────────────────────────────────
+
+export type MetaLeadFieldKey = 'name' | 'phone' | 'email' | 'source' | 'companyId' | 'countryId';
+
+export type MetaContactFieldKey = 'displayName' | 'language';
+
+export type MetaMappingTarget =
+  | { kind: 'lead_field'; field: MetaLeadFieldKey }
+  | { kind: 'contact_field'; field: MetaContactFieldKey }
+  | { kind: 'custom_field'; customFieldId: string }
+  | { kind: 'ignore'; reason?: string };
+
+export interface MetaMappingEntry {
+  metaKey: string;
+  metaLabel?: string;
+  target: MetaMappingTarget;
+  transform?: {
+    trim?: boolean;
+    lowercase?: boolean;
+    normaliseE164?: boolean;
+  };
+}
+
+export interface MetaFieldMappingV2 {
+  version: 2;
+  entries: MetaMappingEntry[];
+  strict?: boolean;
+}
+
+export type MetaFieldMappingV1 = Record<string, string>;
+
+export type MetaFieldMappingAny = MetaFieldMappingV2 | MetaFieldMappingV1;
+
+// ───── Meta OAuth connections + Graph lookups (Sprint M2 / Phase 3) ─
+
+export interface MetaOAuthConnectionSummary {
+  id: string;
+  facebookUserId: string;
+  facebookName: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+}
+
+export interface MetaGraphPage {
+  id: string;
+  name: string;
+}
+
+export interface MetaGraphForm {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface MetaGraphFormQuestion {
+  key: string;
+  label: string;
+  /** `FULL_NAME` / `PHONE` / `EMAIL` / `CUSTOM` / … */
+  type: string;
 }
 
 // ───── Distribution Engine (Phase 1A — A8) ─────
