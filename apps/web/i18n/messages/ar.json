@@ -1034,6 +1034,13 @@
           "label": "الإسناد",
           "empty": "لا توجد بيانات إسناد"
         },
+        "metaAttribution": {
+          "label": "إسناد Meta",
+          "campaign": "الحملة",
+          "adSet": "المجموعة الإعلانية",
+          "ad": "الإعلان",
+          "idLabel": "المعرّف"
+        },
         "adminActions": {
           "title": "إجراءات إدارية"
         },
@@ -1287,6 +1294,11 @@
       "confirmDelete": "حذف \"{name}\"؟ ستتوقف العملاء الجدد من هذه الصفحة.",
       "cols": {
         "name": "الاسم",
+        "title": "العنوان",
+        "channel": "القناة",
+        "project": "المشروع",
+        "formId": "معرّف النموذج",
+        "lastActivity": "آخر نشاط",
         "pageIdLabel": "الصفحة",
         "formIdLabel": "النموذج",
         "source": "مصدر العميل",
@@ -1318,6 +1330,69 @@
         "mappingInvalid": "ربط الحقول يجب أن يكون JSON صالح بصيغة كائن نصّي → نصّي.",
         "mappingMissingTargets": "يجب أن يحدّد ربط الحقول مدخلاً واحداً على الأقل يشير إلى \"name\" وآخر إلى \"phone\".",
         "verifyTokenRequired": "رمز التحقق مطلوب عند إنشاء مصدر جديد."
+      }
+    },
+    "metaIntegration": {
+      "newTitle": "تكامل Facebook جديد",
+      "created": "تم إنشاء مصدر Meta.",
+      "connectButton": "اتصال عبر Facebook",
+      "reconnectButton": "اتصل بحساب آخر",
+      "connectedAs": "متّصل بحساب {name}",
+      "steps": {
+        "connect": "الخطوة 1 — الاتصال بحساب Facebook",
+        "mapping": "ربط الحقول"
+      },
+      "fields": {
+        "project": "المشروع",
+        "channel": "القناة",
+        "campaign": "الحملة",
+        "campaignHint": "وصف داخلي للحملة. يختلف عن campaign_id الذي يلتقطه النظام تلقائياً مع كل عميل.",
+        "page": "الصفحة",
+        "form": "النموذج"
+      },
+      "placeholders": {
+        "project": "اختر مشروعاً…",
+        "channel": "اختر قناة…",
+        "campaign": "مثال: القاهرة — جذب الربع الثاني",
+        "page": "اختر صفحة…",
+        "form": "اختر نموذجاً…",
+        "loadingPages": "جاري تحميل الصفحات…",
+        "loadingForms": "جاري تحميل النماذج…"
+      },
+      "hints": {
+        "completeStepsAbove": "أكمل الخطوات أعلاه لبدء ربط الحقول."
+      },
+      "mapping": {
+        "subtitle": "اربط كل سؤال من Meta بحقل في CRM.",
+        "loading": "جاري تحميل أسئلة النموذج…",
+        "empty": "هذا النموذج لا يحتوي أي أسئلة.",
+        "metaQuestion": "سؤال Meta",
+        "crmField": "حقل CRM",
+        "mapToLabel": "اربط بـ",
+        "requiredTargetsHint": "يجب ربط سؤال واحد على الأقل باسم العميل وآخر بهاتفه.",
+        "targets": {
+          "ignore": "(تجاهل)",
+          "lead_field_name": "العميل: الاسم",
+          "lead_field_phone": "العميل: الهاتف",
+          "lead_field_email": "العميل: البريد",
+          "lead_field_source": "العميل: المصدر",
+          "lead_field_companyId": "العميل: الشركة",
+          "lead_field_countryId": "العميل: الدولة",
+          "contact_field_displayName": "جهة الاتصال: الاسم المعروض",
+          "contact_field_language": "جهة الاتصال: اللغة"
+        }
+      },
+      "oauthCallback": {
+        "successTitle": "تم الاتصال بـ Facebook",
+        "successBody": "يمكنك إغلاق هذه النافذة — تم حفظ الاتصال في CRM.",
+        "autoClose": "ستُغلق النافذة تلقائياً.",
+        "errorTitle": "فشل الاتصال",
+        "errorBody": "لم يتم إرجاع معرّف اتصال. حاول مجدداً من CRM.",
+        "errorBodyWith": "أعاد Facebook خطأ: {error}",
+        "closeButton": "إغلاق"
+      },
+      "errors": {
+        "popupBlocked": "متصفّحك حجب نافذة Facebook المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع وأعد المحاولة."
       }
     },
     "distributionPage": {
