@@ -13,10 +13,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * Phase B — B1: secondary cards on the lead-detail right panel.
- *
- * All three are read-only summaries that share the compact card
- * styling so the right column reads as a vertical at-a-glance stack
- * with NextActionCard at the top getting the visual weight.
+ * Redesigned to match the mockup: left border accents with warmer colors.
  */
 
 function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
@@ -27,15 +24,21 @@ function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
 
 interface SlaCardProps {
   status: SlaStatus;
-  /** Pre-formatted relative due-time, eg. "in 12 minutes" or null. */
   dueRelative: string | null;
   label: string;
   dueLabel: string;
 }
 
 export function SlaCard({ status, dueRelative, label, dueLabel }: SlaCardProps): JSX.Element {
+  const borderColor =
+    status === 'breached'
+      ? 'border-l-red-400'
+      : status === 'paused'
+        ? 'border-l-gray-400'
+        : 'border-l-green-400';
+
   return (
-    <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+    <section className={cn('rounded-lg border border-l-4 bg-white p-4 shadow-sm transition-shadow hover:shadow-md', borderColor)}>
       <header className="mb-2 flex items-center gap-2">
         <ShieldCheck className="h-4 w-4 text-brand-700" aria-hidden="true" />
         <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">{label}</h3>
@@ -54,11 +57,8 @@ export function SlaCard({ status, dueRelative, label, dueLabel }: SlaCardProps):
 
 interface LastActivityCardProps {
   activity: LeadActivity | null;
-  /** Pre-formatted relative time, eg. "2 hours ago". */
   relativeTime: string | null;
-  /** Pre-resolved author label ("System" or user name). */
   authorLabel: string;
-  /** Pre-formatted "what happened" — handles stage_change, assignment, etc. */
   summary: string | null;
   label: string;
   emptyLabel: string;
@@ -75,9 +75,9 @@ export function LastActivityCard({
   typeLabel,
 }: LastActivityCardProps): JSX.Element {
   return (
-    <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+    <section className="rounded-lg border border-l-4 border-l-amber-400 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
       <header className="mb-2 flex items-center gap-2">
-        <Activity className="h-4 w-4 text-brand-700" aria-hidden="true" />
+        <Activity className="h-4 w-4 text-amber-600" aria-hidden="true" />
         <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">{label}</h3>
       </header>
       {!activity ? (
@@ -109,7 +109,6 @@ export function LastActivityCard({
 
 interface AttributionCardProps {
   attribution: AttributionPayload | null;
-  /** Fallback when attribution is null but lead.source is set. */
   fallbackSource: string;
   label: string;
   emptyLabel: string;
@@ -121,9 +120,6 @@ export function AttributionCard({
   label,
   emptyLabel,
 }: AttributionCardProps): JSX.Element {
-  // Collapse the attribution payload to a list of "key: value" rows,
-  // skipping anything empty so the card stays compact when the lead
-  // has only the bare source.
   const rows: Array<{ key: string; value: string }> = [];
   const a = attribution;
   if (a?.source) rows.push({ key: 'source', value: a.source });
@@ -139,9 +135,9 @@ export function AttributionCard({
   if (a?.utm?.campaign) rows.push({ key: 'utm.campaign', value: a.utm.campaign });
 
   return (
-    <section className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-card">
+    <section className="rounded-lg border border-l-4 border-l-blue-400 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
       <header className="mb-2 flex items-center gap-2">
-        <Megaphone className="h-4 w-4 text-brand-700" aria-hidden="true" />
+        <Megaphone className="h-4 w-4 text-blue-600" aria-hidden="true" />
         <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-tertiary">{label}</h3>
       </header>
       {rows.length === 0 ? (

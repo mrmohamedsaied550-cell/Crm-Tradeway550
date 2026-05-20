@@ -124,12 +124,12 @@ export function NextActionCard({
   return (
     <section
       className={cn(
-        'rounded-lg border-2 p-5 shadow-card transition-colors',
+        'rounded-lg border border-l-4 p-5 shadow-sm transition-shadow hover:shadow-md',
         overdue
-          ? 'border-status-breach/60 bg-status-breach/5'
+          ? 'border-l-red-400 bg-red-50/60'
           : tone === 'soon'
-            ? 'border-status-warning/50 bg-status-warning/5'
-            : 'border-brand-200 bg-brand-50/40',
+            ? 'border-l-orange-400 bg-orange-50/60'
+            : 'border-l-blue-400 bg-blue-50/50',
       )}
     >
       <header className="mb-2 flex items-center justify-between gap-2">

@@ -21,6 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -76,18 +77,14 @@ import type {
   LeadStageCode,
   LostReason,
   PipelineStage,
-  SlaStatus,
+
   Team,
 } from '@/lib/api-types';
 import { hasCapability } from '@/lib/auth';
 import { readListContext, type NavigatorPosition } from '@/lib/lead-list-context';
 import { cn } from '@/lib/utils';
 
-function slaTone(s: SlaStatus): 'healthy' | 'warning' | 'breach' | 'inactive' {
-  if (s === 'breached') return 'breach';
-  if (s === 'paused') return 'inactive';
-  return 'healthy';
-}
+
 
 /** Compact relative-time formatter without bringing in date-fns. */
 function formatRelative(target: Date, now: Date, locale: string): string {
@@ -737,81 +734,96 @@ export default function LeadDetailPage(): JSX.Element {
         <ListNavigator position={navigatorPos} />
       </div>
 
-      {/* ───── Header card (B1) ─────
-          Identity + at-a-glance state in one compact card so the
-          page's first 100px tell the agent who they're dealing with
-          and where the lead stands. Quick actions sit right below
-          and Next Action is the first thing in the right column. */}
-      <section className="rounded-lg border border-surface-border bg-surface-card p-5 shadow-card">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h1 className="truncate text-2xl font-semibold leading-tight text-ink-primary">
-              {lead.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-secondary">
-              <FieldGated resource="lead" field="phone">
-                <a
-                  href={`tel:${lead.phone}`}
-                  className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
-                >
-                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-                  {lead.phone}
-                </a>
-              </FieldGated>
-              {lead.email ? (
-                <FieldGated resource="lead" field="email">
+      {/* ═══════ GLANCE ZONE — Mockup-aligned header ═══════ */}
+      <section className="rounded-lg border border-surface-border bg-white p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          {/* Left: Avatar + Identity */}
+          <div className="flex items-center gap-4">
+            <Avatar name={lead.name} src={null} size="lg" className="!h-14 !w-14 !text-xl" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="text-xl font-bold text-ink-primary">
+                  {lead.name}
+                </h1>
+                <LifecycleBadge state={lead.lifecycleState} />
+                <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
+                <StageStatusSlot status={lead.currentStageStatus?.status ?? null} />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-secondary mt-1">
+                <FieldGated resource="lead" field="phone">
                   <a
-                    href={`mailto:${lead.email}`}
-                    className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                    href={`tel:${lead.phone}`}
+                    className="inline-flex items-center gap-1 font-mono text-brand-700 hover:underline"
                   >
-                    <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                    {lead.email}
+                    <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                    {lead.phone}
                   </a>
                 </FieldGated>
-              ) : null}
-              <span className="inline-flex items-center gap-1">
-                <UserCog className="h-3.5 w-3.5 text-ink-tertiary" aria-hidden="true" />
-                {assignee ? (
-                  <span>
-                    <span className="font-medium text-ink-primary">{assignee.name}</span>
-                    {assigneeTeam ? (
-                      <span className="text-ink-tertiary"> · {assigneeTeam.name}</span>
-                    ) : null}
-                  </span>
-                ) : (
-                  <span className="text-ink-tertiary">{tDetail('unassigned')}</span>
-                )}
-              </span>
-              <span className="text-ink-tertiary">
-                {tDetail('createdLabel')}: {createdAtRelative}
-              </span>
+                {lead.email ? (
+                  <FieldGated resource="lead" field="email">
+                    <a
+                      href={`mailto:${lead.email}`}
+                      className="inline-flex items-center gap-1 text-brand-700 hover:underline"
+                    >
+                      <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                      {lead.email}
+                    </a>
+                  </FieldGated>
+                ) : null}
+                <span className="inline-flex items-center gap-1">
+                  <UserCog className="h-3.5 w-3.5 text-ink-tertiary" aria-hidden="true" />
+                  {assignee ? (
+                    <span>
+                      <span className="font-medium text-ink-primary">{assignee.name}</span>
+                      {assigneeTeam ? (
+                        <span className="text-ink-tertiary"> · {assigneeTeam.name}</span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="text-ink-tertiary">{tDetail('unassigned')}</span>
+                  )}
+                </span>
+                <span className="text-ink-tertiary">
+                  {tDetail('createdLabel')}: {createdAtRelative}
+                </span>
+              </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <LifecycleBadge state={lead.lifecycleState} />
-            <Badge tone={lead.stage.isTerminal ? 'inactive' : 'info'}>{lead.stage.name}</Badge>
-            {/* Sprint 1.C — current stage-specific status (formerly
-                a render-null placeholder). Renders the active
-                status code humanised, or nothing when no status
-                is set. Edit surface is the lower picker. */}
-            <StageStatusSlot status={lead.currentStageStatus?.status ?? null} />
-            <Badge tone={slaTone(lead.slaStatus)}>{lead.slaStatus}</Badge>
+
+          {/* Right: KPI Chips */}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* SLA */}
+            <div className={`border rounded-lg px-3 py-2 text-center ${
+              lead.slaStatus === 'breached'
+                ? 'bg-red-50 border-red-200'
+                : lead.slaStatus === 'paused'
+                  ? 'bg-gray-50 border-gray-200'
+                  : 'bg-green-50 border-green-200'
+            }`}>
+              <div className={`text-[10px] font-semibold uppercase tracking-wider ${
+                lead.slaStatus === 'breached' ? 'text-red-600' : lead.slaStatus === 'paused' ? 'text-gray-500' : 'text-green-600'
+              }`}>SLA</div>
+              <div className={`text-sm font-bold ${
+                lead.slaStatus === 'breached' ? 'text-red-700' : lead.slaStatus === 'paused' ? 'text-gray-600' : 'text-green-700'
+              }`}>{lead.slaStatus}</div>
+            </div>
+            {/* Days in Stage */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
+              <div className="text-[10px] text-amber-600 font-semibold uppercase tracking-wider">In Stage</div>
+              <div className="text-sm font-bold text-amber-700">{createdAtRelative}</div>
+            </div>
             {isConverted ? (
-              <Badge tone="healthy">
-                <Trophy className="me-1 inline h-3 w-3" aria-hidden="true" />
-                {tDetail('captainBadge')}
-              </Badge>
+              <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-center">
+                <div className="text-[10px] text-green-600 font-semibold uppercase tracking-wider">Captain</div>
+                <div className="text-sm font-bold text-green-700">
+                  <Trophy className="inline h-4 w-4" aria-hidden="true" /> ✓
+                </div>
+              </div>
             ) : null}
           </div>
         </div>
-        {/* Sprint 1.C — Captain Masr lifecycle Journey Bar. Reads
-            `lead.stage.lifecycleCategory` (exposed by Sprint 1.B).
-            Renders the 4-step journey with the active step in the
-            lifecycle palette; when the stage isn't classified yet
-            the bar shows the empty-state hint and all steps appear
-            neutral. Sits under the badge row inside the header
-            card so the journey reads as part of "who this lead
-            is" rather than competing with the page chrome. */}
+
+        {/* Pipeline Journey Bar */}
         <div className="mt-4 border-t border-surface-border pt-4">
           <JourneyBar current={lead.stage.lifecycleCategory ?? null} />
         </div>
@@ -1507,7 +1519,7 @@ function QuickActionsBar({
   }, [stageMenuOpen, setStageMenuOpen]);
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-surface-card p-3 shadow-card">
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white p-3 shadow-sm">
       {/* Sprint 2.B — unified Add Action entry. First button so it
           reads as the primary path for any lead update; the
           existing call / note / follow-up buttons remain as quick

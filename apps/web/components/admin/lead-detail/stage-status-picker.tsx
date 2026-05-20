@@ -2,51 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { ListChecks } from 'lucide-react';
+import { ChevronRight, ListChecks } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Field, Select, Textarea } from '@/components/ui/input';
+import { Field, Textarea } from '@/components/ui/input';
 import { Notice } from '@/components/ui/notice';
 import { useToast } from '@/components/ui/toast';
 import { ApiError, leadsApi } from '@/lib/api';
 import { hasCapability } from '@/lib/auth';
 import type { StageStatusesResponse } from '@/lib/api-types';
+import { cn } from '@/lib/utils';
 
 /**
  * Phase D3 — D3.3: stage-specific status picker.
- *
- * Renders near the top of the Lead Detail card stack so the agent
- * sees the current stage status before any other context, and can
- * pick / change it without scrolling.
- *
- * Visibility:
- *   - Hidden entirely if the user lacks `lead.stage.status.write`.
- *     Read-only viewers of the lead see the current-status badge
- *     elsewhere (the lead header — D3.7 polish); the picker is
- *     write-side.
- *   - When the stage has no `allowedStatuses` configured, the
- *     picker renders a subtle hint instead of a disabled dropdown
- *     so an admin who hasn't filled in the catalogue yet doesn't
- *     leak a useless control to agents.
- *
- * UX:
- *   - Current status is shown as a badge above the form. The form
- *     itself is always visible (so the agent can change the status,
- *     not just set it once).
- *   - Save button disabled until a status is picked AND it differs
- *     from the current one (so an accidental double-click doesn't
- *     spam an identical row into the timeline).
- *   - Notes are optional, max 1000 chars (server-enforced).
- *   - Locale-aware labels: `labelAr` is rendered in RTL contexts
- *     verbatim — the dropdown is locale-bound at render time.
+ * Redesigned to match the mockup: gradient card with Stage → Status
+ * display and clickable status chips.
  */
 export function StageStatusPicker({
   leadId,
-  /** Increment when a parent action mutates the lead (stage move,
-   *  reactivation, …) so the picker re-fetches its catalogue + history. */
   refreshKey,
-  /** Notify the parent that the lead detail data is stale. */
   onChanged,
 }: {
   leadId: string;
@@ -54,7 +28,6 @@ export function StageStatusPicker({
   onChanged?: () => void;
 }): JSX.Element | null {
   const t = useTranslations('admin.leads.detail.stageStatus');
-  const tCommon = useTranslations('admin.common');
   const locale = useLocale();
   const { toast } = useToast();
 
@@ -73,8 +46,6 @@ export function StageStatusPicker({
     try {
       const result = await leadsApi.getStageStatuses(leadId);
       setData(result);
-      // Reset form state on reload so a stage change doesn't carry
-      // a stale draft over.
       setPicked('');
       setNotes('');
     } catch (err) {
@@ -99,11 +70,11 @@ export function StageStatusPicker({
   }, [current, allowedStatuses, locale]);
 
   if (!canWrite) return null;
-  if (loading && !data) return null; // silent first-load skeleton — keeps the card rail clean
+  if (loading && !data) return null;
 
+  const hasCatalogue = allowedStatuses.length > 0;
   const isUnchanged =
     picked === '' || (current?.status === picked && (notes ?? '') === (current?.notes ?? ''));
-  const hasCatalogue = allowedStatuses.length > 0;
 
   async function onSave(): Promise<void> {
     if (!picked) return;
@@ -131,59 +102,97 @@ export function StageStatusPicker({
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-surface-border bg-surface-card p-3 shadow-sm">
-      <header className="flex items-center justify-between gap-2">
-        <h3 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+    <section className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 shadow-sm">
+      {/* Header: Stage → Status */}
+      <header className="flex items-center justify-between gap-2 mb-3">
+        <h3 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
           <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />
           {t('title')}
         </h3>
-        {currentLabel ? (
-          <Badge tone="info">{currentLabel}</Badge>
-        ) : (
-          <span className="text-[11px] italic text-ink-tertiary">{t('none')}</span>
-        )}
       </header>
 
-      {data?.stage ? (
-        <p className="text-[11px] text-ink-tertiary">{t('forStage', { stage: data.stage.name })}</p>
-      ) : null}
+      {/* Stage → Status display */}
+      <div className="flex items-center gap-3 mb-3">
+        {data?.stage ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Stage:</span>
+              <span className="text-sm font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded-lg">
+                {data.stage.name}
+              </span>
+            </div>
+            <ChevronRight className="h-4 w-4 text-gray-300" aria-hidden="true" />
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Status:</span>
+              {currentLabel ? (
+                <span className="text-sm font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-lg">
+                  {currentLabel}
+                </span>
+              ) : (
+                <span className="text-sm italic text-gray-400">{t('none')}</span>
+              )}
+            </div>
+          </>
+        ) : null}
+      </div>
 
       {!hasCatalogue ? (
         <Notice tone="info">{t('noCatalogue')}</Notice>
       ) : (
         <>
-          <Field label={t('pickLabel')}>
-            <Select
-              value={picked}
-              onChange={(e) => setPicked(e.target.value)}
-              disabled={submitting}
-            >
-              <option value="">{tCommon('select')}</option>
-              {allowedStatuses.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {locale === 'ar' ? s.labelAr : s.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label={t('notesLabel')} hint={t('notesHint')}>
-            <Textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={1000}
-              disabled={submitting}
-            />
-          </Field>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => void onSave()}
-            loading={submitting}
-            disabled={isUnchanged || submitting}
-          >
-            {t('saveCta')}
-          </Button>
+          {/* Status chips — clickable pills */}
+          <div className="flex items-center gap-1.5 flex-wrap mb-3">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider mr-1">
+              Available:
+            </span>
+            {allowedStatuses.map((s) => {
+              const label = locale === 'ar' ? s.labelAr : s.label;
+              const isActive = current?.status === s.code;
+              const isPicked = picked === s.code;
+              return (
+                <button
+                  key={s.code}
+                  type="button"
+                  onClick={() => setPicked(s.code)}
+                  disabled={submitting}
+                  className={cn(
+                    'text-[11px] px-2.5 py-1 rounded-full border transition-all',
+                    isActive && !isPicked
+                      ? 'bg-blue-600 text-white border-blue-600 font-semibold'
+                      : isPicked
+                        ? 'bg-indigo-600 text-white border-indigo-600 font-semibold ring-2 ring-indigo-300'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50',
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Notes field — only show when a status is picked */}
+          {picked ? (
+            <div className="flex flex-col gap-2">
+              <Field label={t('notesLabel')} hint={t('notesHint')}>
+                <Textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  maxLength={1000}
+                  disabled={submitting}
+                />
+              </Field>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => void onSave()}
+                loading={submitting}
+                disabled={isUnchanged || submitting}
+              >
+                {t('saveCta')}
+              </Button>
+            </div>
+          ) : null}
         </>
       )}
 
