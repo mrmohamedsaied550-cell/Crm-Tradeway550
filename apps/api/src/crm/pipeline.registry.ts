@@ -41,6 +41,7 @@ export const ACTIVITY_TYPES = [
   'note',
   'call',
   'stage_change',
+  'status_change',
   'assignment',
   // C11: emitted by AssignmentService when round-robin picks an assignee.
   // Distinct from `assignment` so reports can separate manual vs auto.
@@ -48,6 +49,9 @@ export const ACTIVITY_TYPES = [
   // C11: emitted by SlaService.runReassignmentForBreaches when a lead's
   // SLA expires before the assignee responds.
   'sla_breach',
+  // C30: follow-up and document lifecycle events.
+  'follow_up',
+  'document',
   'system',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

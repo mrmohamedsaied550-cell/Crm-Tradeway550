@@ -85,9 +85,12 @@ export type LeadActivityType =
   | 'note'
   | 'call'
   | 'stage_change'
+  | 'status_change'
   | 'assignment'
   | 'auto_assignment'
   | 'sla_breach'
+  | 'follow_up'
+  | 'document'
   | 'system';
 
 export type CaptainStatus = 'active' | 'inactive' | 'archived';
@@ -109,6 +112,34 @@ export interface Captain {
   updatedAt: string;
 }
 
+export interface LeadStatus {
+  id: string;
+  code: string;
+  name: string;
+  color: string | null;
+}
+
+export interface LeadStatusFull extends LeadStatus {
+  tenantId: string;
+  stageId: string;
+  order: number;
+  isDefault: boolean;
+  stage?: { code: string; name: string; order: number };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PipelineStageWithStatuses extends PipelineStage {
+  statuses: Array<{
+    id: string;
+    code: string;
+    name: string;
+    color: string | null;
+    order: number;
+    isDefault: boolean;
+  }>;
+}
+
 export interface Lead {
   id: string;
   tenantId: string;
@@ -118,6 +149,8 @@ export interface Lead {
   source: LeadSource;
   stageId: string;
   stage: { code: LeadStageCode; name: string; order: number; isTerminal: boolean };
+  statusId: string | null;
+  status: LeadStatus | null;
   assignedToId: string | null;
   createdById: string | null;
   slaDueAt: string | null;
@@ -126,6 +159,68 @@ export interface Lead {
   createdAt: string;
   updatedAt: string;
   captain?: Pick<Captain, 'id' | 'onboardingStatus'> | null;
+}
+
+export type DocumentStatus = 'pending' | 'uploaded' | 'approved' | 'rejected';
+
+export interface LeadDocument {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  type: string;
+  label: string;
+  status: DocumentStatus;
+  fileUrl: string | null;
+  notes: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type FollowUpMethod = 'call' | 'whatsapp' | 'email' | 'visit' | 'other';
+export type FollowUpStatus = 'pending' | 'completed';
+
+export interface LeadFollowUp {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  scheduledAt: string;
+  method: FollowUpMethod;
+  note: string | null;
+  status: FollowUpStatus;
+  completedAt: string | null;
+  completedBy: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Advanced Filter (C30) ─────
+
+export type FilterOperator =
+  | 'eq' | 'neq' | 'contains' | 'not_contains'
+  | 'gt' | 'gte' | 'lt' | 'lte'
+  | 'in' | 'not_in' | 'is_null' | 'is_not_null';
+
+export type FilterField =
+  | 'stage' | 'status' | 'source' | 'assignedTo'
+  | 'slaStatus' | 'createdAt' | 'updatedAt'
+  | 'lastResponseAt' | 'name' | 'phone' | 'email';
+
+export interface FilterCondition {
+  field: FilterField;
+  operator: FilterOperator;
+  value?: string | number | boolean | string[];
+}
+
+export interface AdvancedFilterRequest {
+  allConditions?: FilterCondition[];
+  anyConditions?: FilterCondition[];
+  limit?: number;
+  offset?: number;
+  sortBy?: 'createdAt' | 'updatedAt' | 'name' | 'slaDueAt' | 'lastResponseAt';
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface LeadActivity {
@@ -213,6 +308,63 @@ export interface WhatsAppAccount {
   verifyToken: string;
   hasAppSecret: boolean;
   isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Follow-ups (C36) ─────
+
+export type FollowUpActionType = 'call' | 'whatsapp' | 'email' | 'visit' | 'sms' | 'other';
+
+// ───── Bonuses (C32) ─────
+
+export type BonusType = 'fixed' | 'percentage';
+export type BonusAccrualStatus = 'pending' | 'approved' | 'paid' | 'rejected';
+
+export interface BonusRule {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  countryId: string;
+  teamId: string | null;
+  roleId: string | null;
+  bonusType: BonusType;
+  trigger: string;
+  amount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BonusAccrual {
+  id: string;
+  tenantId: string;
+  ruleId: string;
+  userId: string;
+  leadId: string | null;
+  amount: number;
+  status: BonusAccrualStatus;
+  approvedAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ───── Competitions (C33) ─────
+
+export type CompetitionMetric = 'leads_converted' | 'calls_made' | 'revenue' | 'custom';
+export type CompetitionStatus = 'draft' | 'active' | 'completed' | 'cancelled';
+
+export interface Competition {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string | null;
+  metric: CompetitionMetric;
+  status: CompetitionStatus;
+  startsAt: string;
+  endsAt: string;
+  prize: string | null;
   createdAt: string;
   updatedAt: string;
 }

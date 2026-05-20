@@ -1,8 +1,12 @@
 # syntax=docker/dockerfile:1.7
 # Production image for @crm/api (NestJS).
-# Multi-stage: build with full deps, ship with prod-only deps + dist + Prisma engine.
-
+# Multi-stage build:
+#   1. install full workspace deps + build the API (TS -> dist/)
+#   2. use `pnpm deploy` to materialise a self-contained, prod-only
+#      node_modules tree (no workspace symlinks) for the api package
+#   3. copy that into a tiny runtime image
 ARG NODE_VERSION=20.18.0
+
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 ENV PNPM_HOME=/usr/local/share/pnpm \
     PATH=/usr/local/share/pnpm:$PATH
@@ -15,36 +19,50 @@ WORKDIR /repo
 
 # ---------- builder ----------
 FROM base AS builder
-# Copy workspace manifests first for better layer caching.
+# Workspace manifests + lockfile first for better caching.
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/
+# api's postinstall is `prisma generate`, so the schema must be present
+# before `pnpm install` runs.
+COPY apps/api/prisma apps/api/prisma
 COPY apps/web/package.json apps/web/
 COPY packages/ packages/
 RUN pnpm install --frozen-lockfile=false --prefer-offline
-# Copy the rest of the API source (web app source isn't needed for the API build).
+# Now bring in the api source and build it.
 COPY apps/api/ apps/api/
-# Generate Prisma client + compile TypeScript.
-RUN pnpm --filter @crm/api db:generate \
- && pnpm --filter @crm/api build
+RUN pnpm --filter @crm/api build
+# Materialise a self-contained, prod-only node_modules tree at /deploy/api
+# (--legacy = also include packages that are workspace deps).
+RUN pnpm --filter @crm/api deploy --prod /deploy/api
+# Copy the Prisma schema into the deployed tree and (re)generate the
+# Prisma client there. `pnpm deploy --prod` does NOT run lifecycle scripts,
+# so we materialise the client manually now that node_modules is settled.
+# Generate the Prisma client inside the deploy tree. We use the builder's
+# pnpm-managed prisma CLI directly (it lives in /repo/node_modules/.pnpm)
+# rather than relying on npx, which would try to download it again.
+RUN cp -r apps/api/prisma /deploy/api/prisma && \
+    cd /repo/apps/api && \
+    pnpm exec prisma generate --schema=prisma/schema.prisma && \
+    BUILDER_DOTPRISMA=$(ls -d /repo/node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client | head -n1) && \
+    DEPLOY_DOTPRISMA=$(ls -d /deploy/api/node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client | head -n1) && \
+    echo "Copying generated client from $BUILDER_DOTPRISMA to $DEPLOY_DOTPRISMA" && \
+    rm -rf "$DEPLOY_DOTPRISMA" && \
+    cp -r "$BUILDER_DOTPRISMA" "$DEPLOY_DOTPRISMA"
 
 # ---------- runtime ----------
 FROM base AS runtime
 ENV NODE_ENV=production \
     PORT=3000
 WORKDIR /app
-# Bring in node_modules pruned to production deps (Prisma client included).
-COPY --from=builder /repo/apps/api/package.json ./package.json
+# Self-contained node_modules + package.json from `pnpm deploy`.
+COPY --from=builder /deploy/api/package.json ./package.json
+COPY --from=builder /deploy/api/node_modules ./node_modules
+# Compiled JS + Prisma schema (the schema is needed at runtime by the
+# Prisma client to resolve datasource.url at boot).
 COPY --from=builder /repo/apps/api/dist ./dist
 COPY --from=builder /repo/apps/api/prisma ./prisma
-COPY --from=builder /repo/node_modules ./node_modules_root_workspace
-# Workspace symlinks resolve to /repo/node_modules; the simplest reliable
-# approach is to also copy the API-local node_modules (pnpm hoists most
-# packages here for non-workspace deps).
-COPY --from=builder /repo/apps/api/node_modules ./node_modules
-# Healthcheck hits the API's own /health route (which is unprefixed by design).
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=10 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
   CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 EXPOSE 3000
-# tini reaps zombies + forwards signals so docker stop is graceful.
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["node","dist/main.js"]

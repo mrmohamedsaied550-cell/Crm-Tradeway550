@@ -100,6 +100,8 @@ export type ListCaptainsQueryDto = z.infer<typeof ListCaptainsQuerySchema>;
 export const ListLeadsQuerySchema = z
   .object({
     stageCode: z.enum(ALL_STAGE_CODES as [string, ...string[]]).optional(),
+    /** Filter by lead status code (substatus within a stage). */
+    statusCode: z.string().min(1).max(60).optional(),
     assignedToId: z.string().uuid().optional(),
     /** Free-text match across name + phone + email. */
     q: z.string().trim().min(1).max(120).optional(),

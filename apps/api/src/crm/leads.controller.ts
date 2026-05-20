@@ -68,6 +68,12 @@ export class LeadsController {
     return this.pipeline.list();
   }
 
+  @Get('pipeline/stages-with-statuses')
+  @ApiOperation({ summary: 'List pipeline stages with their associated statuses (C30)' })
+  listStagesWithStatuses() {
+    return this.pipeline.listWithStatuses();
+  }
+
   // ───────── leads CRUD ─────────
 
   @Post('leads')

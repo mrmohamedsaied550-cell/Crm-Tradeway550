@@ -38,6 +38,14 @@ import type {
   UserStatus,
   WhatsAppConversation,
   WhatsAppMessage,
+  BonusRule,
+  BonusAccrual,
+  BonusAccrualStatus,
+  BonusType,
+  Competition,
+  CompetitionMetric,
+  CompetitionStatus,
+  LeadFollowUp,
 } from './api-types';
 
 export class ApiError extends Error {
@@ -253,14 +261,95 @@ export const rolesApi = {
 // CRM — pipeline stages + leads + activities
 // ───────────────────────────────────────────────────────────────────────
 
+import type {
+  LeadDocument,
+  LeadStatusFull,
+  PipelineStageWithStatuses,
+  AdvancedFilterRequest,
+  DocumentStatus,
+  FollowUpMethod,
+} from './api-types';
+
 export const pipelineApi = {
   listStages: (): Promise<PipelineStage[]> => apiFetch<PipelineStage[]>('/pipeline/stages'),
+  listStagesWithStatuses: (): Promise<PipelineStageWithStatuses[]> =>
+    apiFetch<PipelineStageWithStatuses[]>('/pipeline/stages-with-statuses'),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// CRM — lead statuses (C30)
+// ───────────────────────────────────────────────────────────────────────
+
+export const leadStatusesApi = {
+  list: (stageId?: string): Promise<LeadStatusFull[]> =>
+    apiFetch<LeadStatusFull[]>('/crm/lead-statuses', { query: { stageId } }),
+  create: (input: {
+    stageId: string;
+    code: string;
+    name: string;
+    color?: string;
+    order?: number;
+    isDefault?: boolean;
+  }): Promise<LeadStatusFull> =>
+    apiFetch<LeadStatusFull>('/crm/lead-statuses', { method: 'POST', body: input }),
+  update: (
+    id: string,
+    input: { name?: string; color?: string; order?: number; isDefault?: boolean },
+  ): Promise<LeadStatusFull> =>
+    apiFetch<LeadStatusFull>(`/crm/lead-statuses/${id}`, { method: 'PATCH', body: input }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/crm/lead-statuses/${id}`, { method: 'DELETE' }),
+  /** Change a lead's status within its current stage. */
+  changeLeadStatus: (leadId: string, statusId: string): Promise<Lead> =>
+    apiFetch<Lead>(`/crm/leads/${leadId}/status`, { method: 'PATCH', body: { statusId } }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// CRM — lead documents (C30)
+// ───────────────────────────────────────────────────────────────────────
+
+export const leadDocumentsApi = {
+  list: (leadId: string): Promise<LeadDocument[]> =>
+    apiFetch<LeadDocument[]>(`/crm/leads/${leadId}/documents`),
+  create: (
+    leadId: string,
+    input: { type: string; label: string; notes?: string },
+  ): Promise<LeadDocument> =>
+    apiFetch<LeadDocument>(`/crm/leads/${leadId}/documents`, { method: 'POST', body: input }),
+  updateStatus: (
+    leadId: string,
+    docId: string,
+    input: { status: DocumentStatus; notes?: string; fileUrl?: string },
+  ): Promise<LeadDocument> =>
+    apiFetch<LeadDocument>(`/crm/leads/${leadId}/documents/${docId}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// CRM — advanced search / query builder (C30)
+// ───────────────────────────────────────────────────────────────────────
+
+export const leadSearchApi = {
+  search: (filters: AdvancedFilterRequest): Promise<PaginatedResult<Lead>> =>
+    apiFetch<PaginatedResult<Lead>>('/crm/leads/search', { method: 'POST', body: filters }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// CRM — WhatsApp conversation lookup by lead (C30)
+// ───────────────────────────────────────────────────────────────────────
+
+export const leadConversationsApi = {
+  findByLead: (leadId: string): Promise<WhatsAppConversation[]> =>
+    apiFetch<WhatsAppConversation[]>(`/crm/leads/${leadId}/conversations`),
 };
 
 export const leadsApi = {
   list: (
     query: {
       stageCode?: LeadStageCode;
+      statusCode?: string;
       assignedToId?: string;
       q?: string;
       limit?: number;
@@ -307,6 +396,32 @@ export const leadsApi = {
       method: 'POST',
       body: input,
     }),
+  /** Agent workspace — overdue follow-ups for the calling user by default. */
+  overdue: (
+    query: { assignedToId?: string; mine?: '0' | '1' } = {},
+  ): Promise<Lead[]> => apiFetch<Lead[]>('/leads/overdue', { query }),
+  /** Agent workspace — leads with a follow-up due today. */
+  dueToday: (
+    query: { assignedToId?: string; mine?: '0' | '1' } = {},
+  ): Promise<Lead[]> => apiFetch<Lead[]>('/leads/due-today', { query }),
+  /** Admin CSV import (P2-06). Body is JSON; CSV passed as a string. */
+  importCsv: (input: {
+    csv: string;
+    mapping: { name: string; phone: string; email?: string };
+    defaultSource?: LeadSource;
+    autoAssign?: boolean;
+  }): Promise<{
+    total: number;
+    created: number;
+    duplicates: number;
+    errors: Array<{ row: number; reason: string }>;
+  }> =>
+    apiFetch<{
+      total: number;
+      created: number;
+      duplicates: number;
+      errors: Array<{ row: number; reason: string }>;
+    }>('/leads/import', { method: 'POST', body: input }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -351,6 +466,26 @@ export const conversationsApi = {
       method: 'POST',
       body: { text },
     }),
+  /** C35 — hand the conversation off to another agent. */
+  handover: (
+    id: string,
+    input: {
+      newAssigneeId: string;
+      mode: 'full' | 'clean' | 'summary';
+      summary?: string;
+      notify?: boolean;
+    },
+  ): Promise<WhatsAppConversation> =>
+    apiFetch<WhatsAppConversation>(`/conversations/${id}/handover`, {
+      method: 'POST',
+      body: input,
+    }),
+  /** Link a conversation to a CRM lead (idempotent). */
+  linkLead: (id: string, leadId: string): Promise<WhatsAppConversation> =>
+    apiFetch<WhatsAppConversation>(`/conversations/${id}/link-lead`, {
+      method: 'POST',
+      body: { leadId },
+    }),
 };
 
 // ───────────────────────────────────────────────────────────────────────
@@ -365,4 +500,206 @@ export const conversationsApi = {
  */
 export const whatsappAccountsApi = {
   list: (): Promise<WhatsAppAccount[]> => apiFetch<WhatsAppAccount[]>('/whatsapp/accounts'),
+};
+
+
+// ───────────────────────────────────────────────────────────────────────
+// Audit (C-AUDIT)
+// ───────────────────────────────────────────────────────────────────────
+/**
+ * Mirror of the API's `AuditRow` (apps/api/src/audit/audit.service.ts).
+ * `payload` is whatever JSON the writer stored, hence `unknown`. Date
+ * fields come over the wire as ISO strings.
+ */
+export interface AuditRow {
+  source: 'audit_event' | 'lead_activity';
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  actorUserId: string | null;
+  payload: unknown;
+  createdAt: string;
+}
+
+export const auditApi = {
+  list: (
+    query: { limit?: number; before?: string; action?: string } = {},
+  ): Promise<AuditRow[]> => apiFetch<AuditRow[]>('/audit', { query }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Notifications (C-NOTIF)
+// ───────────────────────────────────────────────────────────────────────
+/**
+ * Mirror of the API's Notification model (apps/api/prisma/schema.prisma).
+ */
+export interface NotificationRow {
+  id: string;
+  tenantId: string;
+  recipientUserId: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  payload: unknown;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export const notificationsApi = {
+  list: (query: { unread?: boolean; limit?: number } = {}): Promise<NotificationRow[]> =>
+    apiFetch<NotificationRow[]>('/notifications', {
+      query: {
+        ...(query.unread !== undefined && { unread: query.unread ? '1' : '0' }),
+        ...(query.limit !== undefined && { limit: query.limit }),
+      },
+    }),
+  unreadCount: (): Promise<{ count: number }> =>
+    apiFetch<{ count: number }>('/notifications/unread-count'),
+  markRead: (id: string): Promise<NotificationRow> =>
+    apiFetch<NotificationRow>(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllRead: (): Promise<{ count: number }> =>
+    apiFetch<{ count: number }>('/notifications/read-all', { method: 'POST' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Reports (C38)
+// ───────────────────────────────────────────────────────────────────────
+/**
+ * Mirror of `ReportFiltersDto` (apps/api/src/reports/report.dto.ts) and
+ * `SummaryReport` (apps/api/src/reports/reports.service.ts).
+ */
+export interface ReportFilters {
+  companyId?: string;
+  countryId?: string;
+  teamId?: string;
+  /** ISO date or datetime, inclusive. */
+  from?: string;
+  /** ISO date or datetime, inclusive. */
+  to?: string;
+}
+export interface SummaryReport {
+  totalLeads: number;
+  leadsByStage: Array<{ stageCode: string; stageName: string; count: number }>;
+  overdueCount: number;
+  dueTodayCount: number;
+  followUpsPending: number;
+  followUpsDone: number;
+  activations: number;
+  /** Percentage 0..100 (rounded to one decimal). null when totalLeads === 0. */
+  conversionRate: number | null;
+}
+
+export const reportsApi = {
+  summary: (filters: ReportFilters = {}): Promise<SummaryReport> =>
+    apiFetch<SummaryReport>('/reports/summary', {
+      query: filters as Record<string, string | undefined>,
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Follow-ups (C36)
+// ───────────────────────────────────────────────────────────────────────
+
+export const followUpsApi = {
+  mine: (
+    query: { status?: 'pending' | 'done' | 'all'; limit?: number } = {},
+  ): Promise<LeadFollowUp[]> => apiFetch<LeadFollowUp[]>('/crm/follow-ups/mine', { query }),
+  listForLead: (leadId: string): Promise<LeadFollowUp[]> =>
+    apiFetch<LeadFollowUp[]>(`/crm/leads/${leadId}/follow-ups`),
+  /** Schedule a follow-up against a lead. The agent workspace calls this. */
+  create: (leadId: string, input: { scheduledAt: string; method: FollowUpMethod; note?: string | null }): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/crm/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  createForLead: (leadId: string, input: { scheduledAt: string; method: FollowUpMethod; note?: string | null }): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/crm/leads/${leadId}/follow-ups`, { method: 'POST', body: input }),
+  complete: (leadId: string, followUpId: string): Promise<LeadFollowUp> =>
+    apiFetch<LeadFollowUp>(`/crm/leads/${leadId}/follow-ups/${followUpId}/complete`, { method: 'PATCH' }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/crm/follow-ups/${id}`, { method: 'DELETE' }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Bonuses (C32) + bonus accruals (P2-03)
+// ───────────────────────────────────────────────────────────────────────
+export interface CreateBonusRuleInput {
+  companyId: string;
+  countryId: string;
+  teamId?: string | null;
+  roleId?: string | null;
+  bonusType: BonusType;
+  trigger: string;
+  /** Decimal as number or string; the API normalises both. */
+  amount: number | string;
+  isActive?: boolean;
+}
+export type UpdateBonusRuleInput = Partial<CreateBonusRuleInput>;
+
+export const bonusesApi = {
+  list: (): Promise<BonusRule[]> => apiFetch<BonusRule[]>('/bonuses'),
+  get: (id: string): Promise<BonusRule> => apiFetch<BonusRule>(`/bonuses/${id}`),
+  create: (input: CreateBonusRuleInput): Promise<BonusRule> =>
+    apiFetch<BonusRule>('/bonuses', { method: 'POST', body: input }),
+  update: (id: string, input: UpdateBonusRuleInput): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}`, { method: 'PATCH', body: input }),
+  enable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/enable`, { method: 'POST' }),
+  disable: (id: string): Promise<BonusRule> =>
+    apiFetch<BonusRule>(`/bonuses/${id}/disable`, { method: 'POST' }),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/bonuses/${id}`, { method: 'DELETE' }),
+};
+
+export const bonusAccrualsApi = {
+  mine: (
+    query: { status?: BonusAccrualStatus; limit?: number } = {},
+  ): Promise<BonusAccrual[]> => apiFetch<BonusAccrual[]>('/bonus-accruals/mine', { query }),
+  list: (
+    query: { status?: BonusAccrualStatus; recipientUserId?: string; limit?: number } = {},
+  ): Promise<BonusAccrual[]> => apiFetch<BonusAccrual[]>('/bonus-accruals', { query }),
+  setStatus: (id: string, status: BonusAccrualStatus): Promise<BonusAccrual> =>
+    apiFetch<BonusAccrual>(`/bonus-accruals/${id}/status`, {
+      method: 'POST',
+      body: { status },
+    }),
+};
+
+// ───────────────────────────────────────────────────────────────────────
+// Competitions (C33)
+// ───────────────────────────────────────────────────────────────────────
+export interface CreateCompetitionInput {
+  name: string;
+  companyId?: string | null;
+  countryId?: string | null;
+  teamId?: string | null;
+  startDate: string;
+  endDate: string;
+  metric: CompetitionMetric;
+  reward: string;
+  status?: CompetitionStatus;
+}
+export type UpdateCompetitionInput = Partial<CreateCompetitionInput>;
+/** Mirror of `LeaderboardEntry` (apps/api/src/competitions/competitions.service.ts). */
+export interface LeaderboardEntry {
+  userId: string | null;
+  name: string;
+  email: string | null;
+  score: number;
+}
+
+export const competitionsApi = {
+  list: (): Promise<Competition[]> => apiFetch<Competition[]>('/competitions'),
+  get: (id: string): Promise<Competition> => apiFetch<Competition>(`/competitions/${id}`),
+  create: (input: CreateCompetitionInput): Promise<Competition> =>
+    apiFetch<Competition>('/competitions', { method: 'POST', body: input }),
+  update: (id: string, input: UpdateCompetitionInput): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}`, { method: 'PATCH', body: input }),
+  setStatus: (id: string, status: CompetitionStatus): Promise<Competition> =>
+    apiFetch<Competition>(`/competitions/${id}/status`, {
+      method: 'POST',
+      body: { status },
+    }),
+  leaderboard: (id: string): Promise<LeaderboardEntry[]> =>
+    apiFetch<LeaderboardEntry[]>(`/competitions/${id}/leaderboard`),
+  remove: (id: string): Promise<void> =>
+    apiFetch<void>(`/competitions/${id}`, { method: 'DELETE' }),
 };

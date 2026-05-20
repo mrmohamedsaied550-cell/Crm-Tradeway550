@@ -53,6 +53,9 @@ model Tenant {
   whatsAppAccounts      WhatsAppAccount[]
   whatsAppMessages      WhatsAppMessage[]
   whatsAppConversations WhatsAppConversation[]
+  leadStatuses          LeadStatus[]
+  leadDocuments         LeadDocument[]
+  leadFollowUps         LeadFollowUp[]
 
   @@map("tenants")
 }
@@ -167,6 +170,9 @@ model User {
   createdLeads   Lead[]         @relation("LeadCreator")
   assignedLeads  Lead[]         @relation("LeadAssignee")
   authoredActivities LeadActivity[]
+  reviewedDocuments  LeadDocument[] @relation("DocumentReviewer")
+  completedFollowUps LeadFollowUp[] @relation("FollowUpCompleter")
+  createdFollowUps   LeadFollowUp[] @relation("FollowUpCreator")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -223,11 +229,37 @@ model PipelineStage {
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   leads Lead[]
+  statuses LeadStatus[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, order])
   @@index([tenantId])
   @@map("pipeline_stages")
+}
+
+/// LeadStatus — substatus definitions per pipeline stage.
+/// Each stage can have multiple statuses (e.g. "Contacted" stage has
+/// "No Answer", "Interested", "Call Back" statuses). A lead can be in
+/// exactly one status at a time within its current stage.
+model LeadStatus {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  stageId   String   @map("stage_id") @db.Uuid
+  stage     PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  code      String
+  name      String
+  color     String?  @default("gray")
+  order     Int      @default(0)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  leads Lead[]
+
+  @@unique([tenantId, stageId, code])
+  @@index([tenantId, stageId, order])
+  @@map("lead_statuses")
 }
 
 /// Lead — a prospective captain in the funnel.
@@ -246,6 +278,9 @@ model Lead {
 
   stageId      String   @map("stage_id") @db.Uuid
   stage        PipelineStage @relation(fields: [stageId], references: [id])
+
+  statusId     String?  @map("status_id") @db.Uuid
+  status       LeadStatus? @relation(fields: [statusId], references: [id], onDelete: SetNull)
 
   assignedToId String?  @map("assigned_to_id") @db.Uuid
   assignedTo   User?    @relation("LeadAssignee", fields: [assignedToId], references: [id])
@@ -271,14 +306,68 @@ model Lead {
   captain    Captain?
   activities LeadActivity[]
   whatsappConversations WhatsAppConversation[]
+  documents  LeadDocument[]
+  followUps  LeadFollowUp[]
 
   @@unique([tenantId, phone])
   @@index([tenantId, stageId])
+  @@index([tenantId, statusId])
   @@index([tenantId, assignedToId])
   @@index([tenantId, createdAt])
   // Hot path for the SLA breach scanner: `WHERE tenant=? AND slaStatus='active' AND slaDueAt < now`.
   @@index([tenantId, slaStatus, slaDueAt])
   @@map("leads")
+}
+
+/// LeadDocument — document checklist item per lead.
+/// Tracks required documents (ID card, license, vehicle registration, etc.)
+/// with their upload/review status.
+model LeadDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId     String   @map("lead_id") @db.Uuid
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type       String
+  label      String
+  status     String   @default("pending")
+  fileUrl    String?  @map("file_url")
+  notes      String?
+  reviewedBy String?  @map("reviewed_by") @db.Uuid
+  reviewer   User?    @relation("DocumentReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, status])
+  @@map("lead_documents")
+}
+
+/// LeadFollowUp — scheduled follow-up reminder per lead.
+/// Agents can schedule calls, WhatsApp messages, or other follow-up
+/// methods with a specific date/time and optional reminder note.
+model LeadFollowUp {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId      String    @map("lead_id") @db.Uuid
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  scheduledAt DateTime  @map("scheduled_at") @db.Timestamptz(6)
+  method      String    @default("call")
+  note        String?
+  status      String    @default("pending")
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  completedBy String?   @map("completed_by") @db.Uuid
+  completer   User?     @relation("FollowUpCompleter", fields: [completedBy], references: [id], onDelete: SetNull)
+  createdBy   String?   @map("created_by") @db.Uuid
+  creator     User?     @relation("FollowUpCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, status, scheduledAt])
+  @@map("lead_follow_ups")
 }
 
 /// Captain — a Lead converted to an active driver.

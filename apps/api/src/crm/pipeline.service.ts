@@ -23,6 +23,26 @@ export class PipelineService {
     );
   }
 
+  /** List all stages with their associated statuses (C30). */
+  listWithStatuses() {
+    return this.prisma.withTenant(requireTenantId(), (tx) =>
+      tx.pipelineStage.findMany({
+        orderBy: { order: 'asc' },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          order: true,
+          isTerminal: true,
+          statuses: {
+            orderBy: { order: 'asc' },
+            select: { id: true, code: true, name: true, color: true, order: true, isDefault: true },
+          },
+        },
+      }),
+    );
+  }
+
   async findByCodeOrThrow(code: string) {
     const tenantId = requireTenantId();
     const row = await this.prisma.withTenant(tenantId, (tx) =>

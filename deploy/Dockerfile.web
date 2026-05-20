@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # Production image for @crm/web (Next.js 14, App Router).
-# We build with full deps and run with `next start` because the project's
-# next.config.mjs does not opt into the `standalone` output mode.
-
+# Builds with full deps then ships a self-contained `pnpm deploy` payload
+# (no workspace symlinks) plus the .next build output.
 ARG NODE_VERSION=20.18.0
+
 FROM node:${NODE_VERSION}-bookworm-slim AS base
 ENV PNPM_HOME=/usr/local/share/pnpm \
     PATH=/usr/local/share/pnpm:$PATH
@@ -17,15 +17,17 @@ WORKDIR /repo
 FROM base AS builder
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/
+# Workspace install runs the api postinstall (`prisma generate`) too,
+# so the schema must already exist on disk.
+COPY apps/api/prisma apps/api/prisma
 COPY apps/web/package.json apps/web/
 COPY packages/ packages/
 RUN pnpm install --frozen-lockfile=false --prefer-offline
 COPY apps/web/ apps/web/
-# Build the Next.js app. NEXT_PUBLIC_* env vars are baked at build time;
-# we leave them blank so the runtime falls back to the browser's same-origin
-# (see apps/web/lib/api-base.ts).
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @crm/web build
+# Self-contained, prod-only deps for the web app.
+RUN pnpm --filter @crm/web deploy --prod /deploy/web
 
 # ---------- runtime ----------
 FROM base AS runtime
@@ -34,14 +36,15 @@ ENV NODE_ENV=production \
     PORT=3001 \
     HOSTNAME=0.0.0.0
 WORKDIR /app
-COPY --from=builder /repo/apps/web/package.json ./package.json
+# Self-contained node_modules + package.json from `pnpm deploy`.
+COPY --from=builder /deploy/web/package.json ./package.json
+COPY --from=builder /deploy/web/node_modules ./node_modules
+# The Next.js build output and runtime config + i18n catalogues.
 COPY --from=builder /repo/apps/web/.next ./.next
 COPY --from=builder /repo/apps/web/next.config.mjs ./next.config.mjs
 COPY --from=builder /repo/apps/web/i18n ./i18n
-COPY --from=builder /repo/apps/web/node_modules ./node_modules
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=10 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
   CMD curl -fsS http://127.0.0.1:${PORT}/login || exit 1
 EXPOSE 3001
 ENTRYPOINT ["/usr/bin/tini","--"]
-# Use the next binary that pnpm installed under node_modules/.bin
 CMD ["node","node_modules/next/dist/bin/next","start","-p","3001","-H","0.0.0.0"]

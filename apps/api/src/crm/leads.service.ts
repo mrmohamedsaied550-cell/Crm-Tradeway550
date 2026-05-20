@@ -104,6 +104,7 @@ export class LeadsService {
         where: { id },
         include: {
           stage: { select: { id: true, code: true, name: true, order: true, isTerminal: true } },
+          status: { select: { id: true, code: true, name: true, color: true } },
           captain: true,
         },
       }),
@@ -126,6 +127,7 @@ export class LeadsService {
 
     const where: Prisma.LeadWhereInput = {
       ...(stageId && { stageId }),
+      ...(query.statusCode && { status: { code: query.statusCode } }),
       ...(query.assignedToId && { assignedToId: query.assignedToId }),
       ...(query.q && {
         OR: [
@@ -145,6 +147,7 @@ export class LeadsService {
           skip: query.offset,
           include: {
             stage: { select: { code: true, name: true, order: true, isTerminal: true } },
+            status: { select: { id: true, code: true, name: true, color: true } },
             captain: { select: { id: true, onboardingStatus: true } },
           },
         }),
