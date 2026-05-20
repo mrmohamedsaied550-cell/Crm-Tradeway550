@@ -1741,7 +1741,7 @@ export default function LeadsPage(): JSX.Element {
 
       {/* C30 — Advanced Query Builder Modal */}
       {queryBuilderOpen ? (
-        <Modal open onClose={() => setQueryBuilderOpen(false)} title="Query Builder" size="lg">
+        <Modal open onClose={() => setQueryBuilderOpen(false)} title="Query Builder" width="lg">
           <div className="space-y-6">
             {/* AND Conditions */}
             <div className="rounded-lg border border-surface-border p-4">
