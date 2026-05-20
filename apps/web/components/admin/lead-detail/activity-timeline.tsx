@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   CalendarPlus,
@@ -280,20 +280,115 @@ export function ActivityTimeline({
         <section key={dayStart} className="flex flex-col gap-2">
           <DaySeparator label={dayLabel(new Date(dayStart), now, locale, tDetail)} />
           <ul className="flex flex-col gap-2">
-            {items.map((it) => (
-              <TimelineRow
-                key={it.id}
-                item={it}
-                stageLabel={stageLabel}
-                userLabel={userLabel}
-                tDetail={tDetail}
-                formatRelative={formatRelative}
-              />
-            ))}
+            <SlaGroupedList
+              items={items}
+              stageLabel={stageLabel}
+              userLabel={userLabel}
+              tDetail={tDetail}
+              formatRelative={formatRelative}
+            />
           </ul>
         </section>
       ))}
     </div>
+  );
+}
+
+/**
+ * C30 — SLA Grouping: when a day has more than 3 SLA-related events
+ * (sla_breach, sla_threshold_crossed), they are collapsed into a
+ * single expandable row showing the count. The user can click to
+ * expand and see all individual SLA events.
+ */
+
+interface SlaGroupedListProps {
+  items: TimelineItem[];
+  stageLabel: (code: string | undefined) => string;
+  userLabel: (uid: string | null | undefined) => string;
+  tDetail: (key: string, vars?: Record<string, string | number>) => string;
+  formatRelative: (target: Date) => string;
+}
+
+function SlaGroupedList({
+  items,
+  stageLabel,
+  userLabel,
+  tDetail,
+  formatRelative,
+}: SlaGroupedListProps): JSX.Element {
+  const [slaExpanded, setSlaExpanded] = useState(false);
+
+  const SLA_TYPES: LeadActivityType[] = ['sla_breach', 'sla_threshold_crossed'];
+  const slaItems = items.filter(
+    (it) => it.kind === 'activity' && SLA_TYPES.includes(it.data.type),
+  );
+  const nonSlaItems = items.filter(
+    (it) => !(it.kind === 'activity' && SLA_TYPES.includes(it.data.type)),
+  );
+
+  const shouldGroup = slaItems.length > 3;
+
+  return (
+    <>
+      {/* Render non-SLA items normally */}
+      {nonSlaItems.map((it) => (
+        <TimelineRow
+          key={it.id}
+          item={it}
+          stageLabel={stageLabel}
+          userLabel={userLabel}
+          tDetail={tDetail}
+          formatRelative={formatRelative}
+        />
+      ))}
+
+      {/* SLA items: grouped or individual */}
+      {shouldGroup ? (
+        <li className="flex flex-col items-start">
+          <button
+            type="button"
+            onClick={() => setSlaExpanded(!slaExpanded)}
+            className={cn(
+              'flex w-full max-w-[88%] items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
+              'border-status-breach/30 bg-status-breach/5 hover:bg-status-breach/10',
+            )}
+          >
+            <TriangleAlert className="h-4 w-4 text-status-breach" aria-hidden="true" />
+            <span className="font-medium text-ink-primary">
+              {slaItems.length} SLA Alerts
+            </span>
+            <span className="ms-auto text-xs text-ink-tertiary">
+              {slaExpanded ? '▲ Collapse' : '▼ Expand'}
+            </span>
+          </button>
+          {slaExpanded ? (
+            <ul className="mt-2 flex w-full flex-col gap-1 ps-4">
+              {slaItems.map((it) => (
+                <TimelineRow
+                  key={it.id}
+                  item={it}
+                  stageLabel={stageLabel}
+                  userLabel={userLabel}
+                  tDetail={tDetail}
+                  formatRelative={formatRelative}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </li>
+      ) : (
+        slaItems.map((it) => (
+          <TimelineRow
+            key={it.id}
+            item={it}
+            stageLabel={stageLabel}
+            userLabel={userLabel}
+            tDetail={tDetail}
+            formatRelative={formatRelative}
+          />
+        ))
+      )}
+    </>
   );
 }
 

@@ -256,7 +256,15 @@ export default function LeadsPage(): JSX.Element {
   // Phase D2 — D2.6: returning-leads filter (attemptIndex >= 2). Off
   // by default so first-attempt rows stay in the picture.
   const [filterReturning, setFilterReturning] = useState<boolean>(false);
+  // C30 — status sub-filter: when a stage is selected, the user can
+  // further narrow by a specific status within that stage.
+  const [filterStatus, setFilterStatus] = useState<string>('');
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
+  // C30 — Advanced Query Builder modal state.
+  const [queryBuilderOpen, setQueryBuilderOpen] = useState<boolean>(false);
+  type QueryCondition = { field: string; operator: string; value: string };
+  const [andConditions, setAndConditions] = useState<QueryCondition[]>([]);
+  const [orConditions, setOrConditions] = useState<QueryCondition[]>([]);
 
   /**
    * Sprint 5.C — apply the `?queue=<key>` URL param onto the
@@ -352,6 +360,8 @@ export default function LeadsPage(): JSX.Element {
           createdTo,
           hasOverdueFollowup: filterOverdue || undefined,
           returningOnly: filterReturning || undefined,
+          // C30 — status sub-filter within the selected stage.
+          currentStatusCodePrefix: filterStatus || undefined,
           limit: 100,
         }),
         // Q2 — load stages from the ACTIVE pipeline, not the tenant
@@ -413,6 +423,7 @@ export default function LeadsPage(): JSX.Element {
     filterCreatedTo,
     filterOverdue,
     filterReturning,
+    filterStatus,
     effectiveViewMode,
   ]);
 
@@ -1076,21 +1087,49 @@ export default function LeadsPage(): JSX.Element {
            */}
           <div className="flex flex-wrap items-end gap-3">
             {effectiveViewMode === 'list' ? (
-              <div className="w-full max-w-xs">
-                <Field label={t('filterByStage')}>
-                  <Select
-                    value={filterStage}
-                    onChange={(e) => setFilterStage(e.target.value as LeadStageCode | '')}
-                  >
-                    <option value="">{tCommon('all')}</option>
-                    {stages.map((s) => (
-                      <option key={s.code} value={s.code}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
+              <>
+                <div className="w-full max-w-xs">
+                  <Field label={t('filterByStage')}>
+                    <Select
+                      value={filterStage}
+                      onChange={(e) => {
+                        setFilterStage(e.target.value as LeadStageCode | '');
+                        setFilterStatus(''); // C30 — reset status when stage changes
+                      }}
+                    >
+                      <option value="">{tCommon('all')}</option>
+                      {stages.map((s) => (
+                        <option key={s.code} value={s.code}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+                {/* C30 — Status sub-filter: shows statuses for the selected stage */}
+                {filterStage && (() => {
+                  const selectedStage = stages.find((s) => s.code === filterStage);
+                  const statuses = selectedStage?.allowedStatuses;
+                  if (!statuses || statuses.length === 0) return null;
+                  return (
+                    <div className="w-full max-w-xs">
+                      <Field label="Status">
+                        <Select
+                          value={filterStatus}
+                          onChange={(e) => setFilterStatus(e.target.value)}
+                        >
+                          <option value="">{tCommon('all')}</option>
+                          {statuses.map((st) => (
+                            <option key={st.code} value={st.code}>
+                              {st.label}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    </div>
+                  );
+                })()}
+              </>
             ) : null}
             <div className="w-full max-w-sm">
               <Field label={t('search')}>
@@ -1127,6 +1166,14 @@ export default function LeadsPage(): JSX.Element {
               aria-expanded={advancedOpen}
             >
               {advancedOpen ? t('advanced.hide') : t('advanced.show')}
+            </Button>
+            {/* C30 — Query Builder button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setQueryBuilderOpen(true)}
+            >
+              Query Builder
             </Button>
             {anyFilterActive ? (
               <Button variant="ghost" size="sm" onClick={clearFilters}>
@@ -1691,6 +1738,185 @@ export default function LeadsPage(): JSX.Element {
           </Modal>
         </>
       )}
+
+      {/* C30 — Advanced Query Builder Modal */}
+      {queryBuilderOpen ? (
+        <Modal open onClose={() => setQueryBuilderOpen(false)} title="Query Builder" size="lg">
+          <div className="space-y-6">
+            {/* AND Conditions */}
+            <div className="rounded-lg border border-surface-border p-4">
+              <h3 className="mb-2 text-sm font-semibold text-ink-primary">
+                All Conditions (AND)
+              </h3>
+              <p className="mb-3 text-xs text-ink-tertiary">
+                All conditions must be met together (logical AND).
+              </p>
+              {andConditions.map((cond, idx) => (
+                <div key={idx} className="mb-2 flex items-center gap-2">
+                  <select
+                    className="h-9 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    value={cond.field}
+                    onChange={(e) => {
+                      const updated = [...andConditions];
+                      updated[idx] = { ...cond, field: e.target.value };
+                      setAndConditions(updated);
+                    }}
+                  >
+                    <option value="">Field...</option>
+                    <option value="stage">Stage</option>
+                    <option value="status">Status</option>
+                    <option value="source">Source</option>
+                    <option value="assignee">Assignee</option>
+                    <option value="sla">SLA</option>
+                    <option value="city">City</option>
+                    <option value="created_at">Created Date</option>
+                    <option value="days_in_stage">Days in Stage</option>
+                  </select>
+                  <select
+                    className="h-9 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    value={cond.operator}
+                    onChange={(e) => {
+                      const updated = [...andConditions];
+                      updated[idx] = { ...cond, operator: e.target.value };
+                      setAndConditions(updated);
+                    }}
+                  >
+                    <option value="">Operator...</option>
+                    <option value="equals">Equals</option>
+                    <option value="not_equals">Not Equals</option>
+                    <option value="contains">Contains</option>
+                    <option value="gt">Greater Than</option>
+                    <option value="lt">Less Than</option>
+                    <option value="in">In</option>
+                  </select>
+                  <input
+                    className="h-9 flex-1 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    placeholder="Value..."
+                    value={cond.value}
+                    onChange={(e) => {
+                      const updated = [...andConditions];
+                      updated[idx] = { ...cond, value: e.target.value };
+                      setAndConditions(updated);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="text-ink-tertiary hover:text-status-error"
+                    onClick={() => setAndConditions(andConditions.filter((_, i) => i !== idx))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAndConditions([...andConditions, { field: '', operator: '', value: '' }])}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Condition
+              </Button>
+            </div>
+
+            {/* OR Conditions */}
+            <div className="rounded-lg border border-surface-border p-4">
+              <h3 className="mb-2 text-sm font-semibold text-ink-primary">
+                Any Conditions (OR)
+              </h3>
+              <p className="mb-3 text-xs text-ink-tertiary">
+                At least one condition must be met (logical OR).
+              </p>
+              {orConditions.map((cond, idx) => (
+                <div key={idx} className="mb-2 flex items-center gap-2">
+                  <select
+                    className="h-9 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    value={cond.field}
+                    onChange={(e) => {
+                      const updated = [...orConditions];
+                      updated[idx] = { ...cond, field: e.target.value };
+                      setOrConditions(updated);
+                    }}
+                  >
+                    <option value="">Field...</option>
+                    <option value="stage">Stage</option>
+                    <option value="status">Status</option>
+                    <option value="source">Source</option>
+                    <option value="assignee">Assignee</option>
+                    <option value="sla">SLA</option>
+                    <option value="city">City</option>
+                    <option value="created_at">Created Date</option>
+                    <option value="days_in_stage">Days in Stage</option>
+                  </select>
+                  <select
+                    className="h-9 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    value={cond.operator}
+                    onChange={(e) => {
+                      const updated = [...orConditions];
+                      updated[idx] = { ...cond, operator: e.target.value };
+                      setOrConditions(updated);
+                    }}
+                  >
+                    <option value="">Operator...</option>
+                    <option value="equals">Equals</option>
+                    <option value="not_equals">Not Equals</option>
+                    <option value="contains">Contains</option>
+                    <option value="gt">Greater Than</option>
+                    <option value="lt">Less Than</option>
+                    <option value="in">In</option>
+                  </select>
+                  <input
+                    className="h-9 flex-1 rounded-md border border-surface-border bg-surface-card px-2 text-sm"
+                    placeholder="Value..."
+                    value={cond.value}
+                    onChange={(e) => {
+                      const updated = [...orConditions];
+                      updated[idx] = { ...cond, value: e.target.value };
+                      setOrConditions(updated);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="text-ink-tertiary hover:text-status-error"
+                    onClick={() => setOrConditions(orConditions.filter((_, i) => i !== idx))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setOrConditions([...orConditions, { field: '', operator: '', value: '' }])}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Condition
+              </Button>
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="md" onClick={() => setQueryBuilderOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => {
+                  // C30 — Apply query builder conditions as advanced filters.
+                  // For now, apply the first AND condition that matches a known filter field.
+                  for (const cond of andConditions) {
+                    if (cond.field === 'stage' && cond.value) setFilterStage(cond.value as LeadStageCode);
+                    if (cond.field === 'status' && cond.value) setFilterStatus(cond.value);
+                    if (cond.field === 'source' && cond.value) setFilterSource(cond.value as LeadSource);
+                    if (cond.field === 'sla' && cond.value) setFilterSla(cond.value as SlaStatus);
+                  }
+                  setQueryBuilderOpen(false);
+                }}
+              >
+                Apply Filters
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {/* Phase B — Speed: lead preview drawer. Single row click opens
           this; double click navigates to the full page. The drawer
